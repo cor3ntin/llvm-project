@@ -1547,6 +1547,21 @@ vector<_Tp, _Allocator>::erase(const_iterator __position) {
       __position != end(), "vector::erase(iterator) called with a non-dereferenceable iterator");
   difference_type __ps = __position - cbegin();
   pointer __p          = this->__begin_ + __ps;
+#if _LIBCPP_STD_VER >= 20
+  if (!__libcpp_is_constant_evaluated()) {
+    if constexpr (is_trivially_relocatable_v<_Tp>) {
+      size_type __old_size = size();
+    // destroy the element at __p
+      __alloc_traits::destroy(__alloc(), std::__to_address(__p));
+    // move the rest down
+      (void) trivially_relocate(__p + 1, this->__end_, __p);
+    // update the end
+      this->__end_--;
+      __annotate_shrink(__old_size);
+      return __make_iter(__p);
+     }
+  }
+#endif
   this->__destruct_at_end(std::move(__p + 1, this->__end_, __p));
   return __make_iter(__p);
 }
@@ -1557,6 +1572,24 @@ vector<_Tp, _Allocator>::erase(const_iterator __first, const_iterator __last) {
   _LIBCPP_ASSERT_VALID_INPUT_RANGE(__first <= __last, "vector::erase(first, last) called with invalid range");
   pointer __p = this->__begin_ + (__first - begin());
   if (__first != __last) {
+#if _LIBCPP_STD_VER >= 20
+  if (!__libcpp_is_constant_evaluated()) {
+    if constexpr (is_trivially_relocatable_v<_Tp>) {
+      size_type __old_size = size();
+      size_type __count = __last - __first;
+      pointer __p0 = __p + __count;
+    // destroy the elements at [__p, __p0)
+      for (pointer __to_destroy = __p; __to_destroy < __p0; ++__to_destroy)
+        __alloc_traits::destroy(__alloc(), std::__to_address(__to_destroy));
+    // move the rest down
+      (void) trivially_relocate(__p0, this->__end_, __p);
+    // update the end
+      this->__end_ -= __count;
+      __annotate_shrink(__old_size);
+      return __make_iter(__p);
+     }
+  }
+#endif
     this->__destruct_at_end(std::move(__p + (__last - __first), this->__end_, __p));
   }
   return __make_iter(__p);
