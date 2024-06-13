@@ -658,6 +658,203 @@ __uninitialized_allocator_relocate(_Alloc& __alloc, _Tp* __first, _Tp* __last, _
   }
 }
 
+// Trivial relocation stuff
+#if _LIBCPP_STD_VER >= 20
+
+namespace {
+// Implementation details --- using an anonymous namespace within this single TU prototype
+template <class _Iter>
+concept nothrow_input_iterator = input_iterator<_Iter>;
+
+template <class _Iter>
+concept nothrow_forward_iterator = forward_iterator<_Iter>;
+
+// We need a concept to distinguish the "not" case at the end --- subsumption
+// does not kick in, so could maybe be just a constexpr boolean variable
+// template.
+
+template <class _InIter, class _OutIter>
+concept relocatable_iterators
+	  = std::same_as<std::iter_value_t<_InIter>, std::iter_value_t<_OutIter>>
+    and std::is_lvalue_reference_v<std::iter_reference_t<_InIter>>
+    and std::is_lvalue_reference_v<std::iter_reference_t<_OutIter>>;
+    
+    
+template <class _InIter, class _OutIter>
+concept no_fail_relocatable_iterators
+      = relocatable_iterators<_InIter, _OutIter>
+    and ( std::is_nothrow_move_constructible_v<std::iter_value_t<_InIter>>
+     or std::is_trivially_relocatable_v<std::iter_value_t<_InIter>>
+      );
+} // unnamed namespace
+
+#ifndef __cpp_contracts
+# define contract_assert(...) _LIBCPP_ASSERT_INTERNAL(__VA_ARGS__)
+#endif
+
+template <contiguous_iterator _InIter, contiguous_iterator _OutIter>
+  requires no_fail_relocatable_iterators<_InIter, _OutIter>
+auto unintialized_relocate(_InIter __first, _InIter __last, _OutIter __result) noexcept
+  -> _OutIter {
+  // Note that by design, none of the operations in this implementation are
+  // potentially-throwing --- hence there are no concerns about exception
+  // safety
+
+  // One implementation bug deferred from proof of concept is that we assume
+  // that the object pointer type can be implicitly converted to the
+  // contiguous output iterator when creating the return value. I have yet __result
+  // confirm that this is mandated by the relevant concepts
+  // Using pointers to relocate whole range at once, and remove
+  // no-throw-iterator concerns from support for contiguous iterators. There
+  // remains corner-case concerns to clean up for throwing `operator*` and
+  // dereferencing past-the-end iterators for empty ranges.
+  auto * __begin = std::addressof(*__first);
+  auto * __end = __begin + (__last - __first);
+  auto * __new_location = std::addressof(*__result);
+
+  // This check is redundant if we follow all the branches below, but makes
+  // the design intent clear.
+  if (__begin == __new_location)
+    return __result;
+
+  // For trivially relocatable type, just delegate to the core language primitive
+  if constexpr (is_trivially_relocatable_v<std::iter_value_t<_InIter>>) {
+    (void) trivially_relocate(__begin, __end, __new_location);
+    return __result + (__last - __first);
+  }
+
+  // For non-trivial relocation, we must detect and support overlapping ranges
+  // ourselves. At this point we no longer need to worry about trivial
+  // relocatable types but are not move-constructible.
+
+  if (__less<>{}(__end, __new_location) || __less<>{}(__new_location + (__end - __begin), __begin)) {
+    // No overlap
+    _OutIter __result0 = uninitialized_move(__first, __last, __result);
+    destroy(__begin, __end);
+    return __result0;
+  }
+  else if (__less<>{}(__begin, __new_location)) {
+    // move-and-destroy each member, back to front
+
+    // Implementation note: we could just modify `__new_location` rather than
+    // create the local `dest`, but want to clearly show the algorithm
+    // without micro-optimizing.
+    auto * __dest = __new_location + (__end - __begin);
+    while (__dest != __new_location) {
+      __dest = std::__construct_at(--__dest, std::move(*--__end));
+      std::__destroy_at(__end);
+    }
+    return __result + (__last - __first);
+
+  }
+  else if (__begin == __new_location) {
+    // Note that this is the same check redundantly hoisted out of the
+    // if/elif/else flow, but is NOT redundant here
+    return __result;
+  }
+  else {
+    // move-and-destroy each member, front to back
+    while (__first != __last) {
+      (void) __construct_at(std::addressof(*__result), std::move(*__first));
+      std::__destroy_at(std::addressof(*__first));
+      ++__result;
+      ++__first;
+      }
+    return __result;
+  }
+
+  __libcpp_unreachable();
+}
+
+template <nothrow_input_iterator _InIter, nothrow_input_iterator _OutIter>
+  requires no_fail_relocatable_iterators<_InIter, _OutIter>
+auto unintialized_relocate(_InIter __first, _InIter __last, _OutIter __result) noexcept
+  -> _OutIter {
+  // There is no support for overlapping ranges unless both iterator types are
+  // contiguous iterators, which would be subsumed by the contiguous itetator
+  // overload.
+
+  // Note that there are trivially relocatable types that are not no-throw
+  // move constructible and vice-versa, so we need to handle both cases. In
+  // doing so, we should pick a preferred implementation for types that are
+  // both trivially relocatable and no-throw move constructible.
+  if (__first == __last)
+    return __result;
+
+  // Think carefully about iterator invalidation when destroying elements.
+  // The post-increment on `__first` seems important, in case element
+  // destruction invalidates an iterator, which would be the case for a
+  // pointer.
+  while (__first != __last) {
+    auto * __begin = std::addressof(*__first++);
+    auto * __new_location = std::addressof(*__result++);
+
+    if constexpr(is_trivially_relocatable_v<std::iter_value_t<_InIter>>) {
+      (void) trivially_relocate(__begin, __begin + 1, __new_location);
+    }
+    else {
+      (void) std::__construct_at(__new_location, std::move(*__begin));
+      std::__destroy_at(__begin);
+    }
+  }
+
+  return __result;
+}
+
+template <std::forward_iterator _InIter, nothrow_input_iterator _OutIter>
+  requires relocatable_iterators<_InIter, _OutIter>
+       and (!no_fail_relocatable_iterators<_InIter, _OutIter>)
+       and std::is_move_constructible_v<std::iter_value_t<_InIter>>
+auto unintialized_relocate(_InIter __first, _InIter __last, _OutIter __result) // NOT declared noexcept
+  -> _OutIter {
+  // The move-constructor can throw, so relocation is not guaranteed to
+  // succeed. The opt for the vector-like strong exception safety guarantee
+  // for this operation: if move can throw, but the type is
+  // copy-constructible, then *copy* the range, so that we can safely unwind
+  // if an exception is thrown without leaving the initially relocated
+  // elements in an unknown state. Otherwise, we will *move* all of the
+  // elements, and leave those elements in an unspecified valid state. Only
+  // if the copy/move operation succeeds are the original elements destroyed.
+  if (__first == __last)
+    return __result;
+
+  if constexpr(std::contiguous_iterator<_InIter> and std::contiguous_iterator<_OutIter>) {
+    // Note that once we complete overload resolution, all viable iterators
+    // referring to trivially relocatable types should have directed to an
+    // overload above. We might still have contiguous iterators to
+    // move-constructible types that may throw, and are not trivially
+    // relocatable, which means we may be able to assert preconditions that
+    // overlapping ranges are not supported.
+    // check for overlapping range with a contract_assert
+#if defined(__clang__)
+    contract_assert(!__is_pointer_in_range(std::addressof(*__first), std::addressof(*__last),
+                                           std::addressof(*__result)), "Overlapping range in unintialized_relocate");
+#else
+    const size_t __count = __last - __first;
+    auto * __begin = std::addressof(*__first);
+    auto * __end  = __begin + __count; // `__last` is often not a derefencerable iterator
+    auto * __new_location = std::addressof(*__result);
+    auto __less_ = std::less<>{};
+    // Note that __end == __new_location is fine
+    contract_assert(__less_(__end, __new_location) || __less_(__new_location + __count, __begin), "Overlapping range in unintialized_relocate");
+#endif
+  }
+
+  // Remember original `__result` may be invalidated by this operation, so we need
+  // to capture the return value.
+  if constexpr(is_copy_constructible_v<std::iter_value_t<_InIter>>)
+    __result = std::uninitialized_copy(__first, __last, __result); // cleans up new range if any copy throws
+  else
+    __result = std::uninitialized_move(__first, __last, __result); // cleans up new range if any move throws
+
+  std::__destroy(__first, __last); // "Library UB" if destructor throws
+  return __result;
+  }
+
+// Need to add the ranges stuff here
+
+#endif
+
 _LIBCPP_END_NAMESPACE_STD
 
 _LIBCPP_POP_MACROS
