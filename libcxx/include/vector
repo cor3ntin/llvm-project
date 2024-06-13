@@ -1549,19 +1549,17 @@ vector<_Tp, _Allocator>::erase(const_iterator __position) {
   difference_type __ps = __position - cbegin();
   pointer __p          = this->__begin_ + __ps;
 #if _LIBCPP_STD_VER >= 20
-  if (!__libcpp_is_constant_evaluated()) {
-    if constexpr (is_trivially_relocatable_v<_Tp>) {
-      size_type __old_size = size();
+  if constexpr (is_trivially_relocatable_v<_Tp>) {
+    size_type __old_size = size();
     // destroy the element at __p
-      __alloc_traits::destroy(__alloc(), std::__to_address(__p));
+    __alloc_traits::destroy(__alloc(), std::__to_address(__p));
     // move the rest down
-      (void) trivially_relocate(__p + 1, this->__end_, __p);
+    (void) unintialized_relocate(__p + 1, this->__end_, __p);
     // update the end
-      this->__end_--;
-      __annotate_shrink(__old_size);
-      return __make_iter(__p);
-     }
-  }
+    this->__end_--;
+    __annotate_shrink(__old_size);
+    return __make_iter(__p);
+    }
 #endif
   this->__destruct_at_end(std::move(__p + 1, this->__end_, __p));
   return __make_iter(__p);
@@ -1574,22 +1572,20 @@ vector<_Tp, _Allocator>::erase(const_iterator __first, const_iterator __last) {
   pointer __p = this->__begin_ + (__first - begin());
   if (__first != __last) {
 #if _LIBCPP_STD_VER >= 20
-  if (!__libcpp_is_constant_evaluated()) {
-    if constexpr (is_trivially_relocatable_v<_Tp>) {
-      size_type __old_size = size();
-      size_type __count = __last - __first;
-      pointer __p0 = __p + __count;
+  if constexpr (is_trivially_relocatable_v<_Tp>) {
+    size_type __old_size = size();
+    size_type __count = __last - __first;
+    pointer __p0 = __p + __count;
     // destroy the elements at [__p, __p0)
-      for (pointer __to_destroy = __p; __to_destroy < __p0; ++__to_destroy)
-        __alloc_traits::destroy(__alloc(), std::__to_address(__to_destroy));
+    for (pointer __to_destroy = __p; __to_destroy < __p0; ++__to_destroy)
+      __alloc_traits::destroy(__alloc(), std::__to_address(__to_destroy));
     // move the rest down
-      (void) trivially_relocate(__p0, this->__end_, __p);
+    (void) unintialized_relocate(__p0, this->__end_, __p);
     // update the end
-      this->__end_ -= __count;
-      __annotate_shrink(__old_size);
-      return __make_iter(__p);
+    this->__end_ -= __count;
+    __annotate_shrink(__old_size);
+    return __make_iter(__p);
      }
-  }
 #endif
     this->__destruct_at_end(std::move(__p + (__last - __first), this->__end_, __p));
   }
@@ -1619,6 +1615,25 @@ vector<_Tp, _Allocator>::insert(const_iterator __position, const_reference __x) 
     if (__p == this->__end_) {
       __construct_one_at_end(__x);
     } else {
+#if _LIBCPP_STD_VER >= 20
+      if (!__libcpp_is_constant_evaluated()) {
+        if constexpr (is_trivially_relocatable_v<_Tp>) {
+          // Make space by trivially relocating everything
+          _ConstructTransaction __tx(*this, 1);
+          (void) trivially_relocate(__p, this->__end_, __p + 1);
+          // construct the new element (not assign!)
+          const_pointer __xr = pointer_traits<const_pointer>::pointer_to(__x);
+          if (std::__is_pointer_in_range(std::__to_address(__p), std::__to_address(__end_), std::addressof(__x)))
+            ++__xr;
+          __alloc_traits::construct(this->__alloc(), std::__to_address(__p), *__xr);
+          ++__tx.__pos_;
+          // Need to fix up upon an exception!
+          // update all the invariants.
+          // return an iterator to the new entry
+          return __make_iter(__p);
+          }
+        }
+#endif
       __move_range(__p, this->__end_, __p + 1);
       const_pointer __xr = pointer_traits<const_pointer>::pointer_to(__x);
       if (std::__is_pointer_in_range(std::__to_address(__p), std::__to_address(__end_), std::addressof(__x)))
@@ -1642,8 +1657,21 @@ vector<_Tp, _Allocator>::insert(const_iterator __position, value_type&& __x) {
     if (__p == this->__end_) {
       __construct_one_at_end(std::move(__x));
     } else {
+#if _LIBCPP_STD_VER >= 20
+      // Make space by trivially relocating everything
+      _ConstructTransaction __tx(*this, 1);
+      (void) unintialized_relocate(__p, this->__end_, __p + 1);
+      // construct the new element (not assign!)
+      __alloc_traits::construct(this->__alloc(), std::__to_address(__p), std::forward<value_type>(__x));
+      ++__tx.__pos_;
+      // Need to fix up upon an exception!
+      // update all the invariants.
+      // return an iterator to the new entry
+      return __make_iter(__p);
+#else
       __move_range(__p, this->__end_, __p + 1);
       *__p = std::move(__x);
+#endif
     }
   } else {
     allocator_type& __a = this->__alloc();
@@ -1663,9 +1691,22 @@ vector<_Tp, _Allocator>::emplace(const_iterator __position, _Args&&... __args) {
     if (__p == this->__end_) {
       __construct_one_at_end(std::forward<_Args>(__args)...);
     } else {
+#if _LIBCPP_STD_VER >= 20
+      // Make space by trivially relocating everything
+      _ConstructTransaction __tx(*this, 1);
+      (void) unintialized_relocate(__p, this->__end_, __p + 1);
+      // construct the new element
+      __alloc_traits::construct(this->__alloc(), std::__to_address(__p), std::forward<_Args>(__args)...);
+      ++__tx.__pos_;
+      // Need to fix up upon an exception!
+      // update all the invariants.
+      // return an iterator to the new entry
+      return __make_iter(__p);
+#else
       __temp_value<value_type, _Allocator> __tmp(this->__alloc(), std::forward<_Args>(__args)...);
       __move_range(__p, this->__end_, __p + 1);
       *__p = std::move(__tmp.get());
+#endif
     }
   } else {
     allocator_type& __a = this->__alloc();
