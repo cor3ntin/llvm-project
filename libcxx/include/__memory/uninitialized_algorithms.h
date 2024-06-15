@@ -38,6 +38,8 @@
 #include <__utility/pair.h>
 #include <new>
 
+#include <cassert>
+
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #  pragma GCC system_header
 #endif
@@ -688,9 +690,11 @@ concept no_fail_relocatable_iterators
       );
 } // unnamed namespace
 
+// Forward looking for asserting preconditions --- tune feature macro as needed
 #ifndef __cpp_contracts
-# define contract_assert(...) _LIBCPP_ASSERT_INTERNAL(__VA_ARGS__)
+# define contract_assert(...) assert(__VA_ARGS__)
 #endif
+
 
 template <contiguous_iterator _InIter, contiguous_iterator _OutIter>
   requires no_fail_relocatable_iterators<_InIter, _OutIter>
@@ -828,7 +832,7 @@ auto unintialized_relocate(_InIter __first, _InIter __last, _OutIter __result) /
     // check for overlapping range with a contract_assert
 #if defined(__clang__)
     contract_assert(!__is_pointer_in_range(std::addressof(*__first), std::addressof(*__last),
-                                           std::addressof(*__result)), "Overlapping range in unintialized_relocate");
+                                           std::addressof(*__result)));
 #else
     const size_t __count = __last - __first;
     auto * __begin = std::addressof(*__first);
@@ -836,7 +840,7 @@ auto unintialized_relocate(_InIter __first, _InIter __last, _OutIter __result) /
     auto * __new_location = std::addressof(*__result);
     auto __less_ = std::less<>{};
     // Note that __end == __new_location is fine
-    contract_assert(__less_(__end, __new_location) || __less_(__new_location + __count, __begin), "Overlapping range in unintialized_relocate");
+    contract_assert(__less_(__end, __new_location) || __less_(__new_location + __count, __begin));
 #endif
   }
 
