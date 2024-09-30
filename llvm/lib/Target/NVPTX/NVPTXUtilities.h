@@ -13,11 +13,14 @@
 #ifndef LLVM_LIB_TARGET_NVPTX_NVPTXUTILITIES_H
 #define LLVM_LIB_TARGET_NVPTX_NVPTXUTILITIES_H
 
+#include "NVPTX.h"
 #include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/FormatVariadic.h"
 #include <cstdarg>
 #include <set>
 #include <string>
@@ -47,21 +50,24 @@ std::string getTextureName(const Value &);
 std::string getSurfaceName(const Value &);
 std::string getSamplerName(const Value &);
 
-bool getMaxNTIDx(const Function &, unsigned &);
-bool getMaxNTIDy(const Function &, unsigned &);
-bool getMaxNTIDz(const Function &, unsigned &);
+std::optional<unsigned> getMaxNTIDx(const Function &);
+std::optional<unsigned> getMaxNTIDy(const Function &);
+std::optional<unsigned> getMaxNTIDz(const Function &);
+std::optional<unsigned> getMaxNTID(const Function &F);
 
-bool getReqNTIDx(const Function &, unsigned &);
-bool getReqNTIDy(const Function &, unsigned &);
-bool getReqNTIDz(const Function &, unsigned &);
+std::optional<unsigned> getReqNTIDx(const Function &);
+std::optional<unsigned> getReqNTIDy(const Function &);
+std::optional<unsigned> getReqNTIDz(const Function &);
+std::optional<unsigned> getReqNTID(const Function &);
 
 bool getMaxClusterRank(const Function &, unsigned &);
 bool getMinCTASm(const Function &, unsigned &);
 bool getMaxNReg(const Function &, unsigned &);
 bool isKernelFunction(const Function &);
+bool isParamGridConstant(const Value &);
 
-bool getAlign(const Function &, unsigned index, unsigned &);
-bool getAlign(const CallInst &, unsigned index, unsigned &);
+MaybeAlign getAlign(const Function &, unsigned);
+MaybeAlign getAlign(const CallInst &, unsigned);
 Function *getMaybeBitcastedCallee(const CallBase *CB);
 
 // PTX ABI requires all scalar argument/return values to have
@@ -78,6 +84,84 @@ inline unsigned promoteScalarArgumentSize(unsigned size) {
 bool shouldEmitPTXNoReturn(const Value *V, const TargetMachine &TM);
 
 bool Isv2x16VT(EVT VT);
+
+namespace NVPTX {
+
+inline std::string OrderingToString(Ordering Order) {
+  switch (Order) {
+  case Ordering::NotAtomic:
+    return "NotAtomic";
+  case Ordering::Relaxed:
+    return "Relaxed";
+  case Ordering::Acquire:
+    return "Acquire";
+  case Ordering::Release:
+    return "Release";
+  case Ordering::AcquireRelease:
+    return "AcquireRelease";
+  case Ordering::SequentiallyConsistent:
+    return "SequentiallyConsistent";
+  case Ordering::Volatile:
+    return "Volatile";
+  case Ordering::RelaxedMMIO:
+    return "RelaxedMMIO";
+  }
+  report_fatal_error(formatv("Unknown NVPTX::Ordering \"{}\".",
+                             static_cast<OrderingUnderlyingType>(Order)));
 }
+
+inline raw_ostream &operator<<(raw_ostream &O, Ordering Order) {
+  O << OrderingToString(Order);
+  return O;
+}
+
+inline std::string ScopeToString(Scope S) {
+  switch (S) {
+  case Scope::Thread:
+    return "Thread";
+  case Scope::System:
+    return "System";
+  case Scope::Block:
+    return "Block";
+  case Scope::Cluster:
+    return "Cluster";
+  case Scope::Device:
+    return "Device";
+  }
+  report_fatal_error(formatv("Unknown NVPTX::Scope \"{}\".",
+                             static_cast<ScopeUnderlyingType>(S)));
+}
+
+inline raw_ostream &operator<<(raw_ostream &O, Scope S) {
+  O << ScopeToString(S);
+  return O;
+}
+
+inline std::string AddressSpaceToString(AddressSpace A) {
+  switch (A) {
+  case AddressSpace::Generic:
+    return "generic";
+  case AddressSpace::Global:
+    return "global";
+  case AddressSpace::Const:
+    return "const";
+  case AddressSpace::Shared:
+    return "shared";
+  case AddressSpace::Param:
+    return "param";
+  case AddressSpace::Local:
+    return "local";
+  }
+  report_fatal_error(formatv("Unknown NVPTX::AddressSpace \"{}\".",
+                             static_cast<AddressSpaceUnderlyingType>(A)));
+}
+
+inline raw_ostream &operator<<(raw_ostream &O, AddressSpace A) {
+  O << AddressSpaceToString(A);
+  return O;
+}
+
+} // namespace NVPTX
+} // namespace llvm
 
 #endif

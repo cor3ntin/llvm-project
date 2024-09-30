@@ -144,22 +144,28 @@ namespace llvm {
           DisableIntegratedAS(false), FunctionSections(false),
           DataSections(false), IgnoreXCOFFVisibility(false),
           XCOFFTracebackTable(true), UniqueSectionNames(true),
-          UniqueBasicBlockSectionNames(false), TrapUnreachable(false),
-          NoTrapAfterNoreturn(false), TLSSize(0), EmulatedTLS(false),
-          EnableTLSDESC(false), EnableIPRA(false), EmitStackSizeSection(false),
-          EnableMachineOutliner(false), EnableMachineFunctionSplitter(false),
-          SupportsDefaultOutlining(false), EmitAddrsig(false), BBAddrMap(false),
-          EmitCallSiteInfo(false), SupportsDebugEntryValues(false),
-          EnableDebugEntryValues(false), ValueTrackingVariableLocations(false),
-          ForceDwarfFrameSection(false), XRayFunctionIndex(true),
-          DebugStrictDwarf(false), Hotpatch(false),
+          UniqueBasicBlockSectionNames(false), SeparateNamedSections(false),
+          TrapUnreachable(false), NoTrapAfterNoreturn(false), TLSSize(0),
+          EmulatedTLS(false), EnableTLSDESC(false), EnableIPRA(false),
+          EmitStackSizeSection(false), EnableMachineOutliner(false),
+          EnableMachineFunctionSplitter(false), SupportsDefaultOutlining(false),
+          EmitAddrsig(false), BBAddrMap(false), EmitCallSiteInfo(false),
+          SupportsDebugEntryValues(false), EnableDebugEntryValues(false),
+          ValueTrackingVariableLocations(false), ForceDwarfFrameSection(false),
+          XRayFunctionIndex(true), DebugStrictDwarf(false), Hotpatch(false),
           PPCGenScalarMASSEntries(false), JMCInstrument(false),
           EnableCFIFixup(false), MisExpect(false), XCOFFReadOnlyPointers(false),
+          VerifyArgABICompliance(true),
           FPDenormalMode(DenormalMode::IEEE, DenormalMode::IEEE) {}
 
     /// DisableFramePointerElim - This returns true if frame pointer elimination
     /// optimization should be disabled for the given machine function.
     bool DisableFramePointerElim(const MachineFunction &MF) const;
+
+    /// FramePointerIsReserved - This returns true if the frame pointer must
+    /// always either point to a new frame record or be un-modified in the given
+    /// function.
+    bool FramePointerIsReserved(const MachineFunction &MF) const;
 
     /// If greater than 0, override the default value of
     /// MCAsmInfo::BinutilsVersion.
@@ -277,6 +283,9 @@ namespace llvm {
     /// Use unique names for basic block sections.
     unsigned UniqueBasicBlockSectionNames : 1;
 
+    /// Emit named sections with the same name into different sections.
+    unsigned SeparateNamedSections : 1;
+
     /// Emit target-specific trap instruction for 'unreachable' IR instructions.
     unsigned TrapUnreachable : 1;
 
@@ -372,6 +381,12 @@ namespace llvm {
     /// When set to true, const objects with relocatable address values are put
     /// into the RO data section.
     unsigned XCOFFReadOnlyPointers : 1;
+
+    /// When set to true, call/return argument extensions of narrow integers
+    /// are verified in the target backend if it cares about them. This is
+    /// not done with internal tools like llc that run many tests that ignore
+    /// (lack) these extensions.
+    unsigned VerifyArgABICompliance : 1;
 
     /// Name of the stack usage file (i.e., .su file) if user passes
     /// -fstack-usage. If empty, it can be implied that -fstack-usage is not
