@@ -1227,7 +1227,8 @@ static ExprResult formImmediatelyDeclaredConstraint(
     R.addDecl(CDT);
     ImmediatelyDeclaredConstraint = UnresolvedLookupExpr::Create(
         S.getASTContext(), nullptr, SS.getWithLocInContext(S.getASTContext()),
-        SourceLocation(), NameInfo, false, &ConstraintArgs, R.begin(), R.end(), /*KnownDependent=*/false);
+        SourceLocation(), NameInfo, false, &ConstraintArgs, R.begin(), R.end(), /*KnownDependent=*/false,
+                                                                                /*KnownInstantiationDependent=*/false);
     if (ImmediatelyDeclaredConstraint.isInvalid() || !EllipsisLoc.isValid())
       return ImmediatelyDeclaredConstraint;
   }
@@ -4656,7 +4657,8 @@ Sema::CheckVarOrConceptTemplateTemplateId(const CXXScopeSpec &,
     SmallVector<TemplateArgument, 4> SugaredConverted, CanonicalConverted;
     if (CheckTemplateArgumentList(
             Template, TemplateLoc,
-            const_cast<TemplateArgumentListInfo &>(*TemplateArgs), false,
+            const_cast<TemplateArgumentListInfo &>(*TemplateArgs),
+            /*DefaultArgs=*/{}, false,
             SugaredConverted, CanonicalConverted, /*UpdateArgsWithConversion=*/true))
       return true;
 
@@ -7872,7 +7874,6 @@ void Sema::NoteTemplateParameterLocation(const NamedDecl &Decl) {
                diag::note_template_param_external);
 }
 
-<<<<<<< HEAD
 bool Sema::CheckPartiallyAppliedConceptTemplateArgument(
     TemplateTemplateParmDecl *Param, TemplateParameterList *Params,
     TemplateArgumentLoc &Arg) {
@@ -7921,11 +7922,6 @@ Sema::BuildExpressionFromDeclTemplateArgument(const TemplateArgument &Arg,
                                               QualType ParamType,
                                               SourceLocation Loc,
                                               NamedDecl *TemplateParam) {
-=======
-ExprResult Sema::BuildExpressionFromDeclTemplateArgument(
-    const TemplateArgument &Arg, QualType ParamType, SourceLocation Loc,
-    NamedDecl *TemplateParam) {
->>>>>>> llvm_be_very_careful/main
   // C++ [temp.param]p8:
   //
   //   A non-type template-parameter of type "array of T" or
@@ -9310,11 +9306,12 @@ void Sema::CheckConceptRedefinition(ConceptDecl *NewDecl,
   Context.setPrimaryMergedDecl(NewDecl, OldConcept->getCanonicalDecl());
 }
 
-bool Sema::CheckConceptUseInDefinition(ConceptDecl *Concept,
+bool Sema::CheckConceptUseInDefinition(NamedDecl *Concept,
                                        SourceLocation Loc) {
-  if (!Concept->isInvalidDecl() && !Concept->hasDefinition()) {
-    Diag(Loc, diag::err_recursive_concept) << Concept;
-    Diag(Concept->getLocation(), diag::note_declared_at);
+  if (auto* CE = llvm::dyn_cast<ConceptDecl>(Concept); CE &&
+          !CE->isInvalidDecl() && !CE->hasDefinition()) {
+    Diag(Loc, diag::err_recursive_concept) << CE;
+    Diag(CE->getLocation(), diag::note_declared_at);
     return true;
   }
   return false;

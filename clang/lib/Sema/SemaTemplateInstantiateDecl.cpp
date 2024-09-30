@@ -3288,14 +3288,9 @@ TemplateDeclInstantiator::VisitTemplateTemplateParmDecl(
     Param = TemplateTemplateParmDecl::Create(
         SemaRef.Context, Owner, D->getLocation(),
         D->getDepth() - TemplateArgs.getNumSubstitutedLevels(),
-<<<<<<< HEAD
         D->getPosition(), D->isParameterPack(), D->getIdentifier(),
         D->kind(), D->wasDeclaredWithTypename(),
         InstParams);
-=======
-        D->getPosition(), D->isParameterPack(), D->getIdentifier(),
-        InstParams);
->>>>>>> llvm_be_very_careful/main
   if (D->hasDefaultArgument() && !D->defaultArgumentWasInherited()) {
     NestedNameSpecifierLoc QualifierLoc =
         D->getDefaultArgument().getTemplateQualifierLoc();

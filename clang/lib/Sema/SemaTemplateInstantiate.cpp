@@ -1870,7 +1870,7 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
         return Arg.getAsPartiallyAppliedConcept()->getNamedConcept();
       }
 
-      TemplateName Template = Arg.getAsTemplate().getNameToSubstitute();
+      TemplateName Template = Arg.getAsTemplate();
 
       assert(!Template.isNull() && Template.getAsTemplateDecl() &&
              "Wrong kind of template template argument");
@@ -2224,6 +2224,7 @@ NamedDecl *TemplateInstantiator::TransformUniversalTemplateParameter(
         SemaRef.Context, UTP->getDeclContext(), UTP->getBeginLoc(),
         UTP->getDepth() - SubstitutedLevels, UTP->getIndex(),
         UTP->isParameterPack(), UTP->getIdentifier(), getTemplateNameKind(N),
+        /*isTypename*/false,
         D->getTemplateParameters());
     return cast<NamedDecl>(
         getDerived().TransformDecl(Inst->getLocation(), Inst));
@@ -4593,12 +4594,12 @@ Sema::SubstConceptTemplateArguments(const ConceptSpecializationExpr *CSE,
                                     E->getOperatorLoc(), FPOptionsOverride{});
     }
 
-    ExprResult TransformUnresolvedLookupExpr(UnresolvedLookupExpr *E) {
+    ExprResult TransformUnresolvedLookupExpr(UnresolvedLookupExpr *E, bool IsAddressOfOperand = false) {
       if (E->isConceptReference() || E->isVarDeclReference()) {
         TemplateInstantiator Instantiator(SemaRef, MLTAL,
                                           SourceLocation(),
                                           DeclarationName());
-        return Instantiator.TransformUnresolvedLookupExpr(E);
+        return Instantiator.TransformUnresolvedLookupExpr(E, IsAddressOfOperand);
       }
       return E;
     }

@@ -1612,11 +1612,12 @@ class TemplateTemplateParmDecl final
       : TemplateDecl(TemplateTemplateParm, DC, L, Id, Params),
         TemplateParmPosition(D, P), Typename(Typename),
         ParameterPack(ParameterPack),
-        ParameterKind(ParameterKind), ExpandedParameterPack(false) {}
+        ExpandedParameterPack(false), ParameterKind(ParameterKind) {}
 
   TemplateTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
                            unsigned P, IdentifierInfo *Id,
                            TemplateNameKind ParameterKind,
+                           bool Typename,
                            TemplateParameterList *Params,
                            ArrayRef<TemplateParameterList *> Expansions);
 
@@ -1635,7 +1636,9 @@ public:
 
   static TemplateTemplateParmDecl *
   Create(const ASTContext &C, DeclContext *DC, SourceLocation L, unsigned D,
-         unsigned P, IdentifierInfo *Id, bool Typename, TemplateNameKind ParameterKind,
+         unsigned P, IdentifierInfo *Id,
+         TemplateNameKind ParameterKind,
+         bool Typename,
          TemplateParameterList *Params,
          ArrayRef<TemplateParameterList *> Expansions);
 

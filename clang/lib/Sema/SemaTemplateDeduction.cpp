@@ -497,7 +497,7 @@ DeduceNonTypeTemplateArgument(Sema &S, TemplateParameterList *TemplateParams,
                               bool PartialOrdering,
                               SmallVectorImpl<DeducedTemplateArgument> &Deduced,
                               bool *HasDeducedAnyParam) {
-  assert(NTTP->getDepth() == Info.getDeducedDepth() &&
+  assert(NTTP.getDepth() == Info.getDeducedDepth() &&
          "deducing non-type template argument with wrong depth");
 
   DeducedTemplateArgument Result = checkDeducedTemplateArguments(

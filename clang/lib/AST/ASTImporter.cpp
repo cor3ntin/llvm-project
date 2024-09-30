@@ -6040,7 +6040,7 @@ ASTNodeImporter::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
           ToD, D, Importer.getToContext(),
           Importer.getToContext().getTranslationUnitDecl(), *LocationOrErr,
           D->getDepth(), D->getPosition(), D->isParameterPack(),
-          (*NameOrErr).getAsIdentifierInfo(), D->kind(), *TemplateParamsOrErr))
+          (*NameOrErr).getAsIdentifierInfo(), D->kind(), D->wasDeclaredWithTypename(), *TemplateParamsOrErr))
     return ToD;
 
   if (Error Err = importTemplateParameterDefaultArgument(D, ToD))

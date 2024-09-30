@@ -101,6 +101,8 @@ TemplateParameterList::TemplateParameterList(const ASTContext& C,
   }
 }
 
+}
+
 bool TemplateParameterList::containsUnexpandedParameterPack() const {
   if (ContainsUnexpandedParameterPack)
     return true;
@@ -840,7 +842,8 @@ void TemplateTemplateParmDecl::anchor() {}
 
 TemplateTemplateParmDecl::TemplateTemplateParmDecl(
     DeclContext *DC, SourceLocation L, unsigned D, unsigned P,
-    IdentifierInfo *Id, TemplateNameKind Kind, TemplateParameterList *Params,
+    IdentifierInfo *Id, TemplateNameKind Kind, bool Typename,
+    TemplateParameterList *Params,
     ArrayRef<TemplateParameterList *> Expansions)
     : TemplateDecl(TemplateTemplateParm, DC, L, Id, Params),
       TemplateParmPosition(D, P), Typename(Typename), ParameterPack(true),
@@ -853,28 +856,29 @@ TemplateTemplateParmDecl::TemplateTemplateParmDecl(
 
 TemplateTemplateParmDecl *TemplateTemplateParmDecl::Create(
     const ASTContext &C, DeclContext *DC, SourceLocation L, unsigned D,
-    unsigned P, bool ParameterPack, IdentifierInfo *Id, bool Typename, TemplateNameKind Kind,
+    unsigned P, bool ParameterPack, IdentifierInfo *Id, TemplateNameKind Kind,
+    bool Typename,
     TemplateParameterList *Params) {
   return new (C, DC)
-      TemplateTemplateParmDecl(DC, L, D, P, ParameterPack, Id, Typename, Kind, Params);
+      TemplateTemplateParmDecl(DC, L, D, P, ParameterPack, Id, Kind, Typename, Params);
 }
 
 TemplateTemplateParmDecl *
 TemplateTemplateParmDecl::Create(const ASTContext &C, DeclContext *DC,
                                  SourceLocation L, unsigned D, unsigned P,
-                                 IdentifierInfo *Id, bool Typename, TemplateNameKind Kind,
+                                 IdentifierInfo *Id, TemplateNameKind Kind, bool Typename,
                                  TemplateParameterList *Params,
                                  ArrayRef<TemplateParameterList *> Expansions) {
   return new (C, DC,
               additionalSizeToAlloc<TemplateParameterList *>(Expansions.size()))
-      TemplateTemplateParmDecl(DC, L, D, P, Id, Typename, Kind, Params, Expansions);
+      TemplateTemplateParmDecl(DC, L, D, P, Id, Kind, Typename, Params, Expansions);
 }
 
 TemplateTemplateParmDecl *
-TemplateTemplateParmDecl::CreateDeserialized(ASTContext &C, unsigned ID) {
+TemplateTemplateParmDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID) {
   return new (C, ID)
-      TemplateTemplateParmDecl(nullptr, SourceLocation(), 0, 0, false, nullptr,
-                               false, TemplateNameKind::TNK_Type_template, nullptr);
+      TemplateTemplateParmDecl(nullptr, SourceLocation(), 0, 0, nullptr,
+                               TemplateNameKind::TNK_Type_template, false, nullptr, std::nullopt);
 }
 
 TemplateTemplateParmDecl *
@@ -883,7 +887,7 @@ TemplateTemplateParmDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID,
   auto *TTP =
       new (C, ID, additionalSizeToAlloc<TemplateParameterList *>(NumExpansions))
           TemplateTemplateParmDecl(nullptr, SourceLocation(), 0, 0, nullptr,
-                                   false, TemplateNameKind::TNK_Type_template, nullptr,
+                                   TemplateNameKind::TNK_Type_template, false, nullptr,
                                    std::nullopt);
   TTP->NumExpandedParams = NumExpansions;
   return TTP;
@@ -1582,7 +1586,8 @@ createMakeIntegerSeqParameterList(const ASTContext &C, DeclContext *DC) {
   auto *TemplateTemplateParm = TemplateTemplateParmDecl::Create(
       C, DC, SourceLocation(), /*Depth=*/0, /*Position=*/0,
       /*ParameterPack=*/false, /*Id=*/nullptr,
-      /*Typename=*/false, TemplateNameKind::TNK_Type_template, TPL);
+      TemplateNameKind::TNK_Type_template,
+      /*Typename=*/false, TPL);
   TemplateTemplateParm->setImplicit(true);
 
   // typename T
@@ -1644,6 +1649,7 @@ static TemplateParameterList *createBuiltinCommonTypeList(const ASTContext &C,
   auto *BaseTemplate = TemplateTemplateParmDecl::Create(
       C, DC, SourceLocation(), /*Depth=*/0, /*Position=*/0,
       /*ParameterPack=*/false, /*Id=*/nullptr,
+      TemplateNameKind::TNK_Type_template,
       /*Typename=*/false, BaseTemplateList);
 
   // class TypeMember
@@ -1661,6 +1667,7 @@ static TemplateParameterList *createBuiltinCommonTypeList(const ASTContext &C,
   auto *HasTypeMember = TemplateTemplateParmDecl::Create(
       C, DC, SourceLocation(), /*Depth=*/0, /*Position=*/1,
       /*ParameterPack=*/false, /*Id=*/nullptr,
+      TemplateNameKind::TNK_Type_template,
       /*Typename=*/false, HasTypeMemberList);
 
   // class HasNoTypeMember

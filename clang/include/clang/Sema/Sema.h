@@ -147,6 +147,7 @@ class MangleNumberingContext;
 typedef ArrayRef<std::pair<IdentifierInfo *, SourceLocation>> ModuleIdPath;
 class ModuleLoader;
 class MultiLevelTemplateArgumentList;
+struct CachedNormalizedConstraint;
 struct NormalizedConstraint;
 class ObjCInterfaceDecl;
 class ObjCMethodDecl;
@@ -11303,7 +11304,9 @@ public:
   /// parameter (e.g. T in template <template \<typename> class T> class array)
   /// has been parsed. S is the current scope.
   NamedDecl *ActOnTemplateTemplateParameter(
-      Scope *S, SourceLocation TmpLoc, TemplateNameKind Kind,
+      Scope *S, SourceLocation TmpLoc,
+      TemplateNameKind Kind,
+      bool TypenameKeyword,
       TemplateParameterList *Params, SourceLocation EllipsisLoc,
       IdentifierInfo *ParamName, SourceLocation ParamNameLoc, unsigned Depth,
       unsigned Position, SourceLocation EqualLoc,
@@ -12135,7 +12138,7 @@ public:
 
   void CheckConceptRedefinition(ConceptDecl *NewDecl, LookupResult &Previous,
                                 bool &AddToScope);
-  bool CheckConceptUseInDefinition(ConceptDecl *Concept, SourceLocation Loc);
+  bool CheckConceptUseInDefinition(NamedDecl *Concept, SourceLocation Loc);
 
   TypeResult ActOnDependentTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
                                const CXXScopeSpec &SS,
@@ -14575,9 +14578,7 @@ public:
                                 bool First = true);
 
   const NormalizedConstraint *getNormalizedAssociatedConstraints(NamedDecl *ConstrainedDecl,
-                                                                 ArrayRef<const Expr *> AssociatedConstraints,
-      std::optional<ArrayRef<TemplateArgument> > TemplateArgs = std::nullopt, bool TopLevel = false,
-      AtomicConstraint::FoldKind FK = AtomicConstraint::FoldKind::FoldNone);
+                                                                 ArrayRef<const Expr *> AssociatedConstraints);
 
   /// \brief Check whether the given declaration's associated constraints are
   /// at least as constrained than another declaration's according to the
@@ -14608,7 +14609,7 @@ private:
   /// constrained declarations). If an error occurred while normalizing the
   /// associated constraints of the template or concept, nullptr will be cached
   /// here.
-  llvm::FoldingSet<CachedNormalizedConstraint> NormalizationCache;
+  llvm::DenseMap<NamedDecl *, NormalizedConstraint *> NormalizationCache;
 
   llvm::ContextualFoldingSet<ConstraintSatisfaction, const ASTContext &>
       SatisfactionCache;

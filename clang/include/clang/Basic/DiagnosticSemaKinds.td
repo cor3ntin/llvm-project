@@ -5269,7 +5269,7 @@ def err_partial_concept_valid_template : Error<
   "name of template argument does not refer to concept, or concept "
   "template parameter">;
 def err_partial_concept_param_must_have_one_arg : Error<
-  "The corresponding template parameter of a partially applied concept must have exactly one argument">;
+  "the corresponding template parameter of a partially applied concept must have exactly one argument">;
 def note_concept_template_parameter_declared_here : Error<
   "concept template parameter declared here">;
 

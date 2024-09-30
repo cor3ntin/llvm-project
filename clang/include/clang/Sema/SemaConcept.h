@@ -47,10 +47,6 @@ struct alignas(ConstraintAlignment) AtomicConstraint {
 
     for (unsigned I = 0, S = ParameterMapping->size(); I < S; ++I) {
       llvm::FoldingSetNodeID IDA, IDB;
-      if ((*ParameterMapping)[I]
-              .getArgument()
-              .isConceptOrConceptTemplateParameter())
-        continue;
       C.getCanonicalTemplateArgument((*ParameterMapping)[I].getArgument())
           .Profile(IDA, C);
       C.getCanonicalTemplateArgument((*Other.ParameterMapping)[I].getArgument())
@@ -75,9 +71,6 @@ struct alignas(ConstraintAlignment) AtomicConstraint {
     // constraint expressions, therefore the constraint expressions are
     // the originals, and comparing them will suffice.
     if (ConstraintExpr != Other.ConstraintExpr)
-      return false;
-
-    if (!isCompatibleFold(Other))
       return false;
 
     // Check that the parameter lists are identical
@@ -162,22 +155,6 @@ struct NormalizedConstraint {
     return Constraint.get<AtomicConstraint *>();
   }
 
-  void dump() {
-    if (isAtomic()) {
-      llvm::outs() << getAtomicConstraint()->ConstraintExpr;
-      return;
-    }
-    getLHS().dump();
-    llvm::outs() << "\n";
-    llvm::outs() << (getCompoundKind() ==
-                             CompoundConstraintKind::CCK_Conjunction
-                         ? "&&"
-                         : "||")
-                 << "\n";
-    getRHS().dump();
-    llvm::outs() << "\n";
-  }
-
   FoldExpandedConstraint *getFoldExpandedConstraint() const {
     assert(isFoldExpanded() &&
            "getFoldExpandedConstraint called on non-fold-expanded constraint.");
@@ -185,16 +162,10 @@ struct NormalizedConstraint {
   }
 
 private:
-  static std::optional<NormalizedConstraint> fromConstraintExprs(
-      Sema &S, NamedDecl *D, ArrayRef<const Expr *> E,
-      std::optional<ArrayRef<TemplateArgument>> TemplateArgs,
-      AtomicConstraint::FoldKind FK = AtomicConstraint::FoldKind::FoldNone);
-  static std::optional<NormalizedConstraint> fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E,
-                                                                std::optional<ArrayRef<TemplateArgument>> TemplateArgs = std::nullopt,
-      AtomicConstraint::FoldKind FK = AtomicConstraint::FoldKind::FoldNone);
-
-protected:
-  NormalizedConstraint() = default;
+  static std::optional<NormalizedConstraint>
+  fromConstraintExprs(Sema &S, NamedDecl *D, ArrayRef<const Expr *> E);
+  static std::optional<NormalizedConstraint>
+  fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E);
 };
 
 struct alignas(ConstraintAlignment) NormalizedConstraintPair {
