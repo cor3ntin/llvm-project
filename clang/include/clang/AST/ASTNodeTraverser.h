@@ -722,8 +722,6 @@ public:
           D->defaultArgumentWasInherited() ? "inherited from" : "previous");
   }
 
-  void VisitUniversalTemplateParmDecl(const UniversalTemplateParmDecl *D) {}
-
   void VisitConceptDecl(const ConceptDecl *D) {
     dumpTemplateParameters(D->getTemplateParameters());
     Visit(D->getConstraintExpr());

@@ -3543,7 +3543,6 @@ Parser::DiagnoseMissingSemiAfterTagDefinition(DeclSpec &DS, AccessSpecifier AS,
       case Sema::NC_UndeclaredNonType:
       case Sema::NC_UndeclaredTemplate:
       case Sema::NC_Concept:
-      case Sema::NC_UniversalTemplateParam:
         // Not a previously-declared non-type entity.
         MightBeDeclarator = false;
         break;

@@ -590,9 +590,6 @@ NamedDecl *Parser::ParseTemplateParameter(unsigned Depth, unsigned Position) {
     llvm_unreachable("template param classification can't be ambiguous");
   }
 
-  if (isUniversalTemplateParameterIntroducer())
-    return ParseUniversalTemplateParameter(Depth, Position);
-
   if (Tok.is(tok::kw_template))
     return ParseTemplateTemplateParameter(Depth, Position);
 
@@ -600,14 +597,6 @@ NamedDecl *Parser::ParseTemplateParameter(unsigned Depth, unsigned Position) {
   // NOTE: This will pick up errors in the closure of the template parameter
   // list (e.g., template < ; Check here to implement >> style closures.
   return ParseNonTypeTemplateParameter(Depth, Position);
-}
-
-bool Parser::isUniversalTemplateParameterIntroducer() {
-  if (!Ident_universal)
-    Ident_universal = &PP.getIdentifierTable().get("universal");
-  return Tok.is(tok::identifier) &&
-         Tok.getIdentifierInfo() == Ident_universal &&
-         NextToken().is(tok::kw_template);
 }
 
 /// Check whether the current token is a template-id annotation denoting a
@@ -930,33 +919,6 @@ NamedDecl *Parser::ParseTemplateTemplateParameter(unsigned Depth,
   return Actions.ActOnTemplateTemplateParameter(
       getCurScope(), TemplateLoc, Kind, TypenameKeyword, ParamList, EllipsisLoc, ParamName,
       NameLoc, Depth, Position, EqualLoc, DefaultArg);
-}
-
-/// ParseUniversalTemplateParameter - Handle the parsing of universal
-/// template parameters (e.g., in "template<any template Size> class foo;").
-///
-///       template-parameter:
-///         ...
-///
-NamedDecl *Parser::ParseUniversalTemplateParameter(unsigned Depth,
-                                                   unsigned Position) {
-  assert(isUniversalTemplateParameterIntroducer() &&
-         "Expected universal template parameter");
-  SourceLocation NameLoc;
-  IdentifierInfo *ParamName = nullptr;
-  SourceLocation StartLoc = ConsumeToken();
-  ConsumeToken();
-
-  SourceLocation EllipsisLoc;
-  TryConsumeToken(tok::ellipsis, EllipsisLoc);
-
-  if (Tok.is(tok::identifier)) {
-    ParamName = Tok.getIdentifierInfo();
-    NameLoc = ConsumeToken();
-  }
-  return Actions.ActOnUniversalTemplateParameter(getCurScope(), StartLoc,
-                                                 EllipsisLoc, ParamName,
-                                                 NameLoc, Depth, Position);
 }
 
 /// ParseNonTypeTemplateParameter - Handle the parsing of non-type
@@ -1551,36 +1513,6 @@ ParsedTemplateArgument Parser::ParseTemplateTemplateArgument() {
   return Result;
 }
 
-ParsedTemplateArgument Parser::ParseUniversalTemplateParamNameArgument() {
-  if (!Tok.isOneOf(tok::identifier, tok::annot_universal))
-    return ParsedTemplateArgument();
-
-  UnqualifiedId Name;
-  SourceLocation EllipsisLoc;
-  if (Tok.is(tok::annot_universal)) {
-    NamedDecl *ND = getNonTypeAnnotation(Tok);
-    Name.setIdentifier(ND->getIdentifier(), Tok.getLocation());
-    ConsumeAnnotationToken();
-  } else {
-    Name.setIdentifier(Tok.getIdentifierInfo(), Tok.getLocation());
-    ConsumeToken();
-  }
-  TryConsumeToken(tok::ellipsis, EllipsisLoc);
-
-  UniversalTemplateParamNameTy Universal;
-  if (Actions.ActOnUniversalTemplateParameterName(
-          getCurScope(), Name, /*EnteringContext=*/false, Universal) ||
-      !Universal)
-    return {};
-  ParsedTemplateArgument Result =
-      ParsedTemplateArgument(Universal, Name.getBeginLoc());
-  // If this is a pack expansion, build it as such.
-  if (EllipsisLoc.isValid() && !Result.isInvalid())
-    Result = Actions.ActOnPackExpansion(Result, EllipsisLoc);
-
-  return Result;
-}
-
 /// ParseTemplateArgument - Parse a C++ template argument (C++ [temp.names]).
 ///
 ///       template-argument: [C++ 14.2]
@@ -1618,20 +1550,6 @@ ParsedTemplateArgument Parser::ParseTemplateArgument() {
     if (!TemplateTemplateArgument.isInvalid()) {
       TPA.Commit();
       return TemplateTemplateArgument;
-    }
-    // Revert this tentative parse to parse a non-type template argument.
-    TPA.Revert();
-  }
-
-  // Try to parse a template template argument.
-  {
-    TentativeParsingAction TPA(*this);
-
-    ParsedTemplateArgument UniversalTemplateParamNameArg =
-        ParseUniversalTemplateParamNameArgument();
-    if (!UniversalTemplateParamNameArg.isInvalid()) {
-      TPA.Commit();
-      return UniversalTemplateParamNameArg;
     }
     // Revert this tentative parse to parse a non-type template argument.
     TPA.Revert();

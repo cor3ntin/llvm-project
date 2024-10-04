@@ -1237,18 +1237,6 @@ void TextNodeDumper::VisitTemplateExpansionTemplateArgument(
   dumpBareTemplateName(TA.getAsTemplateOrTemplatePattern());
 }
 
-void TextNodeDumper::VisitUniversalTemplateArgument(
-    const TemplateArgument &TA) {
-  OS << " universal ";
-  OS << TA.getAsUniversalTemplateParameterName()->getDecl()->getDeclName();
-}
-
-void TextNodeDumper::VisitUniversalExpansionTemplateArgument(
-    const TemplateArgument &TA) {
-  OS << " universal expansion ";
-  OS << TA.getAsUniversalTemplateParameterName()->getDecl()->getDeclName();
-}
-
 void TextNodeDumper::VisitExpressionTemplateArgument(
     const TemplateArgument &TA) {
   OS << " expr";

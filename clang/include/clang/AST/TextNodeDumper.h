@@ -253,8 +253,6 @@ public:
   void VisitTemplateExpansionTemplateArgument(const TemplateArgument &TA);
   void VisitExpressionTemplateArgument(const TemplateArgument &TA);
   void VisitConceptTemplateArgument(const TemplateArgument &TA);
-  void VisitUniversalTemplateArgument(const TemplateArgument &TA);
-  void VisitUniversalExpansionTemplateArgument(const TemplateArgument &TA);
 
   void VisitPackTemplateArgument(const TemplateArgument &TA);
 

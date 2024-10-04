@@ -3316,22 +3316,6 @@ TemplateDeclInstantiator::VisitTemplateTemplateParmDecl(
   return Param;
 }
 
-Decl *TemplateDeclInstantiator::VisitUniversalTemplateParmDecl(
-    UniversalTemplateParmDecl *D) {
-
-  LocalInstantiationScope Scope(SemaRef);
-  Decl *Transformed = SemaRef.SubstUniversalTemplateParameter(
-      D, TemplateArgs, TemplateArgs.getNumSubstitutedLevels());
-  if (!Transformed)
-    return nullptr;
-  Transformed->setAccess(AS_public);
-  Transformed->setImplicit(D->isImplicit());
-  // Introduce this template parameter's instantiation into the instantiation
-  // scope.
-  SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Transformed);
-  return Transformed;
-}
-
 Decl *TemplateDeclInstantiator::VisitUsingDirectiveDecl(UsingDirectiveDecl *D) {
   // Using directives are never dependent (and never contain any types or
   // expressions), so they require no explicit instantiation work.

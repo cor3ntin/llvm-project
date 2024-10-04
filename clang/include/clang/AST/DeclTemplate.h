@@ -54,7 +54,6 @@ class IdentifierInfo;
 class NonTypeTemplateParmDecl;
 class TemplateDecl;
 class TemplateTemplateParmDecl;
-class UniversalTemplateParmDecl;
 class TemplateTypeParmDecl;
 class ConceptDecl;
 class UnresolvedSetImpl;
@@ -64,7 +63,7 @@ class VarTemplatePartialSpecializationDecl;
 /// Stores a template parameter of any kind.
 using TemplateParameter =
     llvm::PointerUnion<TemplateTypeParmDecl *, NonTypeTemplateParmDecl *,
-                       TemplateTemplateParmDecl *, UniversalTemplateParmDecl *>;
+                       TemplateTemplateParmDecl *>;
 
 NamedDecl *getAsNamedDecl(TemplateParameter P);
 
@@ -1768,75 +1767,6 @@ public:
   static bool classofKind(Kind K) { return K == TemplateTemplateParm; }
 };
 
-class UniversalTemplateParmDecl final : public NamedDecl,
-                                        protected TemplateParmPosition {
-
-  /// Whether this universal template parameter is a parameter pack.
-  bool ParameterPack;
-
-  UniversalTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
-                            unsigned P, bool ParameterPack, IdentifierInfo *Id)
-      : NamedDecl(UniversalTemplateParm, DC, L, Id), TemplateParmPosition(D, P),
-        ParameterPack(ParameterPack) {}
-
-  // UniversalTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
-  //                          unsigned P, IdentifierInfo *Id,
-  //                          TemplateNameKind ParameterKind,
-  //                          TemplateParameterList *Params,
-  //                          ArrayRef<TemplateParameterList *> Expansions);
-
-  void anchor() override {}
-
-public:
-  friend class ASTDeclReader;
-  friend class ASTDeclWriter;
-
-  static UniversalTemplateParmDecl *Create(const ASTContext &C, DeclContext *DC,
-                                           SourceLocation L, unsigned D,
-                                           unsigned P, bool ParameterPack,
-                                           IdentifierInfo *Id);
-
-  // static TemplateTemplateParmDecl *
-  // Create(const ASTContext &C, DeclContext *DC, SourceLocation L, unsigned D,
-  ///       unsigned P, IdentifierInfo *Id, TemplateNameKind ParameterKind,
-  //       TemplateParameterList *Params,
-  //       ArrayRef<TemplateParameterList *> Expansions);
-
-  static TemplateTemplateParmDecl *CreateDeserialized(ASTContext &C,
-                                                      unsigned ID);
-  // static TemplateTemplateParmDecl *CreateDeserialized(ASTContext &C,
-  //                                                     unsigned ID,
-  //                                                     unsigned
-  //                                                     NumExpansions);
-
-  using TemplateParmPosition::getDepth;
-  using TemplateParmPosition::getIndex;
-  using TemplateParmPosition::getPosition;
-  using TemplateParmPosition::setDepth;
-  using TemplateParmPosition::setPosition;
-
-  /// Whether this template template parameter is a template
-  /// parameter pack.
-  ///
-  /// \code
-  /// template<template <class T> ...MetaFunctions> struct Apply;
-  /// \endcode
-  bool isParameterPack() const { return ParameterPack; }
-
-  // Implement isa/cast/dyncast/etc.
-  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
-  static bool classofKind(Kind K) { return K == UniversalTemplateParm; }
-
-  void Profile(llvm::FoldingSetNodeID &ID) const {
-    Profile(ID, ParameterPack, getASTContext());
-  }
-
-  static void Profile(llvm::FoldingSetNodeID &ID, bool ParameterPack,
-                      const ASTContext &Context) {
-    ID.AddBoolean(ParameterPack);
-  }
-};
-
 /// Represents the builtin template declaration which is used to
 /// implement __make_integer_seq and other builtin templates.  It serves
 /// no real purpose beyond existing as a place to hold template parameters.
@@ -3386,8 +3316,6 @@ inline NamedDecl *getAsNamedDecl(TemplateParameter P) {
   if (auto *PD = P.dyn_cast<TemplateTypeParmDecl *>())
     return PD;
   if (auto *PD = P.dyn_cast<NonTypeTemplateParmDecl *>())
-    return PD;
-  if (auto *PD = P.dyn_cast<UniversalTemplateParmDecl *>())
     return PD;
   return P.get<TemplateTemplateParmDecl *>();
 }

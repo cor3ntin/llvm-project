@@ -1767,8 +1767,6 @@ QualType SubstNonTypeTemplateParmExpr::getParameterType(
   // T', so we can't just compute this from the type and value category.
 
   QualType Type = getType();
-  if (isa<UniversalTemplateParmDecl>(getAssociatedDecl()))
-    Type = getReplacement()->getType();
 
   if (isReferenceParameter())
     return Context.getLValueReferenceType(Type);

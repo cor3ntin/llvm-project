@@ -42,8 +42,6 @@ public:
       DISPATCH(TemplateExpansion);
       DISPATCH(Expression);
       DISPATCH(Pack);
-      DISPATCH(Universal);
-      DISPATCH(UniversalExpansion);
     }
     llvm_unreachable("TemplateArgument is not covered in switch!");
   }

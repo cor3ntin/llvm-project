@@ -1850,14 +1850,6 @@ Parser::TryAnnotateName(CorrectionCandidateCallback *CCC,
     // It's not something we know about. Leave it unannotated.
     break;
 
-  case Sema::NC_UniversalTemplateParam:
-    Tok.setKind(tok::annot_universal);
-    setNonTypeAnnotation(Tok, Classification.getUniversalTemplateDecl());
-    Tok.setLocation(NameLoc);
-    Tok.setAnnotationEndLoc(NameLoc);
-    PP.AnnotateCachedTokens(Tok);
-    return ANK_Success;
-
   case Sema::NC_Type: {
     if (TryAltiVecVectorToken())
       // vector has been found as a type id when altivec is enabled but

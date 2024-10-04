@@ -510,11 +510,6 @@ public:
     Inherited::VisitTemplateTemplateParmDecl(D);
   }
 
-  void VisitUniversalTemplateParmDecl(const UniversalTemplateParmDecl *D) {
-    Hash.AddBoolean(D->isParameterPack());
-    Inherited::VisitUniversalTemplateParmDecl(D);
-  }
-
   void VisitTemplateDecl(const TemplateDecl *D) {
     Hash.AddTemplateParameterList(D->getTemplateParameters());
 

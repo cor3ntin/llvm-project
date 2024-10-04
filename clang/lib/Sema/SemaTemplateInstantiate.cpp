@@ -26,7 +26,6 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/TypeVisitor.h"
-#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/Stack.h"
 #include "clang/Basic/TargetInfo.h"
@@ -1545,13 +1544,6 @@ namespace {
     TransformNamedTemplateTemplateArgument(CXXScopeSpec &SS, TemplateName Name,
                                            SourceLocation NameLoc);
 
-    NamedDecl *
-    TransformUniversalTemplateParameter(UniversalTemplateParmDecl *D,
-                                        unsigned SubstitutedLevels = 0);
-
-    TemplateArgument
-    TransformUniversalTemplateArgument(UniversalTemplateParameterName *Name);
-
     const CXXAssumeAttr *TransformCXXAssumeAttr(const CXXAssumeAttr *AA);
     const LoopHintAttr *TransformLoopHintAttr(const LoopHintAttr *LH);
     const NoInlineAttr *TransformStmtNoInlineAttr(const Stmt *OrigS,
@@ -1874,11 +1866,6 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
     // template parameter.
   }
 
-  if (UniversalTemplateParmDecl *UTP = dyn_cast<UniversalTemplateParmDecl>(D);
-      UTP && UTP->getDepth() < TemplateArgs.getNumLevels()) {
-    D = TransformUniversalTemplateParameter(UTP);
-  }
-
   return SemaRef.FindInstantiatedDecl(Loc, cast<NamedDecl>(D), TemplateArgs);
 }
 
@@ -2109,119 +2096,6 @@ static TemplateNameKind getTemplateNameKind(TemplateName Name) {
   if (auto *TTP = dyn_cast<TemplateTemplateParmDecl>(TD))
     return TTP->kind();
   llvm_unreachable("Unexpected template kind");
-}
-
-NamedDecl *TemplateInstantiator::TransformUniversalTemplateParameter(
-    UniversalTemplateParmDecl *UTP, unsigned SubstitutedLevels) {
-  if (!TemplateArgs.hasTemplateArgument(UTP->getDepth() - SubstitutedLevels,
-                                        UTP->getPosition()))
-    return UTP;
-  TemplateArgument Arg =
-      TemplateArgs(UTP->getDepth() - SubstitutedLevels, UTP->getPosition());
-
-  auto [AssociatedDecl, Final] =
-      TemplateArgs.getAssociatedDecl(UTP->getDepth());
-  // assert(Final && "TODO corentin - incomplete pack expansion");
-  std::optional<unsigned> PackIndex;
-  if (UTP->isParameterPack()) {
-    assert(Arg.getKind() == TemplateArgument::Pack && "Missing argument pack");
-    if (getSema().ArgumentPackSubstitutionIndex == -1) {
-      assert(false && "TODO corentin");
-    }
-    PackIndex = getPackIndex(Arg);
-    Arg = getPackSubstitutedTemplateArgument(getSema(), Arg);
-  }
-
-  switch (Arg.getKind()) {
-  case clang::TemplateArgument::Type: {
-    TemplateTypeParmDecl *Inst = TemplateTypeParmDecl::Create(
-        SemaRef.Context, UTP->getDeclContext(), UTP->getBeginLoc(),
-        UTP->getLocation(), UTP->getDepth() - SubstitutedLevels,
-        UTP->getIndex(), UTP->getIdentifier(),
-        /*was declared with typename=*/false, UTP->isParameterPack(),
-        /*Has Type Constraints=*/false, 0);
-    return cast<NamedDecl>(
-        getDerived().TransformDecl(Inst->getLocation(), Inst));
-  }
-  case TemplateArgument::Declaration:
-  case TemplateArgument::Expression:
-  case TemplateArgument::NullPtr:
-  case TemplateArgument::Integral: {
-    QualType Type = SemaRef.Context.getAutoType(
-        QualType(), AutoTypeKeyword::DecltypeAuto, false);
-    TypeSourceInfo *TInfo =
-        SemaRef.Context.getTrivialTypeSourceInfo(Type, UTP->getBeginLoc());
-    NonTypeTemplateParmDecl *Inst = NonTypeTemplateParmDecl::Create(
-        SemaRef.Context, UTP->getDeclContext(), UTP->getBeginLoc(),
-        UTP->getLocation(), UTP->getDepth() - SubstitutedLevels,
-        UTP->getIndex(), UTP->getIdentifier(), Type, UTP->isParameterPack(),
-        TInfo);
-    return cast<NamedDecl>(
-        getDerived().TransformDecl(Inst->getLocation(), Inst));
-  }
-  case TemplateArgument::Template: {
-    TemplateName N = Arg.getAsTemplate();
-    assert(!N.isNull() && "unexpected null template");
-    TemplateDecl *D = N.getAsTemplateDecl();
-    assert(D && "unexpected null template declaration");
-    TemplateTemplateParmDecl *Inst = TemplateTemplateParmDecl::Create(
-        SemaRef.Context, UTP->getDeclContext(), UTP->getBeginLoc(),
-        UTP->getDepth() - SubstitutedLevels, UTP->getIndex(),
-        UTP->isParameterPack(), UTP->getIdentifier(), getTemplateNameKind(N),
-        /*isTypename*/false,
-        D->getTemplateParameters());
-    return cast<NamedDecl>(
-        getDerived().TransformDecl(Inst->getLocation(), Inst));
-
-    break;
-  }
-  case TemplateArgument::TemplateExpansion:
-  case TemplateArgument::UniversalExpansion:
-  case TemplateArgument::Pack:
-    assert(false && "non implemented");
-    break;
-
-  case TemplateArgument::Universal:
-    return UTP;
-
-  case TemplateArgument::Null:
-    llvm_unreachable("Unexepected null template");
-  }
-  return nullptr;
-}
-
-TemplateArgument TemplateInstantiator::TransformUniversalTemplateArgument(
-    UniversalTemplateParameterName *Name) {
-  UniversalTemplateParmDecl *Old = Name->getDecl();
-  Decl *D = getDerived().TransformDecl(Name->getDecl()->getLocation(),
-                                       Name->getDecl());
-  if (isa<UniversalTemplateParmDecl>(D)) {
-    return inherited::TransformUniversalTemplateArgument(Name);
-  }
-  // If the template parameter is a type, build a type template argument
-  // matching that type
-  if (auto *TypeParam = dyn_cast<TemplateTypeParmDecl>(D)) {
-    QualType Result = getSema().Context.getTemplateTypeParmType(
-        Old->getDepth(), Old->getIndex(), Old->isParameterPack(), TypeParam);
-    return TemplateArgument(Result);
-  }
-  if (auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D)) {
-    TemplateArgument Arg = TemplateArgs(NTTP->getDepth(), NTTP->getPosition());
-    if (Arg.getKind() == TemplateArgument::Expression) {
-      if (auto *DRE = dyn_cast<DeclRefExpr>(Arg.getAsExpr())) {
-        return DRE;
-      }
-    }
-    DeclRefExpr *E = SemaRef.BuildDeclRefExpr(
-        NTTP, NTTP->getType(), ExprValueKind::VK_LValue, Name->getNameInfo());
-    return TemplateArgument(E);
-  }
-  if (isa<TemplateTemplateParmDecl>(D)) {
-    TemplateName N(cast<TemplateDecl>(D));
-    return TemplateArgument(N);
-    assert(false && "template template args not implemented");
-  }
-  llvm_unreachable("Unknown universal parameter kind");
 }
 
 ExprResult
@@ -4649,14 +4523,6 @@ Sema::SubstTemplateName(NestedNameSpecifierLoc QualifierLoc,
   return Instantiator.TransformTemplateName(SS, Name, Loc);
 }
 
-NamedDecl *Sema::SubstUniversalTemplateParameter(
-    UniversalTemplateParmDecl *D,
-    const MultiLevelTemplateArgumentList &TemplateArgs,
-    unsigned SubstitutedLevels) {
-  TemplateInstantiator Instantiator(*this, TemplateArgs, D->getLocation(),
-                                    D->getDeclName());
-  return Instantiator.TransformUniversalTemplateParameter(D, SubstitutedLevels);
-}
 
 static const Decl *getCanonicalParmVarDecl(const Decl *D) {
   // When storing ParmVarDecls in the local instantiation scope, we always

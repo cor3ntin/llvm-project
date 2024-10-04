@@ -37,7 +37,6 @@ class ParsedTemplateArgument;
 class QualType;
 class Stmt;
 class TemplateName;
-class UniversalTemplateParameterName;
 class TemplateParameterList;
 
   /// Wrapper for void* pointer.
@@ -256,8 +255,6 @@ using MemInitResult = ActionResult<CXXCtorInitializer *>;
 using DeclResult = ActionResult<Decl *>;
 using ParsedTemplateTy = OpaquePtr<TemplateName>;
 using UnionParsedTemplateTy = UnionOpaquePtr<TemplateName>;
-using UniversalTemplateParamNameTy =
-    OpaquePtr<UniversalTemplateParameterName *>;
 
 using MultiExprArg = MutableArrayRef<Expr *>;
 using MultiStmtArg = MutableArrayRef<Stmt *>;

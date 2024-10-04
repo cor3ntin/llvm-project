@@ -34,7 +34,6 @@
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
-#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/SourceLocation.h"
@@ -619,9 +618,6 @@ public:
   TemplateArgument
   TransformNamedTemplateTemplateArgument(CXXScopeSpec &SS, TemplateName Name,
                                          SourceLocation NameLoc);
-
-  TemplateArgument
-  TransformUniversalTemplateArgument(UniversalTemplateParameterName *Name);
 
   /// Transform the given set of template arguments.
   ///
@@ -4007,21 +4003,11 @@ public:
           Pattern.getTemplateQualifierLoc(), Pattern.getTemplateNameLoc(),
           EllipsisLoc);
 
-    case TemplateArgument::Universal:
-      return TemplateArgumentLoc(
-          SemaRef.Context,
-          TemplateArgument(
-              Pattern.getArgument().getAsUniversalTemplateParameterName(),
-              NumExpansions),
-          Pattern.getArgument().getAsUniversalTemplateParameterName(),
-          EllipsisLoc);
-
     case TemplateArgument::Null:
     case TemplateArgument::Integral:
     case TemplateArgument::Declaration:
     case TemplateArgument::StructuralValue:
     case TemplateArgument::Pack:
-    case TemplateArgument::UniversalExpansion:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::NullPtr:
       llvm_unreachable("Pack expansion pattern has no parameter packs");
@@ -4724,24 +4710,6 @@ TemplateArgument TreeTransform<Derived>::TransformNamedTemplateTemplateArgument(
   return TemplateArgument(TN);
 }
 
-template <typename Derived>
-TemplateArgument TreeTransform<Derived>::TransformUniversalTemplateArgument(
-    UniversalTemplateParameterName *Name) {
-  DeclarationNameInfo NameInfo = Name->getNameInfo();
-  if (NameInfo.getName()) {
-    NameInfo = getDerived().TransformDeclarationNameInfo(NameInfo);
-    if (!NameInfo.getName())
-      return TemplateArgument();
-  }
-  Decl *D = TransformDecl(Name->getDecl()->getLocation(), Name->getDecl());
-  if (!D)
-    return TemplateArgument();
-
-  return TemplateArgument(
-      getSema().getASTContext().getUniversalTemplateParameterName(
-          Name->getLocation(), NameInfo, cast<UniversalTemplateParmDecl>(D)));
-}
-
 template<typename Derived>
 void TreeTransform<Derived>::InventTemplateArgumentLoc(
                                          const TemplateArgument &Arg,
@@ -4836,22 +4804,6 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
     return false;
   }
 
-  case TemplateArgument::Universal: {
-    UniversalTemplateParameterName *N =
-        Arg.getAsUniversalTemplateParameterName();
-    TemplateArgument Out = getDerived().TransformUniversalTemplateArgument(N);
-    if (Out.isNull())
-      return true;
-    Output = SemaRef.getTrivialTemplateArgumentLoc(Out, QualType(),
-                                                   N->getLocation());
-    if (Out.getKind() != TemplateArgument::Universal) {
-      TemplateArgumentLoc Copy = Output;
-      return getDerived().TransformTemplateArgument(Copy, Output);
-    }
-    return false;
-  }
-
-  case TemplateArgument::UniversalExpansion:
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("Caller should expand pack expansions");
 

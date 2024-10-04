@@ -1691,8 +1691,6 @@ bool Sema::hasAcceptableDefaultArgument(
   if (auto *P = dyn_cast<NonTypeTemplateParmDecl>(D))
     return ::hasAcceptableDefaultArgument(*this, P, Modules, Kind);
 
-  if (isa<UniversalTemplateParmDecl>(D))
-    return false;
 
   return ::hasAcceptableDefaultArgument(
       *this, cast<TemplateTemplateParmDecl>(D), Modules, Kind);
@@ -2950,8 +2948,6 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result,
       break;
     }
 
-    case clang::TemplateArgument::Universal:
-    case clang::TemplateArgument::UniversalExpansion:
     case TemplateArgument::Declaration:
     case TemplateArgument::Integral:
     case TemplateArgument::Expression:

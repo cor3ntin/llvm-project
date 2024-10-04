@@ -28,7 +28,6 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
-#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/AST/TypeOrdering.h"
 #include "clang/AST/UnresolvedSet.h"
 #include "clang/Basic/AddressSpaces.h"
@@ -678,23 +677,6 @@ static TemplateDeductionResult DeduceTemplateArguments(
   return TemplateDeductionResult::NonDeducedMismatch;
 }
 
-static TemplateDeductionResult
-DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
-                        UniversalTemplateParameterName *Param,
-                        TemplateArgument Arg, TemplateDeductionInfo &Info,
-                        SmallVectorImpl<DeducedTemplateArgument> &Deduced) {
-
-  UniversalTemplateParmDecl *Decl = Param->getDecl();
-  assert(Decl && "unexpected null parameter");
-
-  if (Decl->getDepth() != Info.getDeducedDepth())
-    return TemplateDeductionResult::Success;;
-
-  DeducedTemplateArgument NewDeduced(Arg);
-  Deduced[Decl->getIndex()] = Arg;
-  return TemplateDeductionResult::Success;;
-}
-
 /// Deduce the template arguments by comparing the template parameter
 /// type (which is a template-id) with the template argument type.
 ///
@@ -879,9 +861,6 @@ static TemplateParameter makeTemplateParameter(Decl *D) {
 
   if (NonTypeTemplateParmDecl *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D))
     return TemplateParameter(NTTP);
-
-  if (UniversalTemplateParmDecl *UTP = dyn_cast<UniversalTemplateParmDecl>(D))
-    return TemplateParameter(UTP);
 
   return TemplateParameter(cast<TemplateTemplateParmDecl>(D));
 }
@@ -2626,12 +2605,6 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
     Info.SecondArg = A;
     return TemplateDeductionResult::NonDeducedMismatch;
 
-  case TemplateArgument::Universal:
-    return DeduceTemplateArguments(S, TemplateParams,
-                                   P.getAsUniversalTemplateParameterName(), A,
-                                   Info, Deduced);
-
-  case TemplateArgument::UniversalExpansion:
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("caller should handle pack expansions");
 
@@ -2995,14 +2968,6 @@ Sema::getTrivialTemplateArgumentLoc(const TemplateArgument &Arg,
       return TemplateArgumentLoc(
           Context, Arg, Builder.getWithLocInContext(Context), Loc, Loc);
     }
-
-    case TemplateArgument::Universal:
-    case TemplateArgument::UniversalExpansion: {
-      UniversalTemplateParameterName *N =
-          Arg.getAsUniversalTemplateParameterOrPattern();
-      return TemplateArgumentLoc(Context, Arg, N);
-    }
-
   case TemplateArgument::Expression:
     return TemplateArgumentLoc(Arg, Arg.getAsExpr());
 
@@ -6678,7 +6643,7 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
   if (const PackExpansionExpr *Expansion = dyn_cast<PackExpansionExpr>(E))
     E = Expansion->getPattern();
 
-  E = unwrapExpressionForDeduction(E);
+  //E = unwrapExpressionForDeduction(E);
   /*if (const auto *ULE = dyn_cast<UnresolvedLookupExpr>(E);
       ULE && (ULE->isConceptReference() || ULE->isVarDeclReference())) {
     if (const auto *TTP = ULE->getTemplateTemplateDecl())
@@ -6742,17 +6707,6 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
   if (DependentTemplateName *DTN = Name.getAsDependentTemplateName())
     MarkUsedTemplateParameters(Ctx, DTN->getQualifier(), OnlyDeduced,
                                Depth, Used);
-}
-
-/// Mark the template parameters that are used by the given
-/// template argument
-static void MarkUsedTemplateParameters(ASTContext &Ctx,
-                                       UniversalTemplateParameterName *Name,
-                                       bool OnlyDeduced, unsigned Depth,
-                                       llvm::SmallBitVector &Used) {
-  UniversalTemplateParmDecl *UTP = Name->getDecl();
-  if (UTP->getDepth() == Depth)
-    Used[UTP->getIndex()] = true;
 }
 
 /// Mark the template parameters that are used by the given
@@ -7086,13 +7040,6 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
     MarkUsedTemplateParameters(Ctx,
                                TemplateArg.getAsTemplateOrTemplatePattern(),
                                OnlyDeduced, Depth, Used);
-    break;
-
-  case TemplateArgument::Universal:
-  case TemplateArgument::UniversalExpansion:
-    MarkUsedTemplateParameters(
-        Ctx, TemplateArg.getAsUniversalTemplateParameterOrPattern(),
-        OnlyDeduced, Depth, Used);
     break;
 
   case TemplateArgument::Expression:

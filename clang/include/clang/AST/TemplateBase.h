@@ -19,7 +19,6 @@
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
-#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/APInt.h"
@@ -107,13 +106,6 @@ public:
     /// The template argument is actually a parameter pack. Arguments are stored
     /// in the Args struct.
     Pack,
-
-    /// The template argument refers to a universal template parameter
-    Universal,
-
-    /// The template argument refers to a universal template parameter pack
-    /// expansion
-    UniversalExpansion,
   };
 
 private:
@@ -179,13 +171,6 @@ private:
     uintptr_t V;
   };
 
-  struct UniversalTpl {
-    unsigned Kind : 31;
-    unsigned IsDefaulted : 1;
-    unsigned NumExpansions;
-    UniversalTemplateParameterName *D;
-  };
-
   union {
     struct DA DeclArg;
     struct I Integer;
@@ -193,7 +178,6 @@ private:
     struct A Args;
     struct TA TemplateArg;
     struct TV TypeOrValue;
-    struct UniversalTpl UniversalArg;
   };
 
   void initFromType(QualType T, bool IsNullPtr, bool IsDefaulted);
@@ -300,25 +284,6 @@ public:
     this->Args.NumArgs = Args.size();
   }
 
-  explicit TemplateArgument(UniversalTemplateParameterName *U,
-                            bool IsDefaulted = false) {
-    UniversalArg.Kind = Universal;
-    UniversalArg.IsDefaulted = IsDefaulted;
-    UniversalArg.NumExpansions = 0;
-    UniversalArg.D = U;
-  }
-
-  explicit TemplateArgument(UniversalTemplateParameterName *U,
-                            std::optional<unsigned> NumExpansions) {
-    UniversalArg.Kind = UniversalExpansion;
-    UniversalArg.IsDefaulted = false;
-    if (NumExpansions)
-      UniversalArg.NumExpansions = *NumExpansions + 1;
-    else
-      UniversalArg.NumExpansions = 0;
-    UniversalArg.D = U;
-  }
-
   static TemplateArgument getEmptyPack() {
     return TemplateArgument(std::nullopt);
   }
@@ -391,18 +356,6 @@ public:
            "Unexpected kind");
 
     return TemplateName::getFromVoidPointer(TemplateArg.Name);
-  }
-
-  UniversalTemplateParameterName *getAsUniversalTemplateParameterName() const {
-    assert((getKind() == Universal) && "Unexpected kind");
-    return UniversalArg.D;
-  }
-
-  UniversalTemplateParameterName *
-  getAsUniversalTemplateParameterOrPattern() const {
-    assert((getKind() == Universal || getKind() == UniversalExpansion) &&
-           "Unexpected kind");
-    return UniversalArg.D;
   }
 
   /// Retrieve the number of expansions that a template template argument
@@ -531,21 +484,12 @@ private:
     SourceLocation EllipsisLoc;
   };
 
-  struct UniversalTemplateArgLocInfo {
-    UniversalTemplateParameterName *Name;
-    SourceLocation EllipsisLoc;
-  };
 
-  llvm::PointerUnion<TemplateTemplateArgLocInfo *, Expr *, TypeSourceInfo *,
-                     UniversalTemplateArgLocInfo *>
+  llvm::PointerUnion<TemplateTemplateArgLocInfo *, Expr *, TypeSourceInfo *>
       Pointer;
 
   TemplateTemplateArgLocInfo *getTemplate() const {
     return Pointer.get<TemplateTemplateArgLocInfo *>();
-  }
-
-  UniversalTemplateArgLocInfo *getUniversal() const {
-    return Pointer.get<UniversalTemplateArgLocInfo *>();
   }
 
 public:
@@ -557,9 +501,6 @@ public:
   // so we store the payload out-of-line.
   TemplateArgumentLocInfo(ASTContext &Ctx, NestedNameSpecifierLoc QualifierLoc,
                           SourceLocation TemplateNameLoc,
-                          SourceLocation EllipsisLoc);
-
-  TemplateArgumentLocInfo(ASTContext &Ctx, UniversalTemplateParameterName *,
                           SourceLocation EllipsisLoc);
 
   TypeSourceInfo *getAsTypeSourceInfo() const {
@@ -580,10 +521,6 @@ public:
 
   SourceLocation getTemplateEllipsisLoc() const {
     return getTemplate()->EllipsisLoc;
-  }
-
-  SourceLocation getUniversalEllipsisLoc() const {
-    return getUniversal()->EllipsisLoc;
   }
 };
 
@@ -625,14 +562,6 @@ public:
         LocInfo(Ctx, QualifierLoc, TemplateNameLoc, EllipsisLoc) {
     assert(Argument.getKind() == TemplateArgument::Template ||
            Argument.getKind() == TemplateArgument::TemplateExpansion);
-  }
-
-  TemplateArgumentLoc(ASTContext &Ctx, const TemplateArgument &Argument,
-                      UniversalTemplateParameterName *Param,
-                      SourceLocation EllipsisLoc = SourceLocation())
-      : Argument(Argument), LocInfo(Ctx, Param, EllipsisLoc) {
-    assert(Argument.getKind() == TemplateArgument::Universal ||
-           Argument.getKind() == TemplateArgument::UniversalExpansion);
   }
 
   /// - Fetches the primary location of the argument.
@@ -702,11 +631,6 @@ public:
     return LocInfo.getTemplateEllipsisLoc();
   }
 
-  SourceLocation getUniversalEllipsisLoc() const {
-    if (Argument.getKind() != TemplateArgument::UniversalExpansion)
-      return SourceLocation();
-    return LocInfo.getUniversalEllipsisLoc();
-  }
 };
 
 /// A convenient class for passing around template argument

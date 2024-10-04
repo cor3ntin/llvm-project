@@ -77,8 +77,6 @@ TemplateParameterList::TemplateParameterList(const ASTContext& C,
           (TTP->getTemplateParameters()->containsUnexpandedParameterPack() ||
            DefaultTemplateArgumentContainsUnexpandedPack(*TTP))) {
         ContainsUnexpandedParameterPack = true;
-    } else if (isa<UniversalTemplateParmDecl>(P)) {
-      //
     } else if (const auto *TTP = dyn_cast<TemplateTypeParmDecl>(P)) {
       if (!IsPack && DefaultTemplateArgumentContainsUnexpandedPack(*TTP)) {
         ContainsUnexpandedParameterPack = true;
@@ -165,11 +163,6 @@ void TemplateParameterList::Profile(llvm::FoldingSetNodeID &ID,
                                                         /*Canonical=*/true);
       continue;
     }
-    if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(D)) {
-      ID.AddInteger(2);
-      ID.AddBoolean(UTP->isParameterPack());
-      continue;
-    }
     const auto *TTP = cast<TemplateTemplateParmDecl>(D);
     ID.AddInteger(3);
     ID.AddInteger(TTP->kind());
@@ -214,8 +207,6 @@ unsigned TemplateParameterList::getDepth() const {
     return TTP->getDepth();
   else if (const auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(FirstParm))
     return NTTP->getDepth();
-  else if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(FirstParm))
-    return UTP->getDepth();
   else
     return cast<TemplateTemplateParmDecl>(FirstParm)->getDepth();
 }
@@ -906,12 +897,6 @@ void TemplateTemplateParmDecl::setDefaultArgument(
     DefaultArgument.set(new (C) TemplateArgumentLoc(DefArg));
 }
 
-UniversalTemplateParmDecl *
-UniversalTemplateParmDecl::Create(const ASTContext &C, DeclContext *DC,
-                                  SourceLocation L, unsigned D, unsigned P,
-                                  bool ParameterPack, IdentifierInfo *Id) {
-  return new (C, DC) UniversalTemplateParmDecl(DC, L, D, P, ParameterPack, Id);
-}
 
 //===----------------------------------------------------------------------===//
 // TemplateArgumentList Implementation

@@ -1185,9 +1185,6 @@ Corrected:
         TemplateName(cast<TemplateDecl>(FirstDecl)));
   }
 
-  if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(FirstDecl))
-    return NameClassification::Universal(UTP);
-
   if (auto *EmptyD = dyn_cast<UnresolvedUsingIfExistsDecl>(FirstDecl)) {
     (void)DiagnoseUseOfDecl(EmptyD, NameLoc);
     return NameClassification::Error();

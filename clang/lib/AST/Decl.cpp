@@ -257,10 +257,6 @@ LinkageInfo LinkageComputer::getLVForTemplateParameterList(
     if (isa<TemplateTypeParmDecl>(P))
       continue;
 
-    // FIXME: Corentin: do we need to do something here?
-    if (isa<UniversalTemplateParmDecl>(P))
-      continue;
-
     // Non-type template parameters can be restricted by the value type, e.g.
     //   template <enum X> class A { ... };
     // We have to be careful here, though, because we can be dealing with

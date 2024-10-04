@@ -38,8 +38,6 @@ public:
     NonType,
     /// A template template argument, stored as a template name.
     Template,
-    /// The name of a Universal Template Parameter
-    Universal
   };
 
   /// Build an empty template argument.
@@ -68,11 +66,6 @@ public:
       : Kind(ParsedTemplateArgument::Template), Arg(Template.getAsOpaquePtr()),
         SS(SS), Loc(TemplateLoc) {}
 
-  ParsedTemplateArgument(UniversalTemplateParamNameTy ParamName,
-                         SourceLocation Loc)
-      : Kind(ParsedTemplateArgument::Universal),
-        Arg(ParamName.getAsOpaquePtr()), Loc(Loc) {}
-
   /// Determine whether the given template argument is invalid.
   bool isInvalid() const { return Arg == nullptr; }
 
@@ -97,12 +90,6 @@ public:
     return ParsedTemplateTy::getFromOpaquePtr(Arg);
   }
 
-  UniversalTemplateParamNameTy getAsUniversalTemplateParamName() const {
-    assert(Kind == Universal &&
-           "Not a reference to a universal template parameter");
-    return UniversalTemplateParamNameTy::getFromOpaquePtr(Arg);
-  }
-
   /// Retrieve the location of the template argument.
   SourceLocation getLocation() const { return Loc; }
 
@@ -118,8 +105,8 @@ public:
   /// template argument into a pack expansion.
   SourceLocation getEllipsisLoc() const {
     assert(
-        (Kind == Template || Kind == Universal) &&
-        "Only template and universal template arguments can have an ellipsis");
+        (Kind == Template) &&
+        "Only template arguments can have an ellipsis");
     return EllipsisLoc;
   }
 

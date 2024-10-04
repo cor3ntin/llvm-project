@@ -66,9 +66,6 @@ inline std::pair<unsigned, unsigned> getDepthAndIndex(NamedDecl *ND) {
   if (const auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(ND))
     return std::make_pair(NTTP->getDepth(), NTTP->getIndex());
 
-  if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(ND))
-    return std::make_pair(UTP->getDepth(), UTP->getIndex());
-
   const auto *TTP = cast<TemplateTemplateParmDecl>(ND);
   return std::make_pair(TTP->getDepth(), TTP->getIndex());
 }

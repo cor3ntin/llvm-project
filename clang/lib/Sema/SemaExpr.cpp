@@ -3234,13 +3234,6 @@ ExprResult Sema::BuildDeclarationNameExpr(
     return ExprError();
   }
 
-  // If we find a UTP, fail with a specific error
-  if (UniversalTemplateParmDecl *UTP = dyn_cast<UniversalTemplateParmDecl>(D)) {
-    Diag(Loc, diag::err_ref_utp) << D << SS.getRange();
-    Diag(D->getLocation(), diag::note_declared_at);
-    return ExprError();
-  }
-
   // Make sure that we're referring to a value.
   if (!isa<ValueDecl, UnresolvedUsingIfExistsDecl>(D)) {
     Diag(Loc, diag::err_ref_non_value) << D << SS.getRange();

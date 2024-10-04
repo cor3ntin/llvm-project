@@ -24,7 +24,6 @@
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RawCommentList.h"
 #include "clang/AST/TemplateName.h"
-#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceLocation.h"
@@ -2336,10 +2335,6 @@ public:
                                                 unsigned Index,
                                                 bool Final) const;
 
-  UniversalTemplateParameterName *
-  getUniversalTemplateParameterName(SourceLocation Loc,
-                                    DeclarationNameInfo Name,
-                                    UniversalTemplateParmDecl *Decl) const;
   /// Represents a TemplateName which had some of its default arguments
   /// deduced. This both represents this default argument deduction as sugar,
   /// and provides the support for it's equivalences through canonicalization.
