@@ -24,6 +24,7 @@
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RawCommentList.h"
 #include "clang/AST/TemplateName.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/SourceLocation.h"
@@ -1679,7 +1680,7 @@ private:
   QualType
   getAutoTypeInternal(QualType DeducedType, AutoTypeKeyword Keyword,
                       bool IsDependent, bool IsPack = false,
-                      ConceptDecl *TypeConstraintConcept = nullptr,
+                      TemplateDecl *TypeConstraintConcept = nullptr,
                       ArrayRef<TemplateArgument> TypeConstraintArgs = {},
                       bool IsCanon = false) const;
 
@@ -1844,10 +1845,11 @@ public:
                                  UnaryTransformType::UTTKind UKind) const;
 
   /// C++11 deduced auto type.
-  QualType getAutoType(QualType DeducedType, AutoTypeKeyword Keyword,
-                       bool IsDependent, bool IsPack = false,
-                       ConceptDecl *TypeConstraintConcept = nullptr,
-                       ArrayRef<TemplateArgument> TypeConstraintArgs ={}) const;
+  QualType
+  getAutoType(QualType DeducedType, AutoTypeKeyword Keyword, bool IsDependent,
+              bool IsPack = false,
+              TemplateDecl *TypeConstraintConcept = nullptr,
+              ArrayRef<TemplateArgument> TypeConstraintArgs = {}) const;
 
   /// C++11 deduction pattern for 'auto' type.
   QualType getAutoDeductType() const;
@@ -2353,6 +2355,10 @@ public:
                                                 unsigned Index,
                                                 bool Final) const;
 
+  UniversalTemplateParameterName *
+  getUniversalTemplateParameterName(SourceLocation Loc,
+                                    DeclarationNameInfo Name,
+                                    UniversalTemplateParmDecl *Decl) const;
   /// Represents a TemplateName which had some of its default arguments
   /// deduced. This both represents this default argument deduction as sugar,
   /// and provides the support for it's equivalences through canonicalization.

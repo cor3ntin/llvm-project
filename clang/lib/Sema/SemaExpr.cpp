@@ -2869,9 +2869,10 @@ Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
     // in BuildTemplateIdExpr().
     // The single lookup result must be a variable template declaration.
     if (Id.getKind() == UnqualifiedIdKind::IK_TemplateId && Id.TemplateId &&
-        Id.TemplateId->Kind == TNK_Var_template) {
-      assert(R.getAsSingle<VarTemplateDecl>() &&
-             "There should only be one declaration found.");
+        (Id.TemplateId->Kind == TNK_Var_template ||  Id.TemplateId->Kind == TNK_Concept_template)) {
+      // TODO CORENTIN
+      // assert(R.getAsSingle<VarTemplateDecl>() &&
+      //       "There should only be one declaration found.");
     }
 
     return BuildTemplateIdExpr(SS, TemplateKWLoc, R, ADL, TemplateArgs);
@@ -3230,6 +3231,13 @@ ExprResult Sema::BuildDeclarationNameExpr(
     // Specifically diagnose references to class templates that are missing
     // a template argument list.
     diagnoseMissingTemplateArguments(SS, /*TemplateKeyword=*/false, TD, Loc);
+    return ExprError();
+  }
+
+  // If we find a UTP, fail with a specific error
+  if (UniversalTemplateParmDecl *UTP = dyn_cast<UniversalTemplateParmDecl>(D)) {
+    Diag(Loc, diag::err_ref_utp) << D << SS.getRange();
+    Diag(D->getLocation(), diag::note_declared_at);
     return ExprError();
   }
 

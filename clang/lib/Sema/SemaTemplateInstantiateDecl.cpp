@@ -3280,14 +3280,16 @@ TemplateDeclInstantiator::VisitTemplateTemplateParmDecl(
     Param = TemplateTemplateParmDecl::Create(
         SemaRef.Context, Owner, D->getLocation(),
         D->getDepth() - TemplateArgs.getNumSubstitutedLevels(),
-        D->getPosition(), D->getIdentifier(), D->wasDeclaredWithTypename(),
-        InstParams, ExpandedParams);
+        D->getPosition(), D->getIdentifier(), D->kind(), D->wasDeclaredWithTypename(),
+        InstParams,
+        ExpandedParams);
   else
     Param = TemplateTemplateParmDecl::Create(
         SemaRef.Context, Owner, D->getLocation(),
         D->getDepth() - TemplateArgs.getNumSubstitutedLevels(),
         D->getPosition(), D->isParameterPack(), D->getIdentifier(),
-        D->wasDeclaredWithTypename(), InstParams);
+        D->kind(), D->wasDeclaredWithTypename(),
+        InstParams);
   if (D->hasDefaultArgument() && !D->defaultArgumentWasInherited()) {
     NestedNameSpecifierLoc QualifierLoc =
         D->getDefaultArgument().getTemplateQualifierLoc();
@@ -3311,6 +3313,22 @@ TemplateDeclInstantiator::VisitTemplateTemplateParmDecl(
   SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Param);
 
   return Param;
+}
+
+Decl *TemplateDeclInstantiator::VisitUniversalTemplateParmDecl(
+    UniversalTemplateParmDecl *D) {
+
+  LocalInstantiationScope Scope(SemaRef);
+  Decl *Transformed = SemaRef.SubstUniversalTemplateParameter(
+      D, TemplateArgs, TemplateArgs.getNumSubstitutedLevels());
+  if (!Transformed)
+    return nullptr;
+  Transformed->setAccess(AS_public);
+  Transformed->setImplicit(D->isImplicit());
+  // Introduce this template parameter's instantiation into the instantiation
+  // scope.
+  SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Transformed);
+  return Transformed;
 }
 
 Decl *TemplateDeclInstantiator::VisitUsingDirectiveDecl(UsingDirectiveDecl *D) {

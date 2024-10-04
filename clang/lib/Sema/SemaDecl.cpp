@@ -59,6 +59,8 @@
 #include "llvm/ADT/STLForwardCompat.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include <algorithm>
 #include <cstring>
@@ -1182,6 +1184,9 @@ Corrected:
     return NameClassification::Concept(
         TemplateName(cast<TemplateDecl>(FirstDecl)));
   }
+
+  if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(FirstDecl))
+    return NameClassification::Universal(UTP);
 
   if (auto *EmptyD = dyn_cast<UnresolvedUsingIfExistsDecl>(FirstDecl)) {
     (void)DiagnoseUseOfDecl(EmptyD, NameLoc);

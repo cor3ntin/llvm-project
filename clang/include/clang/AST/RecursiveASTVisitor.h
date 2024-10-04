@@ -41,6 +41,7 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/Specifiers.h"
@@ -258,6 +259,9 @@ public:
   ///
   /// \returns false if the visitation was terminated early, true otherwise.
   bool TraverseTemplateName(TemplateName Template);
+
+  bool
+  TraverseUniversalTemplateParameterName(UniversalTemplateParameterName *UTPN);
 
   /// Recursively visit a template argument and dispatch to the
   /// appropriate method for the argument type.
@@ -870,6 +874,12 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateName(TemplateName Template) {
 }
 
 template <typename Derived>
+bool RecursiveASTVisitor<Derived>::TraverseUniversalTemplateParameterName(
+    UniversalTemplateParameterName *UTPN) {
+  return true;
+}
+
+template <typename Derived>
 bool RecursiveASTVisitor<Derived>::TraverseTemplateArgument(
     const TemplateArgument &Arg) {
   switch (Arg.getKind()) {
@@ -893,6 +903,13 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgument(
 
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());
+
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion: {
+    UniversalTemplateParameterName *UTPN =
+        Arg.getAsUniversalTemplateParameterOrPattern();
+    return getDerived().TraverseUniversalTemplateParameterName(UTPN);
+  }
   }
 
   return true;
@@ -929,11 +946,17 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgumentLoc(
     return getDerived().TraverseTemplateName(
         Arg.getAsTemplateOrTemplatePattern());
 
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    return getDerived().TraverseUniversalTemplateParameterName(
+        Arg.getAsUniversalTemplateParameterOrPattern());
+
   case TemplateArgument::Expression:
     return getDerived().TraverseStmt(ArgLoc.getSourceExpression());
 
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());
+
   }
 
   return true;
@@ -1955,6 +1978,8 @@ DEF_TRAVERSE_DECL(TemplateTemplateParmDecl, {
     TRY_TO(TraverseTemplateArgumentLoc(D->getDefaultArgument()));
   TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters()));
 })
+
+DEF_TRAVERSE_DECL(UniversalTemplateParmDecl, {})
 
 DEF_TRAVERSE_DECL(BuiltinTemplateDecl, {
   TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters()));

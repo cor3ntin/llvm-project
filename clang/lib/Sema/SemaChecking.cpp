@@ -34,6 +34,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/TemplateBase.h"
+#include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/UnresolvedSet.h"
@@ -3390,7 +3391,7 @@ void Sema::checkCall(NamedDecl *FDecl, const FunctionProtoType *Proto,
 }
 
 void Sema::CheckConstrainedAuto(const AutoType *AutoT, SourceLocation Loc) {
-  if (ConceptDecl *Decl = AutoT->getTypeConstraintConcept()) {
+  if (TemplateDecl *Decl = AutoT->getTypeConstraintConcept()) {
     DiagnoseUseOfDecl(Decl, Loc);
   }
 }

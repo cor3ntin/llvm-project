@@ -32,6 +32,9 @@
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/AST/TypeOrdering.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
+#include "clang/Basic/BitmaskEnum.h"
 #include "clang/Basic/AttrSubjectMatchRules.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/CapturedStmt.h"
@@ -144,6 +147,7 @@ class MangleNumberingContext;
 typedef ArrayRef<std::pair<IdentifierInfo *, SourceLocation>> ModuleIdPath;
 class ModuleLoader;
 class MultiLevelTemplateArgumentList;
+struct CachedNormalizedConstraint;
 struct NormalizedConstraint;
 class ObjCInterfaceDecl;
 class ObjCMethodDecl;
@@ -970,6 +974,8 @@ public:
 
   typedef OpaquePtr<DeclGroupRef> DeclGroupPtrTy;
   typedef OpaquePtr<TemplateName> TemplateTy;
+  typedef OpaquePtr<UniversalTemplateParameterName *>
+      UniversalTemplateParamNameTy;
   typedef OpaquePtr<QualType> TypeTy;
 
   OpenCLOptions OpenCLFeatures;
@@ -3245,6 +3251,8 @@ public:
     NC_UndeclaredTemplate,
     /// The name was classified as a concept name.
     NC_Concept,
+    /// The name was classified as the name of a universal template parameter
+    NC_UniversalTemplateParam,
   };
 
   class NameClassification {
@@ -3252,6 +3260,7 @@ public:
     union {
       ExprResult Expr;
       NamedDecl *NonTypeDecl;
+      UniversalTemplateParmDecl *UniversalParamDecl;
       TemplateName Template;
       ParsedType Type;
     };
@@ -3313,6 +3322,13 @@ public:
       return Result;
     }
 
+    static NameClassification
+    Universal(UniversalTemplateParmDecl *UniversalParamDecl) {
+      NameClassification Result(NC_UniversalTemplateParam);
+      Result.UniversalParamDecl = UniversalParamDecl;
+      return Result;
+    }
+
     static NameClassification UndeclaredTemplate(TemplateName Name) {
       NameClassification Result(NC_UndeclaredTemplate);
       Result.Template = Name;
@@ -3329,6 +3345,11 @@ public:
     ParsedType getType() const {
       assert(Kind == NC_Type);
       return Type;
+    }
+
+    NamedDecl *getUniversalTemplateDecl() const {
+      assert(Kind == NC_UniversalTemplateParam);
+      return UniversalParamDecl;
     }
 
     NamedDecl *getNonTypeDecl() const {
@@ -8913,7 +8934,6 @@ public:
   getCurrentMangleNumberContext(const DeclContext *DC);
 
   ///@}
-
   //
   //
   // -------------------------------------------------------------------------
@@ -11250,7 +11270,7 @@ public:
   /// of arguments for the named concept).
   bool AttachTypeConstraint(NestedNameSpecifierLoc NS,
                             DeclarationNameInfo NameInfo,
-                            ConceptDecl *NamedConcept, NamedDecl *FoundDecl,
+                            TemplateDecl *NamedConcept,  NamedDecl *FoundDecl,
                             const TemplateArgumentListInfo *TemplateArgs,
                             TemplateTypeParmDecl *ConstrainedParameter,
                             SourceLocation EllipsisLoc);
@@ -11275,26 +11295,41 @@ public:
   QualType CheckNonTypeTemplateParameterType(QualType T, SourceLocation Loc);
 
   NamedDecl *ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
-                                           unsigned Depth, unsigned Position,
-                                           SourceLocation EqualLoc,
-                                           Expr *DefaultArg);
+                                      unsigned Depth,
+                                      unsigned Position,
+                                      SourceLocation EqualLoc,
+                                      Expr *DefaultArg);
 
   /// ActOnTemplateTemplateParameter - Called when a C++ template template
   /// parameter (e.g. T in template <template \<typename> class T> class array)
   /// has been parsed. S is the current scope.
   NamedDecl *ActOnTemplateTemplateParameter(
-      Scope *S, SourceLocation TmpLoc, TemplateParameterList *Params,
-      bool Typename, SourceLocation EllipsisLoc, IdentifierInfo *ParamName,
-      SourceLocation ParamNameLoc, unsigned Depth, unsigned Position,
-      SourceLocation EqualLoc, ParsedTemplateArgument DefaultArg);
+      Scope *S, SourceLocation TmpLoc,
+      TemplateNameKind Kind,
+      bool TypenameKeyword,
+      TemplateParameterList *Params, SourceLocation EllipsisLoc,
+      IdentifierInfo *ParamName, SourceLocation ParamNameLoc, unsigned Depth,
+      unsigned Position, SourceLocation EqualLoc,
+      ParsedTemplateArgument DefaultArg);
+
+  NamedDecl *ActOnUniversalTemplateParameter(Scope *S,
+                                             SourceLocation IntroducerLoc,
+                                             SourceLocation EllipsisLoc,
+                                             IdentifierInfo *ParamName,
+                                             SourceLocation ParamNameLoc,
+                                             unsigned Depth, unsigned Position);
 
   /// ActOnTemplateParameterList - Builds a TemplateParameterList, optionally
   /// constrained by RequiresClause, that contains the template parameters in
   /// Params.
-  TemplateParameterList *ActOnTemplateParameterList(
-      unsigned Depth, SourceLocation ExportLoc, SourceLocation TemplateLoc,
-      SourceLocation LAngleLoc, ArrayRef<NamedDecl *> Params,
-      SourceLocation RAngleLoc, Expr *RequiresClause);
+  TemplateParameterList *
+  ActOnTemplateParameterList(unsigned Depth,
+                             SourceLocation ExportLoc,
+                             SourceLocation TemplateLoc,
+                             SourceLocation LAngleLoc,
+                             ArrayRef<NamedDecl *> Params,
+                             SourceLocation RAngleLoc,
+                             Expr *RequiresClause);
 
   /// The context in which we are checking a template parameter list.
   enum TemplateParamListContext {
@@ -11436,7 +11471,7 @@ public:
   /// Get the specialization of the given variable template corresponding to
   /// the specified argument list, or a null-but-valid result if the arguments
   /// are dependent.
-  DeclResult CheckVarTemplateId(VarTemplateDecl *Template,
+  DeclResult CheckVarTemplateId(VarTemplateDecl  *Template,
                                 SourceLocation TemplateLoc,
                                 SourceLocation TemplateNameLoc,
                                 const TemplateArgumentListInfo &TemplateArgs);
@@ -11451,7 +11486,14 @@ public:
                                 const TemplateArgumentListInfo *TemplateArgs);
 
   ExprResult
-  CheckConceptTemplateId(const CXXScopeSpec &SS, SourceLocation TemplateKWLoc,
+  CheckVarOrConceptTemplateTemplateId(const CXXScopeSpec &SS,
+                           const DeclarationNameInfo &NameInfo,
+                           TemplateTemplateParmDecl *Template, SourceLocation TemplateLoc,
+                           const TemplateArgumentListInfo *TemplateArgs);
+
+  ExprResult
+  CheckConceptTemplateId(const CXXScopeSpec &SS,
+                         SourceLocation TemplateKWLoc,
                          const DeclarationNameInfo &ConceptNameInfo,
                          NamedDecl *FoundDecl, ConceptDecl *NamedConcept,
                          const TemplateArgumentListInfo *TemplateArgs);
@@ -11494,6 +11536,11 @@ public:
                                      ParsedType ObjectType,
                                      bool EnteringContext, TemplateTy &Template,
                                      bool AllowInjectedClassName = false);
+
+  bool
+  ActOnUniversalTemplateParameterName(Scope *S, const UnqualifiedId &Name,
+                                      bool EnteringContext,
+                                      UniversalTemplateParamNameTy &Template);
 
   DeclResult ActOnClassTemplateSpecialization(
       Scope *S, unsigned TagSpec, TagUseKind TUK, SourceLocation KWLoc,
@@ -11755,6 +11802,12 @@ public:
       SmallVectorImpl<TemplateArgument> &SugaredConverted,
       SmallVectorImpl<TemplateArgument> &CanonicalConverted);
 
+  bool CheckUniversalTemplateParameterArgument(
+      UniversalTemplateParmDecl *Param, TemplateArgumentLoc &Arg,
+      SmallVectorImpl<TemplateArgument> &SugaredConverted,
+      SmallVectorImpl<TemplateArgument> &CanonicalConverted,
+      CheckTemplateArgumentKind CTAK);
+
   /// Check a template argument against its corresponding
   /// template type parameter.
   ///
@@ -11762,14 +11815,14 @@ public:
   /// returns true if an error occurred, and false otherwise.
   bool CheckTemplateArgument(TypeSourceInfo *Arg);
 
-  /// Check a template argument against its corresponding
+   /// Check a template argument against its corresponding
   /// non-type template parameter.
   ///
   /// This routine implements the semantics of C++ [temp.arg.nontype].
   /// If an error occurred, it returns ExprError(); otherwise, it
   /// returns the converted template argument. \p ParamType is the
   /// type of the non-type template parameter after it has been instantiated.
-  ExprResult CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
+  ExprResult CheckTemplateArgument(NamedDecl *Param,
                                    QualType InstantiatedParamType, Expr *Arg,
                                    TemplateArgument &SugaredConverted,
                                    TemplateArgument &CanonicalConverted,
@@ -11783,6 +11836,11 @@ public:
   bool CheckTemplateTemplateArgument(TemplateTemplateParmDecl *Param,
                                      TemplateParameterList *Params,
                                      TemplateArgumentLoc &Arg, bool IsDeduced);
+
+  bool CheckDeclCompatibleWithTemplateTemplate
+                                     (TemplateDecl *Template,
+                                      TemplateTemplateParmDecl *Param,
+                                      const TemplateArgumentLoc &Arg);
 
   void NoteTemplateLocation(const NamedDecl &Decl,
                             std::optional<SourceRange> ParamRange = {});
@@ -11820,7 +11878,6 @@ public:
     /// template<template<int Value> class Other> struct X;
     /// \endcode
     TPL_TemplateTemplateParmMatch,
-
     /// We are matching the template parameter lists of a template
     /// template argument against the template parameter lists of a template
     /// template parameter.
@@ -12068,7 +12125,7 @@ public:
 
   void CheckConceptRedefinition(ConceptDecl *NewDecl, LookupResult &Previous,
                                 bool &AddToScope);
-  bool CheckConceptUseInDefinition(ConceptDecl *Concept, SourceLocation Loc);
+  bool CheckConceptUseInDefinition(NamedDecl *Concept, SourceLocation Loc);
 
   TypeResult ActOnDependentTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
                                const CXXScopeSpec &SS,
@@ -13347,6 +13404,11 @@ public:
   ExprResult SubstExpr(Expr *E,
                        const MultiLevelTemplateArgumentList &TemplateArgs);
 
+  NamedDecl *SubstUniversalTemplateParameter(
+      UniversalTemplateParmDecl *D,
+      const MultiLevelTemplateArgumentList &TemplateArgs,
+      unsigned SubstitutedLevels = 0);
+
   // A RAII type used by the TemplateDeclInstantiator and TemplateInstantiator
   // to disable constraint evaluation, then restore the state.
   template <typename InstTy> struct ConstraintEvalRAII {
@@ -14478,6 +14540,12 @@ public:
       const MultiLevelTemplateArgumentList &TemplateArgs,
       SourceRange TemplateIDRange);
 
+  ExprResult
+  SubstConceptTemplateArguments(const ConceptSpecializationExpr *CSE,
+                                const Expr *ConstraintExpr,
+                                const MultiLevelTemplateArgumentList &MLTAL,
+                                ArrayRef<TemplateArgument> Args);
+
   bool CheckInstantiatedFunctionTemplateConstraints(
       SourceLocation PointOfInstantiation, FunctionDecl *Decl,
       ArrayRef<TemplateArgument> TemplateArgs,
@@ -14496,8 +14564,8 @@ public:
   DiagnoseUnsatisfiedConstraint(const ASTConstraintSatisfaction &Satisfaction,
                                 bool First = true);
 
-  const NormalizedConstraint *getNormalizedAssociatedConstraints(
-      NamedDecl *ConstrainedDecl, ArrayRef<const Expr *> AssociatedConstraints);
+  const NormalizedConstraint *getNormalizedAssociatedConstraints(NamedDecl *ConstrainedDecl,
+                                                                 ArrayRef<const Expr *> AssociatedConstraints);
 
   /// \brief Check whether the given declaration's associated constraints are
   /// at least as constrained than another declaration's according to the

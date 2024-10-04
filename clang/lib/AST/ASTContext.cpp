@@ -46,6 +46,7 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/AST/UnresolvedSet.h"
 #include "clang/AST/VTableBuilder.h"
 #include "clang/Basic/AddressSpaces.h"
@@ -705,6 +706,7 @@ ASTContext::CanonicalTemplateTemplateParm::Profile(llvm::FoldingSetNodeID &ID,
   ID.AddInteger(Parm->getDepth());
   ID.AddInteger(Parm->getPosition());
   ID.AddBoolean(Parm->isParameterPack());
+  ID.AddInteger(Parm->kind());
 
   TemplateParameterList *Params = Parm->getTemplateParameters();
   ID.AddInteger(Params->size());
@@ -739,8 +741,14 @@ ASTContext::CanonicalTemplateTemplateParm::Profile(llvm::FoldingSetNodeID &ID,
       continue;
     }
 
+    if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(*P)) {
+      ID.AddInteger(2);
+      ID.AddBoolean(UTP->isParameterPack());
+      continue;
+    }
+
     auto *TTP = cast<TemplateTemplateParmDecl>(*P);
-    ID.AddInteger(2);
+    ID.AddInteger(3);
     Profile(ID, C, TTP);
   }
 }
@@ -808,14 +816,21 @@ ASTContext::getCanonicalTemplateTemplateParmDecl(
                                                 TInfo);
       }
       CanonParams.push_back(Param);
-    } else
+    } else if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(*P)) {
+      UniversalTemplateParmDecl *Param = UniversalTemplateParmDecl::Create(
+          *this, getTranslationUnitDecl(), SourceLocation(), UTP->getDepth(),
+          UTP->getIndex(), UTP->isParameterPack(), nullptr);
+      CanonParams.push_back(Param);
+    } else {
       CanonParams.push_back(getCanonicalTemplateTemplateParmDecl(
                                            cast<TemplateTemplateParmDecl>(*P)));
+    }
   }
 
   TemplateTemplateParmDecl *CanonTTP = TemplateTemplateParmDecl::Create(
       *this, getTranslationUnitDecl(), SourceLocation(), TTP->getDepth(),
-      TTP->getPosition(), TTP->isParameterPack(), nullptr, /*Typename=*/false,
+      TTP->getPosition(), TTP->isParameterPack(), nullptr,  TTP->kind(),
+      /*Typename=*/false,
       TemplateParameterList::Create(*this, SourceLocation(), SourceLocation(),
                                     CanonParams, SourceLocation(),
                                     /*RequiresClause=*/nullptr));
@@ -5652,6 +5667,16 @@ TemplateArgument ASTContext::getInjectedTemplateArg(NamedDecl *Param) {
       E = new (*this)
           PackExpansionExpr(DependentTy, E, NTTP->getLocation(), std::nullopt);
     Arg = TemplateArgument(E);
+  } else if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(Param)) {
+    UniversalTemplateParameterName *UTPN =
+        new (*this) UniversalTemplateParameterName(
+            Param->getLocation(),
+            DeclarationNameInfo(Param->getDeclName(), Param->getLocation()),
+            UTP);
+    if (UTP->isParameterPack())
+      Arg = TemplateArgument(UTPN, std::optional<unsigned>());
+    else
+      Arg = TemplateArgument(UTPN);
   } else {
     auto *TTP = cast<TemplateTemplateParmDecl>(Param);
     TemplateName Name = getQualifiedTemplateName(
@@ -6241,7 +6266,7 @@ QualType ASTContext::getUnaryTransformType(QualType BaseType,
 
 QualType ASTContext::getAutoTypeInternal(
     QualType DeducedType, AutoTypeKeyword Keyword, bool IsDependent,
-    bool IsPack, ConceptDecl *TypeConstraintConcept,
+    bool IsPack, TemplateDecl *TypeConstraintConcept,
     ArrayRef<TemplateArgument> TypeConstraintArgs, bool IsCanon) const {
   if (DeducedType.isNull() && Keyword == AutoTypeKeyword::Auto &&
       !TypeConstraintConcept && !IsDependent)
@@ -6261,7 +6286,7 @@ QualType ASTContext::getAutoTypeInternal(
       Canon = DeducedType.getCanonicalType();
     } else if (TypeConstraintConcept) {
       bool AnyNonCanonArgs = false;
-      ConceptDecl *CanonicalConcept = TypeConstraintConcept->getCanonicalDecl();
+      TemplateDecl *CanonicalConcept = cast<TemplateDecl>(TypeConstraintConcept->getCanonicalDecl());
       auto CanonicalConceptArgs = ::getCanonicalTemplateArguments(
           *this, TypeConstraintArgs, AnyNonCanonArgs);
       if (CanonicalConcept != TypeConstraintConcept || AnyNonCanonArgs) {
@@ -6296,7 +6321,7 @@ QualType ASTContext::getAutoTypeInternal(
 QualType
 ASTContext::getAutoType(QualType DeducedType, AutoTypeKeyword Keyword,
                         bool IsDependent, bool IsPack,
-                        ConceptDecl *TypeConstraintConcept,
+                        TemplateDecl *TypeConstraintConcept,
                         ArrayRef<TemplateArgument> TypeConstraintArgs) const {
   assert((!IsPack || IsDependent) && "only use IsPack for a dependent pack");
   assert((!IsDependent || DeducedType.isNull()) &&
@@ -7324,6 +7349,17 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
                               Arg.getIsDefaulted());
     }
 
+    case TemplateArgument::Universal: {
+      // TODO Corentin: canonicalization
+      UniversalTemplateParameterName *UTPN =
+          Arg.getAsUniversalTemplateParameterName();
+      return TemplateArgument(UTPN);
+    }
+    case TemplateArgument::UniversalExpansion: {
+      UniversalTemplateParameterName *UTPN =
+          Arg.getAsUniversalTemplateParameterOrPattern();
+      return TemplateArgument(UTPN, Arg.getNumTemplateExpansions());
+    }
     case TemplateArgument::NullPtr:
       return TemplateArgument(getCanonicalType(Arg.getNullPtrType()),
                               /*isNullPtr*/ true, Arg.getIsDefaulted());
@@ -9913,6 +9949,16 @@ ASTContext::getSubstTemplateTemplateParmPack(const TemplateArgument &ArgPack,
   }
 
   return TemplateName(Subst);
+}
+
+UniversalTemplateParameterName *ASTContext::getUniversalTemplateParameterName(
+    SourceLocation Loc, DeclarationNameInfo Name,
+    UniversalTemplateParmDecl *Decl) const {
+  // TODO Corentin: canonicalize?
+  UniversalTemplateParameterName *UTPN =
+      new (*this, alignof(UniversalTemplateParameterName))
+          UniversalTemplateParameterName(Loc, Name, Decl);
+  return UTPN;
 }
 
 /// Retrieve the template name that represents a template name
@@ -13766,8 +13812,8 @@ static QualType getCommonSugarTypeNode(ASTContext &Ctx, const Type *X,
     if (KW != AY->getKeyword())
       return QualType();
 
-    ConceptDecl *CD = ::getCommonDecl(AX->getTypeConstraintConcept(),
-                                      AY->getTypeConstraintConcept());
+    TemplateDecl *CD = ::getCommonDecl(AX->getTypeConstraintConcept(),
+                                       AY->getTypeConstraintConcept());
     SmallVector<TemplateArgument, 8> As;
     if (CD &&
         getCommonTemplateArguments(Ctx, As, AX->getTypeConstraintArguments(),

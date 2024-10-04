@@ -173,6 +173,7 @@ static std::optional<Visibility> getExplicitVisibility(const NamedDecl *D,
                                                        LVComputationKind kind) {
   assert(!kind.IgnoreExplicitVisibility &&
          "asking for explicit visibility when we shouldn't be");
+
   return D->getExplicitVisibility(kind.getExplicitVisibilityKind());
 }
 
@@ -254,6 +255,10 @@ LinkageInfo LinkageComputer::getLVForTemplateParameterList(
     // Template type parameters are the most common and never
     // contribute to visibility, pack or not.
     if (isa<TemplateTypeParmDecl>(P))
+      continue;
+
+    // FIXME: Corentin: do we need to do something here?
+    if (isa<UniversalTemplateParmDecl>(P))
       continue;
 
     // Non-type template parameters can be restricted by the value type, e.g.
@@ -1227,6 +1232,9 @@ getExplicitVisibilityAux(const NamedDecl *ND,
                          NamedDecl::ExplicitVisibilityKind kind,
                          bool IsMostRecent) {
   assert(!IsMostRecent || ND == ND->getMostRecentDecl());
+
+  if(isa<ConceptDecl>(ND))
+      return {};
 
   // Check the declaration itself first.
   if (std::optional<Visibility> V = getVisibilityOf(ND, kind))
