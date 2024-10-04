@@ -1551,30 +1551,6 @@ ParsedTemplateArgument Parser::ParseTemplateTemplateArgument() {
   return Result;
 }
 
-///  partially-applied-concept:
-///    concept id-dexpression < arguments >
-ParsedTemplateArgument Parser::ParsePartiallyAppliedConceptTemplateArgument() {
-  if (Tok.isNot(tok::kw_concept))
-    return {};
-  SourceLocation ConceptLoc = ConsumeToken();
-  CXXScopeSpec SS; // nested-name-specifier, if present
-  ParseOptionalCXXScopeSpecifier(SS, /*ObjectType=*/nullptr,
-                                 /*ObjectHasErrors=*/false,
-                                 /*EnteringContext=*/false);
-  ParsedTemplateArgument Result;
-  if (Tok.is(tok::annot_template_id)) {
-    TemplateIdAnnotation *TemplateId = takeTemplateIdAnnotation(Tok);
-    ConsumeAnnotationToken();
-    PartiallyAppliedConcept *C = Actions.ActOnPartiallyAppliedConcept(
-        getCurScope(), SS, ConceptLoc, TemplateId);
-    if (!C)
-      return {};
-    Result = ParsedTemplateArgument(C, ConceptLoc);
-    return Result;
-  }
-  return {};
-}
-
 ParsedTemplateArgument Parser::ParseUniversalTemplateParamNameArgument() {
   if (!Tok.isOneOf(tok::identifier, tok::annot_universal))
     return ParsedTemplateArgument();
@@ -1659,13 +1635,6 @@ ParsedTemplateArgument Parser::ParseTemplateArgument() {
     }
     // Revert this tentative parse to parse a non-type template argument.
     TPA.Revert();
-  }
-
-  {
-    ParsedTemplateArgument Concept =
-        ParsePartiallyAppliedConceptTemplateArgument();
-    if (!Concept.isInvalid())
-      return Concept;
   }
 
   {

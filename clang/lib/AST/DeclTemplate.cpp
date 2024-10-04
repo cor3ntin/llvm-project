@@ -90,7 +90,7 @@ TemplateParameterList::TemplateParameterList(const ASTContext& C,
       if (TTP->hasTypeConstraint())
         HasConstrainedParameters = true;
     } else {
-      llvm_unreachable("unexpected template parameter type");
+      // llvm_unreachable("unexpected template parameter type");
     }
   }
 
@@ -248,7 +248,7 @@ getAssociatedConstraints(llvm::SmallVectorImpl<const Expr *> &AC) const {
           AC.push_back(E);
       }
     }
-  if (HasRequiresClause)
+  if (HasRequiresClause && getRequiresClause())
     AC.push_back(getRequiresClause());
 }
 
@@ -878,7 +878,7 @@ TemplateTemplateParmDecl *
 TemplateTemplateParmDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID) {
   return new (C, ID)
       TemplateTemplateParmDecl(nullptr, SourceLocation(), 0, 0, nullptr,
-                               TemplateNameKind::TNK_Type_template, false, nullptr, std::nullopt);
+                               TemplateNameKind::TNK_Type_template, false, nullptr, nullptr);
 }
 
 TemplateTemplateParmDecl *

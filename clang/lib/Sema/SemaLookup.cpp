@@ -2950,7 +2950,6 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result,
       break;
     }
 
-    case TemplateArgument::Concept:
     case clang::TemplateArgument::Universal:
     case clang::TemplateArgument::UniversalExpansion:
     case TemplateArgument::Declaration:

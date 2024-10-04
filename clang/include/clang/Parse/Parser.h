@@ -3865,7 +3865,6 @@ private:
                                 bool IsClassName = false);
   bool ParseTemplateArgumentList(TemplateArgList &TemplateArgs,
                                  TemplateTy Template, SourceLocation OpenLoc);
-  ParsedTemplateArgument ParsePartiallyAppliedConceptTemplateArgument();
   ParsedTemplateArgument ParseTemplateTemplateArgument();
   ParsedTemplateArgument ParseUniversalTemplateParamNameArgument();
   ParsedTemplateArgument ParseTemplateArgument();

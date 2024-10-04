@@ -1767,7 +1767,7 @@ QualType SubstNonTypeTemplateParmExpr::getParameterType(
   // T', so we can't just compute this from the type and value category.
 
   QualType Type = getType();
-  if (isa<UniversalTemplateParmDecl>(getParameter()))
+  if (isa<UniversalTemplateParmDecl>(getAssociatedDecl()))
     Type = getReplacement()->getType();
 
   if (isReferenceParameter())
@@ -1974,9 +1974,10 @@ CXXFoldExpr::CXXFoldExpr(QualType T, UnresolvedLookupExpr *Callee,
       EllipsisLoc(EllipsisLoc), RParenLoc(RParenLoc),
       NumExpansions(NumExpansions ? *NumExpansions + 1 : 0), Opcode(Opcode) {
   // We rely on asserted invariant to distinguish left and right folds.
-  assert(((LHS && LHS->containsUnexpandedParameterPack()) !=
-          (RHS && RHS->containsUnexpandedParameterPack())) &&
-         "Exactly one of LHS or RHS should contain an unexpanded pack");
+  if(LHS && RHS)
+    assert(LHS->containsUnexpandedParameterPack() !=
+               RHS->containsUnexpandedParameterPack() &&
+           "Exactly one of LHS or RHS should contain an unexpanded pack");
   SubExprs[SubExpr::Callee] = Callee;
   SubExprs[SubExpr::LHS] = LHS;
   SubExprs[SubExpr::RHS] = RHS;

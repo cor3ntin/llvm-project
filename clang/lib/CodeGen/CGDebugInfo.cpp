@@ -5532,8 +5532,6 @@ bool CGDebugInfo::HasReconstitutableArgs(
     ArrayRef<TemplateArgument> Args) const {
   return llvm::all_of(Args, [&](const TemplateArgument &TA) {
     switch (TA.getKind()) {
-    case TemplateArgument::Concept:
-      return false;
     case TemplateArgument::Template:
       // Easy to reconstitute - the value of the parameter in the debug
       // info is the string name of the template. The template name

@@ -42,7 +42,6 @@ public:
       DISPATCH(TemplateExpansion);
       DISPATCH(Expression);
       DISPATCH(Pack);
-      DISPATCH(Concept);
       DISPATCH(Universal);
       DISPATCH(UniversalExpansion);
     }
@@ -68,7 +67,6 @@ public:
   VISIT_METHOD(TemplateExpansion);
   VISIT_METHOD(Expression);
   VISIT_METHOD(Pack);
-  VISIT_METHOD(Concept);
   VISIT_METHOD(Universal);
   VISIT_METHOD(UniversalExpansion);
 

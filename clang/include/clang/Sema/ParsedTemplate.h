@@ -26,7 +26,6 @@
 #include <new>
 
 namespace clang {
-class PartiallyAppliedConcept;
 
 /// Represents the parsed form of a C++ template argument.
 class ParsedTemplateArgument {
@@ -39,8 +38,6 @@ public:
     NonType,
     /// A template template argument, stored as a template name.
     Template,
-    /// A partially applied concept
-    PartiallyAppliedConcept,
     /// The name of a Universal Template Parameter
     Universal
   };
@@ -71,11 +68,6 @@ public:
       : Kind(ParsedTemplateArgument::Template), Arg(Template.getAsOpaquePtr()),
         SS(SS), Loc(TemplateLoc) {}
 
-  ParsedTemplateArgument(class PartiallyAppliedConcept *Concept,
-                         SourceLocation TemplateLoc)
-      : Kind(ParsedTemplateArgument::PartiallyAppliedConcept), Arg(Concept),
-        Loc(TemplateLoc) {}
-
   ParsedTemplateArgument(UniversalTemplateParamNameTy ParamName,
                          SourceLocation Loc)
       : Kind(ParsedTemplateArgument::Universal),
@@ -105,11 +97,6 @@ public:
     return ParsedTemplateTy::getFromOpaquePtr(Arg);
   }
 
-  class PartiallyAppliedConcept *getAsConcept() const {
-    assert(Kind == PartiallyAppliedConcept && "Not a concept argument");
-    return reinterpret_cast<class PartiallyAppliedConcept *>(Arg);
-  }
-
   UniversalTemplateParamNameTy getAsUniversalTemplateParamName() const {
     assert(Kind == Universal &&
            "Not a reference to a universal template parameter");
@@ -122,7 +109,7 @@ public:
   /// Retrieve the nested-name-specifier that precedes the template
   /// name in a template template argument.
   const CXXScopeSpec &getScopeSpec() const {
-    assert((Kind == Template || Kind == PartiallyAppliedConcept) &&
+    assert((Kind == Template) &&
            "Only template template arguments can have a scope specifier");
     return SS;
   }

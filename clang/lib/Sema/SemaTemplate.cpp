@@ -941,14 +941,7 @@ static TemplateArgumentLoc translateTemplateArgument(Sema &SemaRef,
         Arg.getScopeSpec().getWithLocInContext(SemaRef.Context),
         Arg.getLocation(), Arg.getEllipsisLoc());
   }
-  case clang::ParsedTemplateArgument::PartiallyAppliedConcept: {
-    PartiallyAppliedConcept *C = Arg.getAsConcept();
-    TemplateArgument TArg(C);
-    return TemplateArgumentLoc(
-        SemaRef.Context, TArg,
-        Arg.getScopeSpec().getWithLocInContext(SemaRef.Context),
-        Arg.getLocation());
-  }
+
   case clang::ParsedTemplateArgument::Universal: {
     UniversalTemplateParamNameTy U = Arg.getAsUniversalTemplateParamName();
     TemplateArgument TArg;
@@ -1210,8 +1203,7 @@ static ExprResult formImmediatelyDeclaredConstraint(
   if (auto *CD = dyn_cast<ConceptDecl>(NamedConcept)) {
     ImmediatelyDeclaredConstraint = S.CheckConceptTemplateId(
         SS, /*TemplateKWLoc=*/SourceLocation(), NameInfo,
-        // /*FoundDecl=*/FoundDecl ? FoundDecl : NamedConcept,
-        NamedConcept,
+        /*FoundDecl=*/FoundDecl ? FoundDecl : NamedConcept,
         CD, &ConstraintArgs);
     if (ImmediatelyDeclaredConstraint.isInvalid() || !EllipsisLoc.isValid())
       return ImmediatelyDeclaredConstraint;
@@ -4965,47 +4957,6 @@ TemplateNameKind Sema::ActOnTemplateName(Scope *S,
   return TNK_Non_template;
 }
 
-PartiallyAppliedConcept *Sema::BuildPartiallyAppliedConcept(
-    NestedNameSpecifierLoc NNS, SourceLocation ConceptKWLoc,
-    DeclarationNameInfo ConceptName, TemplateDecl *TD,
-    const TemplateArgumentListInfo &TemplateArgs) {
-
-  return PartiallyAppliedConcept::Create(getASTContext(), NNS, ConceptName,
-                                         ConceptKWLoc, TD, TD, TemplateArgs);
-}
-
-PartiallyAppliedConcept *
-Sema::ActOnPartiallyAppliedConcept(Scope *S, CXXScopeSpec &SS,
-                                   SourceLocation ConceptKWLoc,
-                                   TemplateIdAnnotation *TemplateId) {
-
-  if (TemplateId->isInvalid())
-    return nullptr;
-  TemplateName TN = TemplateId->Template.get();
-  if (TN.isNull())
-    return nullptr;
-  bool IsConcept = false;
-  TemplateDecl *TD = TN.getAsTemplateDecl();
-  if(!TD)
-    return nullptr;
-  if (TemplateTemplateParmDecl *TTP = dyn_cast<TemplateTemplateParmDecl>(TD))
-    IsConcept = TTP->kind() == TNK_Concept_template;
-  else
-    IsConcept = isa<ConceptDecl>(TD);
-  if (!IsConcept) {
-    Diag(TemplateId->TemplateNameLoc, diag::err_partial_concept_valid_template);
-    return nullptr;
-  }
-
-  DeclarationNameInfo ConceptName(DeclarationName(TemplateId->Name),
-                                  TemplateId->TemplateNameLoc);
-  TemplateArgumentListInfo TemplateArgs =
-      makeTemplateArgumentListInfo(*this, *TemplateId);
-  NestedNameSpecifierLoc NNS = SS.getWithLocInContext(Context);
-  return BuildPartiallyAppliedConcept(NNS, ConceptKWLoc, ConceptName, TD,
-                                      TemplateArgs);
-}
-
 bool Sema::ActOnUniversalTemplateParameterName(
     Scope *S, const UnqualifiedId &Name, bool EnteringContext,
     UniversalTemplateParamNameTy &Template) {
@@ -5232,7 +5183,6 @@ bool Sema::CheckUniversalTemplateParameterArgument(
     CanonicalConverted.push_back(CanonicalResult);
     break;
   }
-  case TemplateArgument::Concept:
     // TODO check invalid
   case TemplateArgument::Declaration:
   case TemplateArgument::Integral:
@@ -5607,13 +5557,6 @@ bool Sema::CheckTemplateArgument(
           Context.getCanonicalTemplateArgument(Arg.getArgument()));
       break;
 
-    // TODO support non-type concepts
-    case TemplateArgument::Concept:
-      Diag(Arg.getLocation(), diag::err_template_arg_must_be_expr)
-          << Arg.getSourceRange();
-      Diag(Param->getLocation(), diag::note_template_param_here);
-      return true;
-
     case TemplateArgument::Universal:
       SugaredConverted.push_back(Arg.getArgument());
       CanonicalConverted.push_back(
@@ -5749,15 +5692,6 @@ bool Sema::CheckTemplateArgument(
   switch (Arg.getArgument().getKind()) {
   case TemplateArgument::Null:
     llvm_unreachable("Should never see a NULL template argument here");
-
-  case TemplateArgument::Concept:
-    if (CheckPartiallyAppliedConceptTemplateArgument(TempParm, Params, Arg))
-      return true;
-
-    SugaredConverted.push_back(Arg.getArgument());
-    CanonicalConverted.push_back(
-        Context.getCanonicalTemplateArgument(Arg.getArgument()));
-    break;
 
   case TemplateArgument::Template:
   case TemplateArgument::TemplateExpansion:
@@ -7872,45 +7806,6 @@ void Sema::NoteTemplateLocation(const NamedDecl &Decl,
 void Sema::NoteTemplateParameterLocation(const NamedDecl &Decl) {
   noteLocation(*this, Decl, diag::note_template_param_here,
                diag::note_template_param_external);
-}
-
-bool Sema::CheckPartiallyAppliedConceptTemplateArgument(
-    TemplateTemplateParmDecl *Param, TemplateParameterList *Params,
-    TemplateArgumentLoc &Arg) {
-  PartiallyAppliedConcept *C = Arg.getArgument().getAsPartiallyAppliedConcept();
-  TemplateDecl *Template = C->getNamedConcept();
-  if (Template->isInvalidDecl())
-    return true;
-
-  if (!CheckDeclCompatibleWithTemplateTemplate(Template, Param, Arg)) {
-    return true;
-  }
-  if (Params->size() != 1) {
-    Diag(C->getSourceRange().getBegin(),
-         diag::err_partial_concept_param_must_have_one_arg);
-    Diag(Param->getLocation(),
-         diag::note_concept_template_parameter_declared_here)
-        << Param;
-    return true;
-  }
-  unsigned MinArguments =
-      Template->getTemplateParameters()->getMinRequiredArguments();
-
-  auto Passed = C->getTemplateArgsAsWritten()->getNumTemplateArgs();
-  bool TooFew  = MinArguments > Passed + 1;
-  bool TooMany = Passed +1 > Template->getTemplateParameters()->size() &&
-                 !Template->getTemplateParameters()->hasParameterPack();
-
-  if (TooFew || TooMany) {
-    Diag(C->getSourceRange().getBegin(),
-         diag::err_template_arg_list_different_arity)
-        << (TooFew ? 0 : 1) << /*Concept*/ 5 << Template;
-    Diag(Template->getLocation(), diag::note_template_decl_here)
-        << Template->getTemplateParameters()->getSourceRange();
-    return true;
-  }
-
-  return false;
 }
 
 /// Given a non-type template argument that refers to a

@@ -7308,10 +7308,6 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
     case TemplateArgument::Expression:
       return Arg;
 
-    // FIXME corentin: do concept needs to be canonicalized?
-    case TemplateArgument::Concept:
-      return Arg;
-
     case TemplateArgument::Declaration: {
       auto *D = cast<ValueDecl>(Arg.getAsDecl()->getCanonicalDecl());
       return TemplateArgument(D, getCanonicalType(Arg.getParamTypeForDecl()),

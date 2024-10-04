@@ -1461,9 +1461,6 @@ namespace {
     /// this declaration.
     Decl *TransformDecl(SourceLocation Loc, Decl *D);
 
-    bool InjectAdditionalArgumentsFromPartiallyAppliedConcept(
-        TemplateArgumentListInfo &Args, TemplateDecl *D);
-
     void transformAttrs(Decl *Old, Decl *New) {
       SemaRef.InstantiateAttrs(TemplateArgs, Old, New);
     }
@@ -1866,10 +1863,6 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
         Arg = getPackSubstitutedTemplateArgument(getSema(), Arg);
       }
 
-      if (Arg.getKind() == clang::TemplateArgument::Concept) {
-        return Arg.getAsPartiallyAppliedConcept()->getNamedConcept();
-      }
-
       TemplateName Template = Arg.getAsTemplate();
 
       assert(!Template.isNull() && Template.getAsTemplateDecl() &&
@@ -1887,23 +1880,6 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
   }
 
   return SemaRef.FindInstantiatedDecl(Loc, cast<NamedDecl>(D), TemplateArgs);
-}
-
-bool TemplateInstantiator::InjectAdditionalArgumentsFromPartiallyAppliedConcept(
-    TemplateArgumentListInfo &Args, TemplateDecl *D) {
-  auto [Depth, Index] = getDepthAndIndex(D);
-  if (Depth >= TemplateArgs.getNumLevels())
-    return false;
-  if (!TemplateArgs.hasTemplateArgument(Depth, Index))
-    return false;
-  TemplateArgument Arg = TemplateArgs(Depth, Index);
-  if (Arg.getKind() != clang::TemplateArgument::Concept)
-    return false;
-  PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
-  for (auto &Arg : C->getTemplateArgsAsWritten()->arguments()) {
-    Args.addArgument(Arg);
-  }
-  return true;
 }
 
 Decl *TemplateInstantiator::TransformDefinition(SourceLocation Loc, Decl *D) {
@@ -2113,38 +2089,6 @@ TemplateArgument TemplateInstantiator::TransformNamedTemplateTemplateArgument(
         return TemplateArgument(Name);
 
       TemplateArgument Arg = TemplateArgs(TTP->getDepth(), TTP->getPosition());
-      if (Arg.getKind() == TemplateArgument::Concept) {
-        PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
-        TemplateDecl *T = cast_or_null<TemplateDecl>(getDerived().TransformDecl(
-            C->getConceptNameLoc(), C->getNamedConcept()));
-        if (!T)
-          return TemplateArgument();
-
-        if (T == C->getNamedConcept() && !getDerived().AlwaysRebuild())
-          return Arg;
-
-        DeclarationNameInfo NameInfo = C->getConceptNameInfo();
-        if (NameInfo.getName()) {
-          NameInfo = getDerived().TransformDeclarationNameInfo(NameInfo);
-          if (!NameInfo.getName())
-            return TemplateArgument();
-        }
-
-        TemplateArgumentListInfo NewTemplateArgs;
-        NewTemplateArgs.setLAngleLoc(
-            C->getTemplateArgsAsWritten()->getLAngleLoc());
-        NewTemplateArgs.setLAngleLoc(
-            C->getTemplateArgsAsWritten()->getRAngleLoc());
-        for (auto &Arg : C->getTemplateArgsAsWritten()->arguments())
-          NewTemplateArgs.addArgument(Arg);
-
-        PartiallyAppliedConcept *Transformed =
-            SemaRef.BuildPartiallyAppliedConcept(C->getNestedNameSpecifierLoc(),
-                                                 C->getConceptKWLoc(), NameInfo,
-                                                 T, NewTemplateArgs);
-        if (!Transformed)
-          return TemplateArgument(Transformed);
-      }
     }
   }
   TemplateName TN = getDerived().TransformTemplateName(SS, Name, NameLoc);
@@ -2234,7 +2178,6 @@ NamedDecl *TemplateInstantiator::TransformUniversalTemplateParameter(
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::UniversalExpansion:
   case TemplateArgument::Pack:
-  case TemplateArgument::Concept:
     assert(false && "non implemented");
     break;
 

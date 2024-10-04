@@ -508,7 +508,7 @@ let Class = AutoType in {
   }
   def : Property<"typeConstraintConcept", Optional<TemplateDeclRef>> {
     let Read = [{ makeOptionalFromPointer(
-        const_cast<const TemplateDecl*>(node->getTypeConstraintConcept())) }];
+        node->getTypeConstraintConcept()) }];
   }
   def : Property<"typeConstraintArguments", Array<TemplateArgument>> {
     let Read = [{ node->getTypeConstraintArguments() }];

@@ -308,10 +308,6 @@ TemplateArgumentDependence TemplateArgument::getDependence() const {
               TemplateArgumentDependence::Instantiation;
     return Deps;
 
-  case Concept: {
-    Deps = getAsPartiallyAppliedConcept()->getDependence();
-    return Deps;
-  }
   case Pack:
     for (const auto &P : pack_elements())
       Deps |= P.getDependence();
@@ -337,7 +333,6 @@ bool TemplateArgument::isPackExpansion() const {
   case Pack:
   case Template:
   case NullPtr:
-  case Concept:
   case Universal:
     return false;
 
@@ -356,8 +351,8 @@ bool TemplateArgument::isPackExpansion() const {
 }
 
 bool TemplateArgument::isConceptOrConceptTemplateParameter() const {
-  bool isConcept = getKind() == TemplateArgument::Concept;
-  if (!isConcept && getKind() == TemplateArgument::Template) {
+  bool isConcept = false;
+  if (getKind() == TemplateArgument::Template) {
     if (isa<ConceptDecl>(getAsTemplate().getAsTemplateDecl()))
       isConcept = true;
     else if (auto *TTP = dyn_cast_if_present<TemplateTemplateParmDecl>(
@@ -389,7 +384,6 @@ QualType TemplateArgument::getNonTypeTemplateArgumentType() const {
   case TemplateArgument::Template:
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
-  case TemplateArgument::Concept:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     return QualType();
@@ -440,10 +434,6 @@ void TemplateArgument::Profile(llvm::FoldingSetNodeID &ID,
     ID.AddPointer(TemplateArg.Name);
     break;
 
-  case Concept:
-    getAsPartiallyAppliedConcept()->Profile(ID, Context);
-    break;
-
   case UniversalExpansion:
     ID.AddInteger(UniversalArg.NumExpansions);
     [[fallthrough]];
@@ -491,22 +481,6 @@ bool TemplateArgument::structurallyEquals(const TemplateArgument &Other) const {
   case UniversalExpansion:
     return UniversalArg.D == Other.UniversalArg.D &&
            UniversalArg.NumExpansions == Other.UniversalArg.NumExpansions;
-
-  case Concept: {
-    PartiallyAppliedConcept *C = getAsPartiallyAppliedConcept();
-    PartiallyAppliedConcept *OC = Other.getAsPartiallyAppliedConcept();
-    if (C->getNamedConcept() != OC->getNamedConcept())
-      return false;
-    const ASTTemplateArgumentListInfo *Args = C->getTemplateArgsAsWritten();
-    const ASTTemplateArgumentListInfo *OArgs = OC->getTemplateArgsAsWritten();
-    if (Args->getNumTemplateArgs() != OArgs->getNumTemplateArgs())
-      return false;
-    for (unsigned I = 0; I < Args->getNumTemplateArgs(); I++)
-      if (!Args->arguments()[I].getArgument().structurallyEquals(
-              OArgs->arguments()[I].getArgument()))
-        return false;
-    return true;
-  }
 
   case Declaration:
     return getAsDecl() == Other.getAsDecl() &&
@@ -560,7 +534,6 @@ TemplateArgument TemplateArgument::getPackExpansionPattern() const {
   case Pack:
   case Null:
   case Template:
-  case Concept:
   case Universal:
   case NullPtr:
     return TemplateArgument();
@@ -629,10 +602,6 @@ void TemplateArgument::print(const PrintingPolicy &Policy, raw_ostream &Out,
     Out << "...";
     break;
 
-  case Concept:
-    getAsPartiallyAppliedConcept()->print(Out, Policy);
-    break;
-
   case Integral:
     printIntegral(*this, Out, Policy, IncludeType);
     break;
@@ -692,10 +661,6 @@ SourceRange TemplateArgumentLoc::getSourceRange() const {
         getArgument().getAsUniversalTemplateParameterOrPattern()->getLocation(),
         getUniversalEllipsisLoc());
 
-    // Fixme ?
-  case TemplateArgument::Concept:
-    return getArgument().getAsPartiallyAppliedConcept()->getSourceRange();
-
   case TemplateArgument::TemplateExpansion:
     if (getTemplateQualifierLoc())
       return SourceRange(getTemplateQualifierLoc().getBeginLoc(),
@@ -753,9 +718,6 @@ static const T &DiagTemplateArg(const T &DB, const TemplateArgument &Arg) {
 
   case TemplateArgument::TemplateExpansion:
     return DB << Arg.getAsTemplateOrTemplatePattern() << "...";
-
-  case TemplateArgument::Concept:
-    return DB << *Arg.getAsPartiallyAppliedConcept();
 
   case TemplateArgument::Universal:
     return DB << *Arg.getAsUniversalTemplateParameterName();
