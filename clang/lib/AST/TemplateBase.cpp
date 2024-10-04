@@ -328,6 +328,10 @@ bool TemplateArgument::isPackExpansion() const {
   case Pack:
   case Template:
   case NullPtr:
+    return false;
+
+  case TemplateExpansion:
+    return true;
 
   case Type:
     return isa<PackExpansionType>(getAsType());

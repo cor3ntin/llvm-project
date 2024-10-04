@@ -77,6 +77,7 @@ TemplateParameterList::TemplateParameterList(const ASTContext& C,
           (TTP->getTemplateParameters()->containsUnexpandedParameterPack() ||
            DefaultTemplateArgumentContainsUnexpandedPack(*TTP))) {
         ContainsUnexpandedParameterPack = true;
+      }
     } else if (const auto *TTP = dyn_cast<TemplateTypeParmDecl>(P)) {
       if (!IsPack && DefaultTemplateArgumentContainsUnexpandedPack(*TTP)) {
         ContainsUnexpandedParameterPack = true;
@@ -88,7 +89,7 @@ TemplateParameterList::TemplateParameterList(const ASTContext& C,
       if (TTP->hasTypeConstraint())
         HasConstrainedParameters = true;
     } else {
-      // llvm_unreachable("unexpected template parameter type");
+      llvm_unreachable("unexpected template parameter type");
     }
   }
 
@@ -97,8 +98,6 @@ TemplateParameterList::TemplateParameterList(const ASTContext& C,
       ContainsUnexpandedParameterPack = true;
     *getTrailingObjects<Expr *>() = RequiresClause;
   }
-}
-
 }
 
 bool TemplateParameterList::containsUnexpandedParameterPack() const {
@@ -164,9 +163,9 @@ void TemplateParameterList::Profile(llvm::FoldingSetNodeID &ID,
       continue;
     }
     const auto *TTP = cast<TemplateTemplateParmDecl>(D);
-    ID.AddInteger(3);
-    ID.AddInteger(TTP->kind());
+    ID.AddInteger(2);
     ID.AddBoolean(TTP->isParameterPack());
+    ID.AddInteger(TTP->kind());
     TTP->getTemplateParameters()->Profile(ID, C);
   }
 }
@@ -239,7 +238,7 @@ getAssociatedConstraints(llvm::SmallVectorImpl<const Expr *> &AC) const {
           AC.push_back(E);
       }
     }
-  if (HasRequiresClause && getRequiresClause())
+  if (HasRequiresClause)
     AC.push_back(getRequiresClause());
 }
 
