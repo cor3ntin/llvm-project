@@ -14,6 +14,7 @@
 #include "TreeTransform.h"
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprConcepts.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/OperatorPrecedence.h"
@@ -29,6 +30,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Casting.h"
 #include <optional>
 
 using namespace clang;
@@ -346,14 +348,21 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
     return calculateConstraintSatisfaction(S, FE, Satisfaction, Evaluator);
   }
 
+  bool IsConcept = false;
+  if (auto *ULE = dyn_cast<UnresolvedLookupExpr>(ConstraintExpr);
+      ULE && ULE->isConceptReference()) {
+    IsConcept = true;
+  }
+
   // An atomic constraint expression
-  ExprResult SubstitutedAtomicExpr =
+  ExprResult SubstitutedExpr = IsConcept ?
+      Evaluator.EvaluateConceptDependentConstraint(ConstraintExpr):
       Evaluator.EvaluateAtomicConstraint(ConstraintExpr);
 
-  if (SubstitutedAtomicExpr.isInvalid())
+  if (SubstitutedExpr.isInvalid())
     return ExprError();
 
-  if (!SubstitutedAtomicExpr.isUsable())
+  if (!SubstitutedExpr.isUsable())
     // Evaluator has decided satisfaction without yielding an expression.
     return ExprEmpty();
 
@@ -362,7 +371,7 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
   // we'd potentially pick up a different overload, and cause confusing
   // diagnostics. SO, add a failure detail that will cause us to make this
   // overload set not viable.
-  if (SubstitutedAtomicExpr.get()->containsErrors()) {
+  if (SubstitutedExpr.get()->containsErrors()) {
     Satisfaction.IsSatisfied = false;
     Satisfaction.ContainsErrors = true;
 
@@ -375,9 +384,9 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
     memcpy(Mem, DiagString.c_str(), MessageSize);
     Satisfaction.Details.emplace_back(
         new (S.Context) ConstraintSatisfaction::SubstitutionDiagnostic{
-            SubstitutedAtomicExpr.get()->getBeginLoc(),
+            SubstitutedExpr.get()->getBeginLoc(),
             StringRef(Mem, MessageSize)});
-    return SubstitutedAtomicExpr;
+    return SubstitutedExpr;
   }
 
   EnterExpressionEvaluationContext ConstantEvaluated(
@@ -385,14 +394,14 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
   SmallVector<PartialDiagnosticAt, 2> EvaluationDiags;
   Expr::EvalResult EvalResult;
   EvalResult.Diag = &EvaluationDiags;
-  if (!SubstitutedAtomicExpr.get()->EvaluateAsConstantExpr(EvalResult,
+  if (!SubstitutedExpr.get()->EvaluateAsConstantExpr(EvalResult,
                                                            S.Context) ||
       !EvaluationDiags.empty()) {
     // C++2a [temp.constr.atomic]p1
     //   ...E shall be a constant expression of type bool.
-    S.Diag(SubstitutedAtomicExpr.get()->getBeginLoc(),
+    S.Diag(SubstitutedExpr.get()->getBeginLoc(),
            diag::err_non_constant_constraint_expression)
-        << SubstitutedAtomicExpr.get()->getSourceRange();
+        << SubstitutedExpr.get()->getSourceRange();
     for (const PartialDiagnosticAt &PDiag : EvaluationDiags)
       S.Diag(PDiag.first, PDiag.second);
     return ExprError();
@@ -402,9 +411,9 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
          "evaluating bool expression didn't produce int");
   Satisfaction.IsSatisfied = EvalResult.Val.getInt().getBoolValue();
   if (!Satisfaction.IsSatisfied)
-    Satisfaction.Details.emplace_back(SubstitutedAtomicExpr.get());
+    Satisfaction.Details.emplace_back(SubstitutedExpr.get());
 
-  return SubstitutedAtomicExpr;
+  return SubstitutedExpr;
 }
 
 static bool
@@ -527,6 +536,10 @@ static ExprResult calculateConstraintSatisfaction(
             /*BasePath=*/nullptr, VK_PRValue, FPOptionsOverride());
 
       return SubstitutedExpression;
+    }
+
+    ExprResult EvaluateConceptDependentConstraint(const Expr* ConceptDependentConstraint) const {
+      return EvaluateAtomicConstraint(ConceptDependentConstraint);
     }
 
     std::optional<unsigned>
@@ -691,6 +704,10 @@ bool Sema::CheckConstraintSatisfaction(const Expr *ConstraintExpr,
     Sema &S;
     ExprResult EvaluateAtomicConstraint(const Expr *AtomicExpr) const {
       return S.PerformContextuallyConvertToBool(const_cast<Expr *>(AtomicExpr));
+    }
+
+    ExprResult EvaluateConceptDependentConstraint(const Expr* ConceptDependentConstraint) const {
+      return const_cast<Expr*>(ConceptDependentConstraint);
     }
 
     std::optional<unsigned>
@@ -1543,7 +1560,11 @@ NormalizedConstraint::NormalizedConstraint(ASTContext &C,
         Other.getFoldExpandedConstraint()->Kind,
         NormalizedConstraint(C, Other.getFoldExpandedConstraint()->Constraint),
         Other.getFoldExpandedConstraint()->Pattern);
-  } else {
+  } else if (Other.isConceptDependent()) {
+    Constraint = new (C) ConceptDependentConstraint(
+        Other.getConceptDependentConstraint()->Concept);
+  }
+  else {
     Constraint = CompoundConstraint(
         new (C)
             NormalizedConstraintPair{NormalizedConstraint(C, Other.getLHS()),
@@ -1671,6 +1692,8 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
       return std::nullopt;
     return NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
         Kind, std::move(*Sub), FE->getPattern()}};
+  } else if (auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference()) {
+    return NormalizedConstraint{new (S.Context) ConceptDependentConstraint(ULE)};
   }
 
   return NormalizedConstraint{new (S.Context) AtomicConstraint(E, D)};

@@ -79,9 +79,11 @@ struct alignas(ConstraintAlignment) AtomicConstraint {
 };
 
 struct alignas(ConstraintAlignment) FoldExpandedConstraint;
+struct alignas(ConstraintAlignment) ConceptDependentConstraint;
+
 
 using NormalFormConstraint =
-    llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *>;
+    llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *, ConceptDependentConstraint*>;
 struct NormalizedConstraint;
 using NormalForm =
     llvm::SmallVector<llvm::SmallVector<NormalFormConstraint, 2>, 4>;
@@ -111,12 +113,13 @@ struct NormalizedConstraint {
   using CompoundConstraint = llvm::PointerIntPair<NormalizedConstraintPair *, 1,
                                                   CompoundConstraintKind>;
 
-  llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *,
+  llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *, ConceptDependentConstraint*,
                      CompoundConstraint>
       Constraint;
 
   NormalizedConstraint(AtomicConstraint *C): Constraint{C} { };
   NormalizedConstraint(FoldExpandedConstraint *C) : Constraint{C} {};
+  NormalizedConstraint(ConceptDependentConstraint *C) : Constraint{C} {};
 
   NormalizedConstraint(ASTContext &C, NormalizedConstraint LHS,
                        NormalizedConstraint RHS, CompoundConstraintKind Kind);
@@ -139,6 +142,11 @@ struct NormalizedConstraint {
   bool isFoldExpanded() const {
     return Constraint.is<FoldExpandedConstraint *>();
   }
+
+  bool isConceptDependent() const {
+    return Constraint.is<ConceptDependentConstraint *>();
+  }
+
   bool isCompound() const { return Constraint.is<CompoundConstraint>(); }
 
   CompoundConstraintKind getCompoundKind() const {
@@ -159,6 +167,12 @@ struct NormalizedConstraint {
     assert(isFoldExpanded() &&
            "getFoldExpandedConstraint called on non-fold-expanded constraint.");
     return Constraint.get<FoldExpandedConstraint *>();
+  }
+
+  ConceptDependentConstraint *getConceptDependentConstraint() const {
+    assert(isConceptDependent() &&
+           "getConceptDependentConstraint called on non-concept-dependent constraint.");
+    return Constraint.get<ConceptDependentConstraint *>();
   }
 
 private:
@@ -187,6 +201,11 @@ struct alignas(ConstraintAlignment) FoldExpandedConstraint {
 
   static bool AreCompatibleForSubsumption(const FoldExpandedConstraint &A,
                                           const FoldExpandedConstraint &B);
+};
+
+struct alignas(ConstraintAlignment) ConceptDependentConstraint {
+  const UnresolvedLookupExpr* Concept;
+  ConceptDependentConstraint(const UnresolvedLookupExpr* Concept) : Concept{Concept} {}
 };
 
 const NormalizedConstraint *getNormalizedAssociatedConstraints(
