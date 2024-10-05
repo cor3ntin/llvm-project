@@ -16,6 +16,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
@@ -180,6 +181,8 @@ private:
   fromConstraintExprs(Sema &S, NamedDecl *D, ArrayRef<const Expr *> E);
   static std::optional<NormalizedConstraint>
   fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E);
+  static std::optional<NormalizedConstraint>
+  BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E);
 };
 
 struct alignas(ConstraintAlignment) NormalizedConstraintPair {

@@ -14573,6 +14573,7 @@ private:
   /// Used by SetupConstraintCheckingTemplateArgumentsAndScope to recursively(in
   /// the case of lambdas) set up the LocalInstantiationScope of the current
   /// function.
+public:
   bool
   SetupConstraintScope(FunctionDecl *FD,
                        std::optional<ArrayRef<TemplateArgument>> TemplateArgs,

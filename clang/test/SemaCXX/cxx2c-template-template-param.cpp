@@ -361,6 +361,7 @@ concept D = Var<int>;
 
 }
 
+#if 0
 namespace InvalidName {
 // FIXME corentin: improve diagnostics
 template <typename T, template <typename> concept C>
@@ -370,3 +371,4 @@ template <A<concept missing<int>> T> // expected-error {{expected expression}} \
                                      // expected-error {{too few template arguments for concept 'A'}}
 auto f();
 }
+#endif

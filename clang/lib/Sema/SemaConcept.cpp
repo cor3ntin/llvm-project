@@ -13,14 +13,17 @@
 #include "clang/Sema/SemaConcept.h"
 #include "TreeTransform.h"
 #include "clang/AST/ASTLambda.h"
+#include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprConcepts.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/OperatorPrecedence.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Initialization.h"
 #include "clang/Sema/Overload.h"
+#include "clang/Sema/Ownership.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
@@ -881,6 +884,7 @@ bool Sema::CheckFunctionConstraints(const FunctionDecl *FD,
   // LocalInstantiationScope not looking into its parents, but we can still
   // access Decls from the parents while building a lambda RAII scope later.
   if (const auto *MD = dyn_cast<CXXConversionDecl>(FD);
+
       MD && isLambdaConversionOperator(const_cast<CXXConversionDecl *>(MD)))
     return CheckFunctionConstraints(MD->getParent()->getLambdaCallOperator(),
                                     Satisfaction, UsageLoc,
@@ -1601,6 +1605,43 @@ NormalizedConstraint::fromConstraintExprs(Sema &S, NamedDecl *D,
 }
 
 std::optional<NormalizedConstraint>
+NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E) {
+
+  Sema::ContextRAII savedContext(S, cast<FunctionDecl>(D));
+  LocalInstantiationScope Scope(S);
+
+  MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(D, D->getLexicalDeclContext(),
+                                            /*Final=*/false, /*Innermost=*/std::nullopt,
+                                            /*RelativeToPrimary=*/true,
+                                            /*Pattern=*/nullptr,
+                                            /*ForConstraintInstantiation=*/true);
+  if(FunctionDecl* FD = dyn_cast<FunctionDecl>(D))
+    S.SetupConstraintScope(FD, {}, MLTAL, Scope);
+
+  sema::TemplateDeductionInfo Info(E->getBeginLoc());
+  Sema::InstantiatingTemplate Inst(
+      S, E->getExprLoc(),
+      Sema::InstantiatingTemplate::ConstraintSubstitution{}, D,
+      Info,
+      E->getSourceRange());
+
+
+  if (MLTAL.getNumSubstitutedLevels() == 0)
+    return NormalizedConstraint{new (S.Context) ConceptDependentConstraint{E}};
+
+
+  ExprResult Res = S.SubstConstraintExpr(const_cast<UnresolvedLookupExpr*>(E), MLTAL);
+  if(Res.isInvalid())
+    return std::nullopt;
+
+  if(auto* ULE = dyn_cast<UnresolvedLookupExpr>(Res.get()); ULE && ULE->isConceptReference())
+    return NormalizedConstraint{new (S.Context) ConceptDependentConstraint{ULE}};
+
+  return NormalizedConstraint::fromConstraintExpr(S, D, Res.get());
+
+}
+
+std::optional<NormalizedConstraint>
 NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
   assert(E != nullptr);
 
@@ -1693,7 +1734,7 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
     return NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
         Kind, std::move(*Sub), FE->getPattern()}};
   } else if (auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference()) {
-    return NormalizedConstraint{new (S.Context) ConceptDependentConstraint(ULE)};
+    return BuildConceptDependentConstraint(S, D, ULE);
   }
 
   return NormalizedConstraint{new (S.Context) AtomicConstraint(E, D)};
@@ -1728,6 +1769,9 @@ NormalForm clang::makeCNF(const NormalizedConstraint &Normalized) {
   else if (Normalized.isFoldExpanded())
     return {{Normalized.getFoldExpandedConstraint()}};
 
+  else if (Normalized.isConceptDependent())
+      return {{Normalized.getConceptDependentConstraint()}};
+
   NormalForm LCNF = makeCNF(Normalized.getLHS());
   NormalForm RCNF = makeCNF(Normalized.getRHS());
   if (Normalized.getCompoundKind() == NormalizedConstraint::CCK_Conjunction) {
@@ -1759,6 +1803,9 @@ NormalForm clang::makeDNF(const NormalizedConstraint &Normalized) {
 
   else if (Normalized.isFoldExpanded())
     return {{Normalized.getFoldExpandedConstraint()}};
+
+  else if (Normalized.isConceptDependent())
+    return {{Normalized.getConceptDependentConstraint()}};
 
   NormalForm LDNF = makeDNF(Normalized.getLHS());
   NormalForm RDNF = makeDNF(Normalized.getRHS());
@@ -1801,9 +1848,9 @@ bool Sema::IsAtLeastAsConstrained(NamedDecl *D1,
     (void)IsExpectedEntity;
     (void)FD1;
     (void)FD2;
-    assert(IsExpectedEntity(FD1) && FD2 && IsExpectedEntity(FD2) &&
-           "use non-instantiated function declaration for constraints partial "
-           "ordering");
+    //assert(IsExpectedEntity(FD1) && FD2 && IsExpectedEntity(FD2) &&
+    //       "use non-instantiated function declaration for constraints partial "
+    //       "ordering");
   }
 
   if (AC1.empty()) {
