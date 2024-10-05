@@ -866,9 +866,11 @@ TemplateTemplateParmDecl::Create(const ASTContext &C, DeclContext *DC,
 
 TemplateTemplateParmDecl *
 TemplateTemplateParmDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID) {
-  return new (C, ID)
-      TemplateTemplateParmDecl(nullptr, SourceLocation(), 0, 0, nullptr,
-                               TemplateNameKind::TNK_Type_template, false, nullptr, nullptr);
+  return new (C, ID) TemplateTemplateParmDecl(
+      /*DC=*/nullptr, SourceLocation(), /*Depth=*/0, /*Index=*/0,
+      /*ParameterPack=*/false,
+      /*Id=*/nullptr, TemplateNameKind::TNK_Type_template, /*Typename=*/false,
+      /*Params=*/nullptr);
 }
 
 TemplateTemplateParmDecl *
