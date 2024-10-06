@@ -49,6 +49,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -6150,6 +6151,22 @@ UnresolvedSetIterator Sema::getMostSpecialized(
   return SpecEnd;
 }
 
+static bool ConstraintHasConceptTemplateParameterConceptReference(const Expr* E) {
+    if(auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference())
+        return true;
+    if(auto* P = dyn_cast<ParenExpr>(E))
+        return ConstraintHasConceptTemplateParameterConceptReference(P->getSubExpr());
+    if(auto* B = dyn_cast<BinaryOperator>(E); B && llvm::is_contained({BO_And, BO_Or}, B->getOpcode()))
+        return ConstraintHasConceptTemplateParameterConceptReference(B->getLHS()) ||
+                ConstraintHasConceptTemplateParameterConceptReference(B->getRHS());
+    if(auto* FE = dyn_cast<CXXFoldExpr>(E); FE && llvm::is_contained({BO_And, BO_Or}, FE->getOperator())) {
+        if(FE->getInit() && ConstraintHasConceptTemplateParameterConceptReference(FE->getInit()))
+            return true;
+         return ConstraintHasConceptTemplateParameterConceptReference(FE->getPattern());
+    }
+    return false;
+}
+
 FunctionDecl *Sema::getMoreConstrainedFunction(FunctionDecl *FD1,
                                                FunctionDecl *FD2) {
   assert(!FD1->getDescribedTemplate() && !FD2->getDescribedTemplate() &&
@@ -6160,12 +6177,16 @@ FunctionDecl *Sema::getMoreConstrainedFunction(FunctionDecl *FD1,
          isa<CXXConversionDecl>(FD2));
 
   FunctionDecl *F1 = FD1;
-  //if (FunctionDecl *P = FD1->getTemplateInstantiationPattern(false))
-  //  F1 = P;
+  if(!F1->getTrailingRequiresClause() || !ConstraintHasConceptTemplateParameterConceptReference(F1->getTrailingRequiresClause())) {
+      if (FunctionDecl *P = FD1->getTemplateInstantiationPattern(false))
+          F1 = P;
+  }
 
   FunctionDecl *F2 = FD2;
-  //if (FunctionDecl *P = FD2->getTemplateInstantiationPattern(false))
-  //  F2 = P;
+  if(!F2->getTrailingRequiresClause() || !ConstraintHasConceptTemplateParameterConceptReference(F2->getTrailingRequiresClause())) {
+      if (FunctionDecl *P = FD2->getTemplateInstantiationPattern(false))
+          F2 = P;
+  }
 
   llvm::SmallVector<const Expr *, 1> AC1, AC2;
   F1->getAssociatedConstraints(AC1);
