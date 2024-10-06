@@ -1430,20 +1430,43 @@ void Sema::DiagnoseUnsatisfiedConstraint(
 
 const NormalizedConstraint *
 Sema::getNormalizedAssociatedConstraints(
-    NamedDecl *ConstrainedDecl, ArrayRef<const Expr *> AssociatedConstraints) {
+    NamedDecl *ConstrainedDecl, ArrayRef<const Expr *> AssociatedConstraints,
+    const ConceptSpecializationExpr* CSE) {
   // In case the ConstrainedDecl comes from modules, it is necessary to use
   // the canonical decl to avoid different atomic constraints with the 'same'
   // declarations.
   ConstrainedDecl = cast<NamedDecl>(ConstrainedDecl->getCanonicalDecl());
 
-  auto CacheEntry = NormalizationCache.find(ConstrainedDecl);
+  llvm::SmallVector<void *, 1> Key = {ConstrainedDecl};
+
+  auto AddTemplateArgument = [&](const TemplateArgument &Arg) {
+    if (Arg.getKind() == TemplateArgument::Template) {
+      TemplateName TN = Arg.getAsTemplate();
+      if (isa<ConceptDecl>(TN.getAsTemplateDecl()))
+        Key.push_back((void *)&Arg);
+    }
+  };
+
+  if (CSE) {
+    for (auto &&Arg : CSE->getTemplateArguments()) {
+      if (Arg.getKind() == TemplateArgument::Template)
+        AddTemplateArgument(Arg);
+      else if (Arg.getKind() == TemplateArgument::Pack) {
+        for (auto &PArg : Arg.pack_elements())
+          AddTemplateArgument(PArg);
+      }
+    }
+  }
+
+
+  auto CacheEntry = NormalizationCache.find(Key);
   if (CacheEntry == NormalizationCache.end()) {
     auto Normalized =
         NormalizedConstraint::fromConstraintExprs(*this, ConstrainedDecl,
-                                                  AssociatedConstraints);
+                                                  AssociatedConstraints, CSE);
     CacheEntry =
         NormalizationCache
-            .try_emplace(ConstrainedDecl,
+            .try_emplace(Key,
                          Normalized
                              ? new (Context) NormalizedConstraint(
                                  std::move(*Normalized))
@@ -1479,6 +1502,10 @@ substituteParameterMappings(Sema &S, NormalizedConstraint &N,
     return substituteParameterMappings(
         S, N.getFoldExpandedConstraint()->Constraint, Concept, MLTAL,
         ArgsAsWritten);
+  }
+
+  if(N.isConceptDependent()) {
+    return false;
   }
 
   TemplateParameterList *TemplateParams = Concept->getTemplateParameters();
@@ -1589,13 +1616,13 @@ NormalizedConstraint &NormalizedConstraint::getRHS() const {
 
 std::optional<NormalizedConstraint>
 NormalizedConstraint::fromConstraintExprs(Sema &S, NamedDecl *D,
-                                          ArrayRef<const Expr *> E) {
+                                          ArrayRef<const Expr *> E, const ConceptSpecializationExpr *CSE) {
   assert(E.size() != 0);
-  auto Conjunction = fromConstraintExpr(S, D, E[0]);
+  auto Conjunction = fromConstraintExpr(S, D, E[0], CSE);
   if (!Conjunction)
     return std::nullopt;
   for (unsigned I = 1; I < E.size(); ++I) {
-    auto Next = fromConstraintExpr(S, D, E[I]);
+    auto Next = fromConstraintExpr(S, D, E[I], CSE);
     if (!Next)
       return std::nullopt;
     *Conjunction = NormalizedConstraint(S.Context, std::move(*Conjunction),
@@ -1605,16 +1632,24 @@ NormalizedConstraint::fromConstraintExprs(Sema &S, NamedDecl *D,
 }
 
 std::optional<NormalizedConstraint>
-NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E) {
+NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D,
+                                                      const UnresolvedLookupExpr *E,
+                                                      const ConceptSpecializationExpr *CSE) {
 
-  Sema::ContextRAII savedContext(S, cast<FunctionDecl>(D));
+  Sema::ContextRAII SavedContext(S, D->getDeclContext());
   LocalInstantiationScope Scope(S);
 
+  std::optional<ArrayRef<TemplateArgument>> InnerMostArgs;
+  if(CSE) {
+    InnerMostArgs = CSE->getTemplateArguments();
+  }
+
   MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(D, D->getLexicalDeclContext(),
-                                            /*Final=*/false, /*Innermost=*/std::nullopt,
+                                            /*Final=*/false, /*Innermost=*/InnerMostArgs,
                                             /*RelativeToPrimary=*/true,
                                             /*Pattern=*/nullptr,
                                             /*ForConstraintInstantiation=*/true);
+
   if(FunctionDecl* FD = dyn_cast<FunctionDecl>(D))
     S.SetupConstraintScope(FD, {}, MLTAL, Scope);
 
@@ -1642,7 +1677,8 @@ NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D, con
 }
 
 std::optional<NormalizedConstraint>
-NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
+NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E,
+                                         const ConceptSpecializationExpr *CSE) {
   assert(E != nullptr);
 
   // C++ [temp.constr.normal]p1.1
@@ -1657,22 +1693,22 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
   // See http://cplusplus.github.io/concepts-ts/ts-active.html#28
 
   if (LogicalBinOp BO = E) {
-    auto LHS = fromConstraintExpr(S, D, BO.getLHS());
+    auto LHS = fromConstraintExpr(S, D, BO.getLHS(), CSE);
     if (!LHS)
       return std::nullopt;
-    auto RHS = fromConstraintExpr(S, D, BO.getRHS());
+    auto RHS = fromConstraintExpr(S, D, BO.getRHS(), CSE);
     if (!RHS)
       return std::nullopt;
 
     return NormalizedConstraint(S.Context, std::move(*LHS), std::move(*RHS),
                                 BO.isAnd() ? CCK_Conjunction : CCK_Disjunction);
-  } else if (auto *CSE = dyn_cast<const ConceptSpecializationExpr>(E)) {
+  } else if (auto *ConceptE = dyn_cast<const ConceptSpecializationExpr>(E)) {
     const NormalizedConstraint *SubNF;
     {
       Sema::InstantiatingTemplate Inst(
-          S, CSE->getExprLoc(),
+          S, ConceptE->getExprLoc(),
           Sema::InstantiatingTemplate::ConstraintNormalization{}, D,
-          CSE->getSourceRange());
+          ConceptE->getSourceRange());
       if (Inst.isInvalid())
         return std::nullopt;
       // C++ [temp.constr.normal]p1.1
@@ -1684,9 +1720,10 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
       // constraint. If any such substitution results in an invalid type or
       // expression, the program is ill-formed; no diagnostic is required.
       // [...]
-      ConceptDecl *CD = CSE->getNamedConcept();
+      ConceptDecl *CD = ConceptE->getNamedConcept();
+      ConceptE->getTemplateArgsAsWritten();
       SubNF = S.getNormalizedAssociatedConstraints(CD,
-                                                   {CD->getConstraintExpr()});
+                                                   {CD->getConstraintExpr()}, ConceptE);
       if (!SubNF)
         return std::nullopt;
     }
@@ -1694,7 +1731,7 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
     std::optional<NormalizedConstraint> New;
     New.emplace(S.Context, *SubNF);
 
-    if (substituteParameterMappings(S, *New, CSE))
+    if (substituteParameterMappings(S, *New, ConceptE))
       return std::nullopt;
 
     return New;
@@ -1711,8 +1748,8 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
             : FoldExpandedConstraint::FoldOperatorKind::Or;
 
     if (FE->getInit()) {
-      auto LHS = fromConstraintExpr(S, D, FE->getLHS());
-      auto RHS = fromConstraintExpr(S, D, FE->getRHS());
+      auto LHS = fromConstraintExpr(S, D, FE->getLHS(), CSE);
+      auto RHS = fromConstraintExpr(S, D, FE->getRHS(), CSE);
       if (!LHS || !RHS)
         return std::nullopt;
 
@@ -1728,13 +1765,13 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E) {
           FE->getOperator() == BinaryOperatorKind::BO_LAnd ? CCK_Conjunction
                                                            : CCK_Disjunction);
     }
-    auto Sub = fromConstraintExpr(S, D, FE->getPattern());
+    auto Sub = fromConstraintExpr(S, D, FE->getPattern(), CSE);
     if (!Sub)
       return std::nullopt;
     return NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
         Kind, std::move(*Sub), FE->getPattern()}};
   } else if (auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference()) {
-    return BuildConceptDependentConstraint(S, D, ULE);
+    return BuildConceptDependentConstraint(S, D, ULE, CSE);
   }
 
   return NormalizedConstraint{new (S.Context) AtomicConstraint(E, D)};

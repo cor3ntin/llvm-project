@@ -14524,7 +14524,8 @@ public:
                                 bool First = true);
 
   const NormalizedConstraint *getNormalizedAssociatedConstraints(NamedDecl *ConstrainedDecl,
-                                                                 ArrayRef<const Expr *> AssociatedConstraints);
+                                                                 ArrayRef<const Expr *> AssociatedConstraints,
+                                                                 const ConceptSpecializationExpr *CSE = nullptr);
 
   /// \brief Check whether the given declaration's associated constraints are
   /// at least as constrained than another declaration's according to the
@@ -14555,8 +14556,7 @@ private:
   /// constrained declarations). If an error occurred while normalizing the
   /// associated constraints of the template or concept, nullptr will be cached
   /// here.
-  llvm::DenseMap<NamedDecl *, NormalizedConstraint *> NormalizationCache;
-
+  std::map<llvm::SmallVector<void *, 1>, NormalizedConstraint *> NormalizationCache;
   llvm::ContextualFoldingSet<ConstraintSatisfaction, const ASTContext &>
       SatisfactionCache;
 

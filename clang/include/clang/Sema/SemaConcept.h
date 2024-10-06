@@ -17,6 +17,7 @@
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/ExprConcepts.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
@@ -178,11 +179,11 @@ struct NormalizedConstraint {
 
 private:
   static std::optional<NormalizedConstraint>
-  fromConstraintExprs(Sema &S, NamedDecl *D, ArrayRef<const Expr *> E);
+  fromConstraintExprs(Sema &S, NamedDecl *D, ArrayRef<const Expr *> E, const ConceptSpecializationExpr* CSE = nullptr);
   static std::optional<NormalizedConstraint>
-  fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E);
+  fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E, const ConceptSpecializationExpr* CSE = nullptr);
   static std::optional<NormalizedConstraint>
-  BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E);
+  BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E, const ConceptSpecializationExpr *CSE);
 };
 
 struct alignas(ConstraintAlignment) NormalizedConstraintPair {
