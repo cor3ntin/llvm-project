@@ -6172,10 +6172,18 @@ public:
   struct Attributes {
     // Data gathered from HLSL resource attributes
     llvm::dxil::ResourceClass ResourceClass;
+
+    LLVM_PREFERRED_TYPE(bool)
     uint8_t IsROV : 1;
-    Attributes(llvm::dxil::ResourceClass ResourceClass, bool IsROV)
-        : ResourceClass(ResourceClass), IsROV(IsROV) {}
-    Attributes() : ResourceClass(llvm::dxil::ResourceClass::UAV), IsROV(0) {}
+
+    LLVM_PREFERRED_TYPE(bool)
+    uint8_t RawBuffer : 1;
+
+    Attributes(llvm::dxil::ResourceClass ResourceClass, bool IsROV,
+               bool RawBuffer)
+        : ResourceClass(ResourceClass), IsROV(IsROV), RawBuffer(RawBuffer) {}
+
+    Attributes() : Attributes(llvm::dxil::ResourceClass::UAV, false, false) {}
   };
 
 private:
@@ -6208,6 +6216,7 @@ public:
     ID.AddPointer(Contained.getAsOpaquePtr());
     ID.AddInteger(static_cast<uint32_t>(Attrs.ResourceClass));
     ID.AddBoolean(Attrs.IsROV);
+    ID.AddBoolean(Attrs.RawBuffer);
   }
 
   static bool classof(const Type *T) {
@@ -6440,10 +6449,10 @@ public:
 class AutoType : public DeducedType, public llvm::FoldingSetNode {
   friend class ASTContext; // ASTContext creates these
 
-  ConceptDecl *TypeConstraintConcept;
+  TemplateDecl *TypeConstraintConcept;
 
   AutoType(QualType DeducedAsType, AutoTypeKeyword Keyword,
-           TypeDependence ExtraDependence, QualType Canon, ConceptDecl *CD,
+           TypeDependence ExtraDependence, QualType Canon, TemplateDecl *CD,
            ArrayRef<TemplateArgument> TypeConstraintArgs);
 
 public:
@@ -6452,7 +6461,7 @@ public:
             AutoTypeBits.NumArgs};
   }
 
-  ConceptDecl *getTypeConstraintConcept() const {
+  TemplateDecl *getTypeConstraintConcept() const {
     return TypeConstraintConcept;
   }
 
@@ -6475,7 +6484,7 @@ public:
   void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &Context);
   static void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &Context,
                       QualType Deduced, AutoTypeKeyword Keyword,
-                      bool IsDependent, ConceptDecl *CD,
+                      bool IsDependent, TemplateDecl *CD,
                       ArrayRef<TemplateArgument> Arguments);
 
   static bool classof(const Type *T) {

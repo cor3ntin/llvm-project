@@ -8,14 +8,15 @@
 //  This file implements semantic analysis for C++0x variadic templates.
 //===----------------------------------------------------------------------===/
 
-#include "clang/Sema/Sema.h"
 #include "TypeLocBuilder.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/Template.h"
 #include <optional>
@@ -38,6 +39,10 @@ namespace {
 
     bool InLambda = false;
     unsigned DepthLimit = (unsigned)-1;
+
+#ifndef NDEBUG
+    bool ContainsFunctionParmPackExpr = false;
+#endif
 
     void addUnexpanded(NamedDecl *ND, SourceLocation Loc = SourceLocation()) {
       if (auto *VD = dyn_cast<VarDecl>(ND)) {
@@ -280,6 +285,27 @@ namespace {
 
       return inherited::TraverseLambdaCapture(Lambda, C, Init);
     }
+
+    bool TraverseUnresolvedLookupExpr(UnresolvedLookupExpr *E) {
+      if (E->getNumDecls() == 1) {
+        NamedDecl *ND = *E->decls_begin();
+        if (auto *TTP = llvm::dyn_cast<TemplateTemplateParmDecl>(ND);
+            TTP && TTP->isParameterPack())
+          addUnexpanded(ND, E->getBeginLoc());
+      }
+      return inherited::TraverseUnresolvedLookupExpr(E);
+    }
+
+#ifndef NDEBUG
+    bool TraverseFunctionParmPackExpr(FunctionParmPackExpr *) {
+      ContainsFunctionParmPackExpr = true;
+      return true;
+    }
+
+    bool containsFunctionParmPackExpr() const {
+      return ContainsFunctionParmPackExpr;
+    }
+#endif
   };
 }
 
@@ -414,16 +440,21 @@ bool Sema::DiagnoseUnexpandedParameterPack(Expr *E,
   if (!E->containsUnexpandedParameterPack())
     return false;
 
-  // CollectUnexpandedParameterPacksVisitor does not expect to see a
-  // FunctionParmPackExpr, but diagnosing unexpected parameter packs may still
-  // see such an expression in a lambda body.
-  // We'll bail out early in this case to avoid triggering an assertion.
-  if (isa<FunctionParmPackExpr>(E) && getEnclosingLambda())
-    return false;
-
+  // FunctionParmPackExprs are special:
+  //
+  // 1) they're used to model DeclRefExprs to packs that have been expanded but
+  // had that expansion held off in the process of transformation.
+  //
+  // 2) they always have the unexpanded dependencies but don't introduce new
+  // unexpanded packs.
+  //
+  // We might encounter a FunctionParmPackExpr being a full expression, which a
+  // larger CXXFoldExpr would expand.
   SmallVector<UnexpandedParameterPack, 2> Unexpanded;
-  CollectUnexpandedParameterPacksVisitor(Unexpanded).TraverseStmt(E);
-  assert(!Unexpanded.empty() && "Unable to find unexpanded parameter packs");
+  CollectUnexpandedParameterPacksVisitor Visitor(Unexpanded);
+  Visitor.TraverseStmt(E);
+  assert((!Unexpanded.empty() || Visitor.containsFunctionParmPackExpr()) &&
+         "Unable to find unexpanded parameter packs");
   return DiagnoseUnexpandedParameterPacks(E->getBeginLoc(), UPPC, Unexpanded);
 }
 
@@ -605,9 +636,9 @@ Sema::ActOnPackExpansion(const ParsedTemplateArgument &Arg,
         << R;
       return ParsedTemplateArgument();
     }
-
     return Arg.getTemplatePackExpansion(EllipsisLoc);
   }
+
   llvm_unreachable("Unhandled template argument kind?");
 }
 

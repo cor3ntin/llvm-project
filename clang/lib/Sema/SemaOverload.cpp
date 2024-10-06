@@ -17,6 +17,7 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DependenceFlags.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
@@ -2032,26 +2033,42 @@ static bool IsVectorConversion(Sema &S, QualType FromType, QualType ToType,
   if (S.Context.hasSameUnqualifiedType(FromType, ToType))
     return false;
 
+  // HLSL allows implicit truncation of vector types.
+  if (S.getLangOpts().HLSL) {
+    auto *ToExtType = ToType->getAs<ExtVectorType>();
+    auto *FromExtType = FromType->getAs<ExtVectorType>();
+
+    // If both arguments are vectors, handle possible vector truncation and
+    // element conversion.
+    if (ToExtType && FromExtType) {
+      unsigned FromElts = FromExtType->getNumElements();
+      unsigned ToElts = ToExtType->getNumElements();
+      if (FromElts < ToElts)
+        return false;
+      if (FromElts == ToElts)
+        ElConv = ICK_Identity;
+      else
+        ElConv = ICK_HLSL_Vector_Truncation;
+
+      QualType FromElTy = FromExtType->getElementType();
+      QualType ToElTy = ToExtType->getElementType();
+      if (S.Context.hasSameUnqualifiedType(FromElTy, ToElTy))
+        return true;
+      return IsVectorElementConversion(S, FromElTy, ToElTy, ICK, From);
+    }
+    if (FromExtType && !ToExtType) {
+      ElConv = ICK_HLSL_Vector_Truncation;
+      QualType FromElTy = FromExtType->getElementType();
+      if (S.Context.hasSameUnqualifiedType(FromElTy, ToType))
+        return true;
+      return IsVectorElementConversion(S, FromElTy, ToType, ICK, From);
+    }
+    // Fallthrough for the case where ToType is a vector and FromType is not.
+  }
+
   // There are no conversions between extended vector types, only identity.
   if (auto *ToExtType = ToType->getAs<ExtVectorType>()) {
-    if (auto *FromExtType = FromType->getAs<ExtVectorType>()) {
-      // HLSL allows implicit truncation of vector types.
-      if (S.getLangOpts().HLSL) {
-        unsigned FromElts = FromExtType->getNumElements();
-        unsigned ToElts = ToExtType->getNumElements();
-        if (FromElts < ToElts)
-          return false;
-        if (FromElts == ToElts)
-          ElConv = ICK_Identity;
-        else
-          ElConv = ICK_HLSL_Vector_Truncation;
-
-        QualType FromElTy = FromExtType->getElementType();
-        QualType ToElTy = ToExtType->getElementType();
-        if (S.Context.hasSameUnqualifiedType(FromElTy, ToElTy))
-          return true;
-        return IsVectorElementConversion(S, FromElTy, ToElTy, ICK, From);
-      }
+    if (FromType->getAs<ExtVectorType>()) {
       // There are no conversions between extended vector types other than the
       // identity conversion.
       return false;
@@ -6206,6 +6223,67 @@ static ExprResult BuildConvertedConstantExpression(Sema &S, Expr *From,
   return Result;
 }
 
+/// EvaluateConvertedConstantExpression - Evaluate an Expression
+/// That is a converted constant expression
+/// (which was built with BuildConvertedConstantExpression)
+static ExprResult EvaluateConvertedConstantExpression(
+    Sema &S, Expr *E, QualType T, APValue &Value, Sema::CCEKind CCE,
+    bool RequireInt, const APValue &PreNarrowingValue) {
+  ExprResult Result = E;
+
+  if (auto *CE = dyn_cast<ConstantExpr>(Result.get())) {
+    Value = CE->getAPValueResult();
+    return Result;
+  }
+
+  // Check the expression is a constant expression.
+  SmallVector<PartialDiagnosticAt, 8> Notes;
+  Expr::EvalResult Eval;
+  Eval.Diag = &Notes;
+
+  ConstantExprKind Kind;
+  if (CCE == Sema::CCEK_TemplateArg && T->isRecordType())
+    Kind = ConstantExprKind::ClassTemplateArgument;
+  else if (CCE == Sema::CCEK_TemplateArg)
+    Kind = ConstantExprKind::NonClassTemplateArgument;
+  else
+    Kind = ConstantExprKind::Normal;
+
+  if (!E->EvaluateAsConstantExpr(Eval, S.Context, Kind) ||
+      (RequireInt && !Eval.Val.isInt())) {
+    // The expression can't be folded, so we can't keep it at this position in
+    // the AST.
+    Result = ExprError();
+  } else {
+    Value = Eval.Val;
+
+    if (Notes.empty()) {
+      // It's a constant expression.
+      Expr *E = ConstantExpr::Create(S.Context, Result.get(), Value);
+      if (!PreNarrowingValue.isAbsent())
+        Value = std::move(PreNarrowingValue);
+      return E;
+    }
+  }
+
+  // It's not a constant expression. Produce an appropriate diagnostic.
+  if (Notes.size() == 1 &&
+      Notes[0].second.getDiagID() == diag::note_invalid_subexpr_in_const_expr) {
+    S.Diag(Notes[0].first, diag::err_expr_not_cce) << CCE;
+  } else if (!Notes.empty() && Notes[0].second.getDiagID() ==
+                                   diag::note_constexpr_invalid_template_arg) {
+    Notes[0].second.setDiagID(diag::err_constexpr_invalid_template_arg);
+    for (unsigned I = 0; I < Notes.size(); ++I)
+      S.Diag(Notes[I].first, Notes[I].second);
+  } else {
+    S.Diag(E->getBeginLoc(), diag::err_expr_not_cce)
+        << CCE << E->getSourceRange();
+    for (unsigned I = 0; I < Notes.size(); ++I)
+      S.Diag(Notes[I].first, Notes[I].second);
+  }
+  return ExprError();
+}
+
 /// CheckConvertedConstantExpression - Check that the expression From is a
 /// converted constant expression of type T, perform the conversion and produce
 /// the converted expression, per C++11 [expr.const]p3.
@@ -6552,29 +6630,22 @@ static void
 collectViableConversionCandidates(Sema &SemaRef, Expr *From, QualType ToType,
                                   UnresolvedSetImpl &ViableConversions,
                                   OverloadCandidateSet &CandidateSet) {
-  for (unsigned I = 0, N = ViableConversions.size(); I != N; ++I) {
-    DeclAccessPair FoundDecl = ViableConversions[I];
+  for (const DeclAccessPair &FoundDecl : ViableConversions.pairs()) {
     NamedDecl *D = FoundDecl.getDecl();
     CXXRecordDecl *ActingContext = cast<CXXRecordDecl>(D->getDeclContext());
     if (isa<UsingShadowDecl>(D))
       D = cast<UsingShadowDecl>(D)->getTargetDecl();
 
-    CXXConversionDecl *Conv;
-    FunctionTemplateDecl *ConvTemplate;
-    if ((ConvTemplate = dyn_cast<FunctionTemplateDecl>(D)))
-      Conv = cast<CXXConversionDecl>(ConvTemplate->getTemplatedDecl());
-    else
-      Conv = cast<CXXConversionDecl>(D);
-
-    if (ConvTemplate)
+    if (auto *ConvTemplate = dyn_cast<FunctionTemplateDecl>(D)) {
       SemaRef.AddTemplateConversionCandidate(
           ConvTemplate, FoundDecl, ActingContext, From, ToType, CandidateSet,
-          /*AllowObjCConversionOnExplicit=*/false, /*AllowExplicit*/ true);
-    else
-      SemaRef.AddConversionCandidate(Conv, FoundDecl, ActingContext, From,
-                                     ToType, CandidateSet,
-                                     /*AllowObjCConversionOnExplicit=*/false,
-                                     /*AllowExplicit*/ true);
+          /*AllowObjCConversionOnExplicit=*/false, /*AllowExplicit=*/true);
+      continue;
+    }
+    CXXConversionDecl *Conv = cast<CXXConversionDecl>(D);
+    SemaRef.AddConversionCandidate(
+        Conv, FoundDecl, ActingContext, From, ToType, CandidateSet,
+        /*AllowObjCConversionOnExplicit=*/false, /*AllowExplicit=*/true);
   }
 }
 
@@ -7292,8 +7363,10 @@ static bool diagnoseDiagnoseIfAttrsWith(Sema &S, const NamedDecl *ND,
     return false;
 
   auto WarningBegin = std::stable_partition(
-      Attrs.begin(), Attrs.end(),
-      [](const DiagnoseIfAttr *DIA) { return DIA->isError(); });
+      Attrs.begin(), Attrs.end(), [](const DiagnoseIfAttr *DIA) {
+        return DIA->getDefaultSeverity() == DiagnoseIfAttr::DS_error &&
+               DIA->getWarningGroup().empty();
+      });
 
   // Note that diagnose_if attributes are late-parsed, so they appear in the
   // correct order (unlike enable_if attributes).
@@ -7307,11 +7380,32 @@ static bool diagnoseDiagnoseIfAttrsWith(Sema &S, const NamedDecl *ND,
     return true;
   }
 
+  auto ToSeverity = [](DiagnoseIfAttr::DefaultSeverity Sev) {
+    switch (Sev) {
+    case DiagnoseIfAttr::DS_warning:
+      return diag::Severity::Warning;
+    case DiagnoseIfAttr::DS_error:
+      return diag::Severity::Error;
+    }
+    llvm_unreachable("Fully covered switch above!");
+  };
+
   for (const auto *DIA : llvm::make_range(WarningBegin, Attrs.end()))
     if (IsSuccessful(DIA)) {
-      S.Diag(Loc, diag::warn_diagnose_if_succeeded) << DIA->getMessage();
-      S.Diag(DIA->getLocation(), diag::note_from_diagnose_if)
-          << DIA->getParent() << DIA->getCond()->getSourceRange();
+      if (DIA->getWarningGroup().empty() &&
+          DIA->getDefaultSeverity() == DiagnoseIfAttr::DS_warning) {
+        S.Diag(Loc, diag::warn_diagnose_if_succeeded) << DIA->getMessage();
+        S.Diag(DIA->getLocation(), diag::note_from_diagnose_if)
+            << DIA->getParent() << DIA->getCond()->getSourceRange();
+      } else {
+        auto DiagGroup = S.Diags.getDiagnosticIDs()->getGroupForWarningOption(
+            DIA->getWarningGroup());
+        assert(DiagGroup);
+        auto DiagID = S.Diags.getDiagnosticIDs()->getCustomDiagID(
+            {ToSeverity(DIA->getDefaultSeverity()), "%0",
+             DiagnosticIDs::CLASS_WARNING, false, false, *DiagGroup});
+        S.Diag(Loc, DiagID) << DIA->getMessage();
+      }
     }
 
   return false;
@@ -11529,9 +11623,9 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
                                  bool TakingCandidateAddress) {
   TemplateParameter Param = DeductionFailure.getTemplateParameter();
   NamedDecl *ParamD;
-  (ParamD = Param.dyn_cast<TemplateTypeParmDecl*>()) ||
-  (ParamD = Param.dyn_cast<NonTypeTemplateParmDecl*>()) ||
-  (ParamD = Param.dyn_cast<TemplateTemplateParmDecl*>());
+  (ParamD = Param.dyn_cast<TemplateTypeParmDecl *>()) ||
+      (ParamD = Param.dyn_cast<NonTypeTemplateParmDecl *>()) ||
+      (ParamD = Param.dyn_cast<TemplateTemplateParmDecl *>());
   switch (DeductionFailure.getResult()) {
   case TemplateDeductionResult::Success:
     llvm_unreachable(

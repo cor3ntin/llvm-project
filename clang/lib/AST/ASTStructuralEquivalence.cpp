@@ -657,6 +657,10 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      ArrayRef<TemplateArgument> Args1,
                                      ArrayRef<TemplateArgument> Args2);
 
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     ArrayRef<TemplateArgumentLoc> Args1,
+                                     ArrayRef<TemplateArgumentLoc> Args2);
+
 /// Determine whether two template arguments are equivalent.
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      const TemplateArgument &Arg1,
@@ -713,6 +717,19 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      ArrayRef<TemplateArgument> Args1,
                                      ArrayRef<TemplateArgument> Args2) {
+  if (Args1.size() != Args2.size())
+    return false;
+  for (unsigned I = 0, N = Args1.size(); I != N; ++I) {
+    if (!IsStructurallyEquivalent(Context, Args1[I], Args2[I]))
+      return false;
+  }
+  return true;
+}
+
+/// Determine structural equivalence of two template argument lists.
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     ArrayRef<TemplateArgumentLoc> Args1,
+                                     ArrayRef<TemplateArgumentLoc> Args2) {
   if (Args1.size() != Args2.size())
     return false;
   for (unsigned I = 0, N = Args1.size(); I != N; ++I) {
@@ -808,8 +825,8 @@ static bool
 IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                          const HLSLAttributedResourceType::Attributes &Attrs1,
                          const HLSLAttributedResourceType::Attributes &Attrs2) {
-  return std::tie(Attrs1.ResourceClass, Attrs1.IsROV) ==
-         std::tie(Attrs2.ResourceClass, Attrs2.IsROV);
+  return std::tie(Attrs1.ResourceClass, Attrs1.IsROV, Attrs1.RawBuffer) ==
+         std::tie(Attrs2.ResourceClass, Attrs2.IsROV, Attrs2.RawBuffer);
 }
 
 /// Determine structural equivalence of two types.
@@ -2070,7 +2087,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   }
 
   // Check template parameter lists.
-  return IsStructurallyEquivalent(Context, D1->getTemplateParameters(),
+  return D1->kind() == D2->kind() && IsStructurallyEquivalent(Context, D1->getTemplateParameters(),
                                   D2->getTemplateParameters());
 }
 

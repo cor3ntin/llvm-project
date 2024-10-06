@@ -34,6 +34,7 @@
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/TemplateBase.h"
+#include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/UnresolvedSet.h"
@@ -2835,7 +2836,7 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
     if (BuiltinElementwiseMath(TheCall))
       return ExprError();
     break;
-
+  case Builtin::BI__builtin_elementwise_popcount:
   case Builtin::BI__builtin_elementwise_bitreverse: {
     if (PrepareBuiltinElementwiseMathOneArgCall(TheCall))
       return ExprError();
@@ -3429,7 +3430,7 @@ void Sema::checkCall(NamedDecl *FDecl, const FunctionProtoType *Proto,
 }
 
 void Sema::CheckConstrainedAuto(const AutoType *AutoT, SourceLocation Loc) {
-  if (ConceptDecl *Decl = AutoT->getTypeConstraintConcept()) {
+  if (TemplateDecl *Decl = AutoT->getTypeConstraintConcept()) {
     DiagnoseUseOfDecl(Decl, Loc);
   }
 }
@@ -6599,7 +6600,6 @@ CheckFormatHandler::HandleInvalidConversionSpecifier(unsigned argIndex,
       OS << "\\u" << llvm::format("%04x", CodePoint);
     else
       OS << "\\U" << llvm::format("%08x", CodePoint);
-    OS.flush();
     Specifier = CodePointStr;
   }
 

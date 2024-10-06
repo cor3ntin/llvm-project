@@ -173,6 +173,7 @@ static std::optional<Visibility> getExplicitVisibility(const NamedDecl *D,
                                                        LVComputationKind kind) {
   assert(!kind.IgnoreExplicitVisibility &&
          "asking for explicit visibility when we shouldn't be");
+
   return D->getExplicitVisibility(kind.getExplicitVisibilityKind());
 }
 
@@ -1227,6 +1228,9 @@ getExplicitVisibilityAux(const NamedDecl *ND,
                          NamedDecl::ExplicitVisibilityKind kind,
                          bool IsMostRecent) {
   assert(!IsMostRecent || ND == ND->getMostRecentDecl());
+
+  if(isa<ConceptDecl>(ND))
+      return {};
 
   // Check the declaration itself first.
   if (std::optional<Visibility> V = getVisibilityOf(ND, kind))

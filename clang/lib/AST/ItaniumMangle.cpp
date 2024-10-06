@@ -535,7 +535,7 @@ private:
   void mangleUnqualifiedBlock(const BlockDecl *Block);
   void mangleTemplateParamDecl(const NamedDecl *Decl);
   void mangleTemplateParameterList(const TemplateParameterList *Params);
-  void mangleTypeConstraint(const ConceptDecl *Concept,
+  void mangleTypeConstraint(const TemplateDecl *Concept,
                             ArrayRef<TemplateArgument> Arguments);
   void mangleTypeConstraint(const TypeConstraint *Constraint);
   void mangleRequiresClause(const Expr *RequiresClause);
@@ -2056,7 +2056,7 @@ void CXXNameMangler::mangleTemplateParameterList(
 }
 
 void CXXNameMangler::mangleTypeConstraint(
-    const ConceptDecl *Concept, ArrayRef<TemplateArgument> Arguments) {
+    const TemplateDecl *Concept, ArrayRef<TemplateArgument> Arguments) {
   const DeclContext *DC = Context.getEffectiveDeclContext(Concept);
   if (!Arguments.empty())
     mangleTemplateName(Concept, Arguments);
@@ -3384,8 +3384,7 @@ void CXXNameMangler::mangleType(const BuiltinType *T) {
   // The SVE types are effectively target-specific.  The mangling scheme
   // is defined in the appendices to the Procedure Call Standard for the
   // Arm Architecture.
-#define SVE_VECTOR_TYPE(InternalName, MangledName, Id, SingletonId, NumEls,    \
-                        ElBits, IsSigned, IsFP, IsBF)                          \
+#define SVE_VECTOR_TYPE(Name, MangledName, Id, SingletonId)                    \
   case BuiltinType::Id:                                                        \
     if (T->getKind() == BuiltinType::SveBFloat16 &&                            \
         isCompatibleWith(LangOptions::ClangABI::Ver17)) {                      \
@@ -3394,21 +3393,18 @@ void CXXNameMangler::mangleType(const BuiltinType *T) {
       Out << "u" << type_name.size() << type_name;                             \
     } else {                                                                   \
       type_name = MangledName;                                                 \
-      Out << (type_name == InternalName ? "u" : "") << type_name.size()        \
-          << type_name;                                                        \
+      Out << (type_name == Name ? "u" : "") << type_name.size() << type_name;  \
     }                                                                          \
     break;
-#define SVE_PREDICATE_TYPE(InternalName, MangledName, Id, SingletonId, NumEls) \
+#define SVE_PREDICATE_TYPE(Name, MangledName, Id, SingletonId)                 \
   case BuiltinType::Id:                                                        \
     type_name = MangledName;                                                   \
-    Out << (type_name == InternalName ? "u" : "") << type_name.size()          \
-        << type_name;                                                          \
+    Out << (type_name == Name ? "u" : "") << type_name.size() << type_name;    \
     break;
-#define SVE_OPAQUE_TYPE(InternalName, MangledName, Id, SingletonId)            \
+#define SVE_OPAQUE_TYPE(Name, MangledName, Id, SingletonId)                    \
   case BuiltinType::Id:                                                        \
     type_name = MangledName;                                                   \
-    Out << (type_name == InternalName ? "u" : "") << type_name.size()          \
-        << type_name;                                                          \
+    Out << (type_name == Name ? "u" : "") << type_name.size() << type_name;    \
     break;
 #include "clang/Basic/AArch64SVEACLETypes.def"
 #define PPC_VECTOR_TYPE(Name, Id, Size) \

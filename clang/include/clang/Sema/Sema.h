@@ -34,6 +34,8 @@
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/AST/TypeOrdering.h"
+#include "clang/Basic/BitmaskEnum.h"
 #include "clang/Basic/AttrSubjectMatchRules.h"
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/CapturedStmt.h"
@@ -146,6 +148,7 @@ class MangleNumberingContext;
 typedef ArrayRef<std::pair<IdentifierInfo *, SourceLocation>> ModuleIdPath;
 class ModuleLoader;
 class MultiLevelTemplateArgumentList;
+struct CachedNormalizedConstraint;
 struct NormalizedConstraint;
 class ObjCInterfaceDecl;
 class ObjCMethodDecl;
@@ -628,10 +631,10 @@ public:
   const llvm::MapVector<FieldDecl *, DeleteLocs> &
   getMismatchingDeleteExpressions() const;
 
-  /// Cause the active diagnostic on the DiagosticsEngine to be
-  /// emitted. This is closely coupled to the SemaDiagnosticBuilder class and
+  /// Cause the built diagnostic to be emitted on the DiagosticsEngine.
+  /// This is closely coupled to the SemaDiagnosticBuilder class and
   /// should not be used elsewhere.
-  void EmitCurrentDiagnostic(unsigned DiagID);
+  void EmitDiagnostic(unsigned DiagID, const DiagnosticBuilder &DB);
 
   void addImplicitTypedef(StringRef Name, QualType T);
 
@@ -6416,6 +6419,9 @@ public:
     /// example, in a for-range initializer).
     bool InLifetimeExtendingContext = false;
 
+    /// Whether we should rebuild CXXDefaultArgExpr and CXXDefaultInitExpr.
+    bool RebuildDefaultArgOrDefaultInit = false;
+
     // When evaluating immediate functions in the initializer of a default
     // argument or default member initializer, this is the declaration whose
     // default initializer is being evaluated and the location of the call
@@ -7823,9 +7829,11 @@ public:
   }
 
   bool isInLifetimeExtendingContext() const {
-    assert(!ExprEvalContexts.empty() &&
-           "Must be in an expression evaluation context");
-    return ExprEvalContexts.back().InLifetimeExtendingContext;
+    return currentEvaluationContext().InLifetimeExtendingContext;
+  }
+
+  bool needsRebuildOfDefaultArgOrInit() const {
+    return currentEvaluationContext().RebuildDefaultArgOrDefaultInit;
   }
 
   bool isCheckingDefaultArgumentOrInitializer() const {
@@ -7865,18 +7873,6 @@ public:
       Res = Ctx.DelayedDefaultInitializationContext;
     }
     return Res;
-  }
-
-  /// keepInLifetimeExtendingContext - Pull down InLifetimeExtendingContext
-  /// flag from previous context.
-  void keepInLifetimeExtendingContext() {
-    if (ExprEvalContexts.size() > 2 &&
-        parentEvaluationContext().InLifetimeExtendingContext) {
-      auto &LastRecord = ExprEvalContexts.back();
-      auto &PrevRecord = parentEvaluationContext();
-      LastRecord.InLifetimeExtendingContext =
-          PrevRecord.InLifetimeExtendingContext;
-    }
   }
 
   DefaultedComparisonKind getDefaultedComparisonKind(const FunctionDecl *FD) {
@@ -7976,6 +7972,10 @@ public:
 
   /// Do an explicit extend of the given block pointer if we're in ARC.
   void maybeExtendBlockObject(ExprResult &E);
+
+  std::vector<std::pair<QualType, unsigned>> ExcessPrecisionNotSatisfied;
+  SourceLocation LocationOfExcessPrecisionNotSatisfied;
+  void DiagnosePrecisionLossInComplexDivision();
 
 private:
   static BinaryOperatorKind ConvertTokenKindToBinaryOpcode(tok::TokenKind Kind);
@@ -8928,7 +8928,6 @@ public:
   getCurrentMangleNumberContext(const DeclContext *DC);
 
   ///@}
-
   //
   //
   // -------------------------------------------------------------------------
@@ -11267,7 +11266,7 @@ public:
   /// of arguments for the named concept).
   bool AttachTypeConstraint(NestedNameSpecifierLoc NS,
                             DeclarationNameInfo NameInfo,
-                            ConceptDecl *NamedConcept, NamedDecl *FoundDecl,
+                            TemplateDecl *NamedConcept,  NamedDecl *FoundDecl,
                             const TemplateArgumentListInfo *TemplateArgs,
                             TemplateTypeParmDecl *ConstrainedParameter,
                             SourceLocation EllipsisLoc);
@@ -11292,26 +11291,35 @@ public:
   QualType CheckNonTypeTemplateParameterType(QualType T, SourceLocation Loc);
 
   NamedDecl *ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
-                                           unsigned Depth, unsigned Position,
-                                           SourceLocation EqualLoc,
-                                           Expr *DefaultArg);
+                                      unsigned Depth,
+                                      unsigned Position,
+                                      SourceLocation EqualLoc,
+                                      Expr *DefaultArg);
 
   /// ActOnTemplateTemplateParameter - Called when a C++ template template
   /// parameter (e.g. T in template <template \<typename> class T> class array)
   /// has been parsed. S is the current scope.
   NamedDecl *ActOnTemplateTemplateParameter(
-      Scope *S, SourceLocation TmpLoc, TemplateParameterList *Params,
-      bool Typename, SourceLocation EllipsisLoc, IdentifierInfo *ParamName,
-      SourceLocation ParamNameLoc, unsigned Depth, unsigned Position,
-      SourceLocation EqualLoc, ParsedTemplateArgument DefaultArg);
+      Scope *S, SourceLocation TmpLoc,
+      TemplateNameKind Kind,
+      bool TypenameKeyword,
+      TemplateParameterList *Params, SourceLocation EllipsisLoc,
+      IdentifierInfo *ParamName, SourceLocation ParamNameLoc, unsigned Depth,
+      unsigned Position, SourceLocation EqualLoc,
+      ParsedTemplateArgument DefaultArg);
+
 
   /// ActOnTemplateParameterList - Builds a TemplateParameterList, optionally
   /// constrained by RequiresClause, that contains the template parameters in
   /// Params.
-  TemplateParameterList *ActOnTemplateParameterList(
-      unsigned Depth, SourceLocation ExportLoc, SourceLocation TemplateLoc,
-      SourceLocation LAngleLoc, ArrayRef<NamedDecl *> Params,
-      SourceLocation RAngleLoc, Expr *RequiresClause);
+  TemplateParameterList *
+  ActOnTemplateParameterList(unsigned Depth,
+                             SourceLocation ExportLoc,
+                             SourceLocation TemplateLoc,
+                             SourceLocation LAngleLoc,
+                             ArrayRef<NamedDecl *> Params,
+                             SourceLocation RAngleLoc,
+                             Expr *RequiresClause);
 
   /// The context in which we are checking a template parameter list.
   enum TemplateParamListContext {
@@ -11453,7 +11461,7 @@ public:
   /// Get the specialization of the given variable template corresponding to
   /// the specified argument list, or a null-but-valid result if the arguments
   /// are dependent.
-  DeclResult CheckVarTemplateId(VarTemplateDecl *Template,
+  DeclResult CheckVarTemplateId(VarTemplateDecl  *Template,
                                 SourceLocation TemplateLoc,
                                 SourceLocation TemplateNameLoc,
                                 const TemplateArgumentListInfo &TemplateArgs);
@@ -11468,7 +11476,14 @@ public:
                                 const TemplateArgumentListInfo *TemplateArgs);
 
   ExprResult
-  CheckConceptTemplateId(const CXXScopeSpec &SS, SourceLocation TemplateKWLoc,
+  CheckVarOrConceptTemplateTemplateId(const CXXScopeSpec &SS,
+                           const DeclarationNameInfo &NameInfo,
+                           TemplateTemplateParmDecl *Template, SourceLocation TemplateLoc,
+                           const TemplateArgumentListInfo *TemplateArgs);
+
+  ExprResult
+  CheckConceptTemplateId(const CXXScopeSpec &SS,
+                         SourceLocation TemplateKWLoc,
                          const DeclarationNameInfo &ConceptNameInfo,
                          NamedDecl *FoundDecl, ConceptDecl *NamedConcept,
                          const TemplateArgumentListInfo *TemplateArgs);
@@ -11779,14 +11794,14 @@ public:
   /// returns true if an error occurred, and false otherwise.
   bool CheckTemplateArgument(TypeSourceInfo *Arg);
 
-  /// Check a template argument against its corresponding
+   /// Check a template argument against its corresponding
   /// non-type template parameter.
   ///
   /// This routine implements the semantics of C++ [temp.arg.nontype].
   /// If an error occurred, it returns ExprError(); otherwise, it
   /// returns the converted template argument. \p ParamType is the
   /// type of the non-type template parameter after it has been instantiated.
-  ExprResult CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
+  ExprResult CheckTemplateArgument(NamedDecl *Param,
                                    QualType InstantiatedParamType, Expr *Arg,
                                    TemplateArgument &SugaredConverted,
                                    TemplateArgument &CanonicalConverted,
@@ -11800,6 +11815,11 @@ public:
   bool CheckTemplateTemplateArgument(TemplateTemplateParmDecl *Param,
                                      TemplateParameterList *Params,
                                      TemplateArgumentLoc &Arg, bool IsDeduced);
+
+  bool CheckDeclCompatibleWithTemplateTemplate
+                                     (TemplateDecl *Template,
+                                      TemplateTemplateParmDecl *Param,
+                                      const TemplateArgumentLoc &Arg);
 
   void NoteTemplateLocation(const NamedDecl &Decl,
                             std::optional<SourceRange> ParamRange = {});
@@ -11837,7 +11857,6 @@ public:
     /// template<template<int Value> class Other> struct X;
     /// \endcode
     TPL_TemplateTemplateParmMatch,
-
     /// We are matching the template parameter lists of a template
     /// template argument against the template parameter lists of a template
     /// template parameter.
@@ -12085,7 +12104,7 @@ public:
 
   void CheckConceptRedefinition(ConceptDecl *NewDecl, LookupResult &Previous,
                                 bool &AddToScope);
-  bool CheckConceptUseInDefinition(ConceptDecl *Concept, SourceLocation Loc);
+  bool CheckConceptUseInDefinition(NamedDecl *Concept, SourceLocation Loc);
 
   TypeResult ActOnDependentTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
                                const CXXScopeSpec &SS,
@@ -14495,6 +14514,12 @@ public:
       const MultiLevelTemplateArgumentList &TemplateArgs,
       SourceRange TemplateIDRange);
 
+  ExprResult
+  SubstConceptTemplateArguments(const ConceptSpecializationExpr *CSE,
+                                const Expr *ConstraintExpr,
+                                const MultiLevelTemplateArgumentList &MLTAL,
+                                ArrayRef<TemplateArgument> Args);
+
   bool CheckInstantiatedFunctionTemplateConstraints(
       SourceLocation PointOfInstantiation, FunctionDecl *Decl,
       ArrayRef<TemplateArgument> TemplateArgs,
@@ -14513,8 +14538,9 @@ public:
   DiagnoseUnsatisfiedConstraint(const ASTConstraintSatisfaction &Satisfaction,
                                 bool First = true);
 
-  const NormalizedConstraint *getNormalizedAssociatedConstraints(
-      NamedDecl *ConstrainedDecl, ArrayRef<const Expr *> AssociatedConstraints);
+  const NormalizedConstraint *getNormalizedAssociatedConstraints(NamedDecl *ConstrainedDecl,
+                                                                 ArrayRef<const Expr *> AssociatedConstraints,
+                                                                 const ConceptSpecializationExpr *CSE = nullptr);
 
   /// \brief Check whether the given declaration's associated constraints are
   /// at least as constrained than another declaration's according to the
@@ -14545,8 +14571,7 @@ private:
   /// constrained declarations). If an error occurred while normalizing the
   /// associated constraints of the template or concept, nullptr will be cached
   /// here.
-  llvm::DenseMap<NamedDecl *, NormalizedConstraint *> NormalizationCache;
-
+  std::map<llvm::SmallVector<void *, 1>, NormalizedConstraint *> NormalizationCache;
   llvm::ContextualFoldingSet<ConstraintSatisfaction, const ASTContext &>
       SatisfactionCache;
 
@@ -14563,6 +14588,7 @@ private:
   /// Used by SetupConstraintCheckingTemplateArgumentsAndScope to recursively(in
   /// the case of lambdas) set up the LocalInstantiationScope of the current
   /// function.
+public:
   bool
   SetupConstraintScope(FunctionDecl *FD,
                        std::optional<ArrayRef<TemplateArgument>> TemplateArgs,

@@ -506,9 +506,9 @@ let Class = AutoType in {
   def : Property<"keyword", AutoTypeKeyword> {
     let Read = [{ node->getKeyword() }];
   }
-  def : Property<"typeConstraintConcept", Optional<ConceptDeclRef>> {
+  def : Property<"typeConstraintConcept", Optional<TemplateDeclRef>> {
     let Read = [{ makeOptionalFromPointer(
-        const_cast<const ConceptDecl*>(node->getTypeConstraintConcept())) }];
+        node->getTypeConstraintConcept()) }];
   }
   def : Property<"typeConstraintArguments", Array<TemplateArgument>> {
     let Read = [{ node->getTypeConstraintArguments() }];
@@ -697,6 +697,9 @@ let Class = HLSLAttributedResourceType in {
   def : Property<"isROV", Bool> {
     let Read = [{ node->getAttrs().IsROV }];
   }
+  def : Property<"rawBuffer", Bool> {
+    let Read = [{ node->getAttrs().RawBuffer }];
+  }
   def : Property<"wrappedTy", QualType> {
     let Read = [{ node->getWrappedType() }];
   }
@@ -704,7 +707,7 @@ let Class = HLSLAttributedResourceType in {
     let Read = [{ node->getContainedType() }];
   }
   def : Creator<[{
-    HLSLAttributedResourceType::Attributes attrs(static_cast<llvm::dxil::ResourceClass>(resClass), isROV);
+    HLSLAttributedResourceType::Attributes attrs(static_cast<llvm::dxil::ResourceClass>(resClass), isROV, rawBuffer);
     return ctx.getHLSLAttributedResourceType(wrappedTy, containedTy, attrs);
   }]>;
 }

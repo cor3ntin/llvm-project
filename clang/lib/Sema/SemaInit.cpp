@@ -12,6 +12,7 @@
 
 #include "CheckExprLifetime.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
@@ -750,8 +751,21 @@ void InitListChecker::FillInEmptyInitForField(unsigned Init, FieldDecl *Field,
     if (Field->hasInClassInitializer()) {
       if (VerifyOnly)
         return;
-
-      ExprResult DIE = SemaRef.BuildCXXDefaultInitExpr(Loc, Field);
+      ExprResult DIE;
+      {
+        // Enter a default initializer rebuild context, then we can support
+        // lifetime extension of temporary created by aggregate initialization
+        // using a default member initializer.
+        // CWG1815 (https://wg21.link/CWG1815).
+        EnterExpressionEvaluationContext RebuildDefaultInit(
+            SemaRef, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
+        SemaRef.currentEvaluationContext().RebuildDefaultArgOrDefaultInit =
+            true;
+        SemaRef.currentEvaluationContext().DelayedDefaultInitializationContext =
+            SemaRef.parentEvaluationContext()
+                .DelayedDefaultInitializationContext;
+        DIE = SemaRef.BuildCXXDefaultInitExpr(Loc, Field);
+      }
       if (DIE.isInvalid()) {
         hadError = true;
         return;
@@ -3634,7 +3648,7 @@ ValueDecl *InitializedEntity::getDecl() const {
   case EK_ParenAggInitMember:
   case EK_Binding:
   case EK_TemplateParameter:
-    return Variable.VariableOrMember;
+    return cast<ValueDecl>(Variable.VariableOrMember);
 
   case EK_Parameter:
   case EK_Parameter_CF_Audited:
@@ -7521,10 +7535,8 @@ Sema::CreateMaterializeTemporaryExpr(QualType T, Expr *Temporary,
   // are done in both CreateMaterializeTemporaryExpr and MaybeBindToTemporary,
   // but there may be a chance to merge them.
   Cleanup.setExprNeedsCleanups(false);
-  if (isInLifetimeExtendingContext()) {
-    auto &Record = ExprEvalContexts.back();
-    Record.ForRangeLifetimeExtendTemps.push_back(MTE);
-  }
+  if (isInLifetimeExtendingContext())
+    currentEvaluationContext().ForRangeLifetimeExtendTemps.push_back(MTE);
   return MTE;
 }
 
@@ -9537,7 +9549,7 @@ static void DiagnoseNarrowingInInitList(Sema &S,
                       unsigned ConstRefDiagID, unsigned WarnDiagID) {
     unsigned DiagID;
     auto &L = S.getLangOpts();
-    if (L.CPlusPlus11 &&
+    if (L.CPlusPlus11 && !L.HLSL &&
         (!L.MicrosoftExt || L.isCompatibleWithMSVC(LangOptions::MSVC2015)))
       DiagID = IsConstRef ? ConstRefDiagID : DefaultDiagID;
     else

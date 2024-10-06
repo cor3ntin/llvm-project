@@ -172,6 +172,9 @@ class Parser : public CodeCompletionHandler {
   mutable IdentifierInfo *Ident_import;
   mutable IdentifierInfo *Ident_module;
 
+  // C++2c contextual keywords
+  mutable IdentifierInfo *Ident_universal;
+
   // C++ type trait keywords that can be reverted to identifiers and still be
   // used as type traits.
   llvm::SmallDenseMap<IdentifierInfo *, tok::TokenKind> RevertibleTypeTraits;
@@ -1357,6 +1360,10 @@ private:
     void ParseLexedMethodDefs() override;
     void ParseLexedAttributes() override;
     void ParseLexedPragmas() override;
+
+    // Delete copy constructor and copy assignment operator.
+    LateParsedClass(const LateParsedClass &) = delete;
+    LateParsedClass &operator=(const LateParsedClass &) = delete;
 
   private:
     Parser *Self;
