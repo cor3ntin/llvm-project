@@ -15,6 +15,8 @@
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprConcepts.h"
 #include "clang/AST/RecursiveASTVisitor.h"
@@ -32,6 +34,7 @@
 #include "clang/Sema/TemplateDeduction.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
 #include <optional>
@@ -1631,6 +1634,23 @@ NormalizedConstraint::fromConstraintExprs(Sema &S, NamedDecl *D,
   return Conjunction;
 }
 
+bool clang::ConstraintHasConceptTemplateParameterConceptReference(const Expr* E) {
+  if(auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference())
+    return true;
+  if(auto* P = dyn_cast<ParenExpr>(E))
+    return ConstraintHasConceptTemplateParameterConceptReference(P->getSubExpr());
+  if(auto* B = dyn_cast<BinaryOperator>(E); B && llvm::is_contained({BO_And, BO_Or}, B->getOpcode()))
+    return ConstraintHasConceptTemplateParameterConceptReference(B->getLHS()) ||
+           ConstraintHasConceptTemplateParameterConceptReference(B->getRHS());
+  if(auto* FE = dyn_cast<CXXFoldExpr>(E); FE && llvm::is_contained({BO_And, BO_Or}, FE->getOperator())) {
+    if(FE->getInit() && ConstraintHasConceptTemplateParameterConceptReference(FE->getInit()))
+      return true;
+    return ConstraintHasConceptTemplateParameterConceptReference(FE->getPattern());
+  }
+  return false;
+}
+
+
 std::optional<NormalizedConstraint>
 NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D,
                                                       const UnresolvedLookupExpr *E,
@@ -1674,6 +1694,44 @@ NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D,
 
   return NormalizedConstraint::fromConstraintExpr(S, D, Res.get());
 
+}
+
+std::optional<unsigned> NormalizedConstraint::ConceptTemplateParameterExpansionCount(Sema &S, NamedDecl *D,
+                                                               const Expr *E,
+                                                               const ConceptSpecializationExpr *CSE) {
+  llvm::SmallVector<UnexpandedParameterPack> Unexpanded;
+  S.collectUnexpandedParameterPacks(const_cast<Expr*>(E), Unexpanded);
+  bool ExpandConceptTemplateParameter = false;
+  for(const UnexpandedParameterPack & P : Unexpanded) {
+    if(NamedDecl *ND = P.first.dyn_cast<NamedDecl *>()) {
+      if(const auto* TTP = dyn_cast<TemplateTemplateParmDecl>(ND); TTP && TTP->kind() == TNK_Concept_template) {
+        ExpandConceptTemplateParameter = true;
+        break;
+      }
+    }
+  }
+
+  if(!ExpandConceptTemplateParameter)
+    return std::nullopt;
+
+  Sema::ContextRAII SavedContext(S, D->getDeclContext());
+  LocalInstantiationScope Scope(S);
+
+  std::optional<ArrayRef<TemplateArgument>> InnerMostArgs;
+  if(CSE) {
+    InnerMostArgs = CSE->getTemplateArguments();
+  }
+
+  MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(D, D->getLexicalDeclContext(),
+                                                                        /*Final=*/false, /*Innermost=*/InnerMostArgs,
+                                                                        /*RelativeToPrimary=*/true,
+                                                                        /*Pattern=*/nullptr,
+                                                                        /*ForConstraintInstantiation=*/true);
+
+  if(FunctionDecl* FD = dyn_cast<FunctionDecl>(D))
+    S.SetupConstraintScope(FD, {}, MLTAL, Scope);
+
+  return S.getNumArgumentsInExpansionFromUnexpanded(Unexpanded, MLTAL);
 }
 
 std::optional<NormalizedConstraint>
@@ -1747,29 +1805,46 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E,
             ? FoldExpandedConstraint::FoldOperatorKind::And
             : FoldExpandedConstraint::FoldOperatorKind::Or;
 
-    if (FE->getInit()) {
-      auto LHS = fromConstraintExpr(S, D, FE->getLHS(), CSE);
-      auto RHS = fromConstraintExpr(S, D, FE->getRHS(), CSE);
-      if (!LHS || !RHS)
+    std::optional<NormalizedConstraint> NormalizedPattern;
+
+    if(std::optional<unsigned> Expansions
+        = NormalizedConstraint::ConceptTemplateParameterExpansionCount(S, D, FE->getPattern(), CSE)) {
+      for(unsigned I = 0; I < *Expansions; I++) {
+        Sema::ArgumentPackSubstitutionIndexRAII _(S, I);
+        std::optional<NormalizedConstraint> New = NormalizedConstraint::fromConstraintExpr(S, D, FE->getPattern(), CSE);
+        if(!New)
+          return std::nullopt;
+        if(!NormalizedPattern)
+          NormalizedPattern = std::move(New);
+        else
+          NormalizedPattern =  NormalizedConstraint(
+            S.Context, std::move(*NormalizedPattern), std::move(*New),
+            FE->getOperator() == BinaryOperatorKind::BO_LAnd ? CCK_Conjunction
+                                                             : CCK_Disjunction);
+      }
+    }
+    else {
+      NormalizedPattern = NormalizedConstraint::fromConstraintExpr(S, D, FE->getPattern(), CSE);
+      if(!NormalizedPattern)
+        return std::nullopt;
+      NormalizedPattern = NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
+         Kind, std::move(*NormalizedPattern), FE->getPattern()}};
+    }
+
+    if(!FE->getInit())
+      return NormalizedPattern;
+
+    std::optional<NormalizedConstraint> NormalizedInit = fromConstraintExpr(S, D, FE->getInit(), CSE);
+    if(!NormalizedInit)
         return std::nullopt;
 
-      if (FE->isRightFold())
-        RHS = NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
-            Kind, std::move(*RHS), FE->getPattern()}};
-      else
-        LHS = NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
-            Kind, std::move(*LHS), FE->getPattern()}};
+    auto RHS = std::move(FE->isRightFold() ? NormalizedPattern : NormalizedInit);
+    auto LHS = std::move(FE->isLeftFold()  ? NormalizedPattern : NormalizedInit);
 
-      return NormalizedConstraint(
-          S.Context, std::move(*LHS), std::move(*RHS),
-          FE->getOperator() == BinaryOperatorKind::BO_LAnd ? CCK_Conjunction
-                                                           : CCK_Disjunction);
-    }
-    auto Sub = fromConstraintExpr(S, D, FE->getPattern(), CSE);
-    if (!Sub)
-      return std::nullopt;
-    return NormalizedConstraint{new (S.Context) FoldExpandedConstraint{
-        Kind, std::move(*Sub), FE->getPattern()}};
+    return NormalizedConstraint(
+        S.Context, std::move(*LHS), std::move(*RHS),
+        FE->getOperator() == BinaryOperatorKind::BO_LAnd ? CCK_Conjunction
+                                                         : CCK_Disjunction);
   } else if (auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference()) {
     return BuildConceptDependentConstraint(S, D, ULE, CSE);
   }
