@@ -184,6 +184,9 @@ private:
   fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E, const ConceptSpecializationExpr* CSE = nullptr);
   static std::optional<NormalizedConstraint>
   BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E, const ConceptSpecializationExpr *CSE);
+  static std::optional<unsigned> ConceptTemplateParameterExpansionCount(Sema &S, NamedDecl *D,
+                                                                 const Expr *E,
+                                                                 const ConceptSpecializationExpr *CSE);
 };
 
 struct alignas(ConstraintAlignment) NormalizedConstraintPair {
@@ -300,6 +303,8 @@ bool FoldExpandedConstraint::subsumes(
   NormalForm QCNF = makeCNF(Other.Constraint);
   return clang::subsumes(PDNF, QCNF, E);
 }
+
+bool ConstraintHasConceptTemplateParameterConceptReference(const Expr* E);
 
 } // clang
 

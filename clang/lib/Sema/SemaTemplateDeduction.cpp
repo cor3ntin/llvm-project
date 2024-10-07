@@ -6152,22 +6152,6 @@ UnresolvedSetIterator Sema::getMostSpecialized(
   return SpecEnd;
 }
 
-static bool ConstraintHasConceptTemplateParameterConceptReference(const Expr* E) {
-    if(auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference())
-        return true;
-    if(auto* P = dyn_cast<ParenExpr>(E))
-        return ConstraintHasConceptTemplateParameterConceptReference(P->getSubExpr());
-    if(auto* B = dyn_cast<BinaryOperator>(E); B && llvm::is_contained({BO_And, BO_Or}, B->getOpcode()))
-        return ConstraintHasConceptTemplateParameterConceptReference(B->getLHS()) ||
-                ConstraintHasConceptTemplateParameterConceptReference(B->getRHS());
-    if(auto* FE = dyn_cast<CXXFoldExpr>(E); FE && llvm::is_contained({BO_And, BO_Or}, FE->getOperator())) {
-        if(FE->getInit() && ConstraintHasConceptTemplateParameterConceptReference(FE->getInit()))
-            return true;
-         return ConstraintHasConceptTemplateParameterConceptReference(FE->getPattern());
-    }
-    return false;
-}
-
 FunctionDecl *Sema::getMoreConstrainedFunction(FunctionDecl *FD1,
                                                FunctionDecl *FD2) {
   assert(!FD1->getDescribedTemplate() && !FD2->getDescribedTemplate() &&
@@ -6178,13 +6162,13 @@ FunctionDecl *Sema::getMoreConstrainedFunction(FunctionDecl *FD1,
          isa<CXXConversionDecl>(FD2));
 
   FunctionDecl *F1 = FD1;
-  if(!F1->getTrailingRequiresClause() || !ConstraintHasConceptTemplateParameterConceptReference(F1->getTrailingRequiresClause())) {
+  if(!F1->getTrailingRequiresClause() || !clang::ConstraintHasConceptTemplateParameterConceptReference(F1->getTrailingRequiresClause())) {
       if (FunctionDecl *P = FD1->getTemplateInstantiationPattern(false))
           F1 = P;
   }
 
   FunctionDecl *F2 = FD2;
-  if(!F2->getTrailingRequiresClause() || !ConstraintHasConceptTemplateParameterConceptReference(F2->getTrailingRequiresClause())) {
+  if(!F2->getTrailingRequiresClause() || !clang::ConstraintHasConceptTemplateParameterConceptReference(F2->getTrailingRequiresClause())) {
       if (FunctionDecl *P = FD2->getTemplateInstantiationPattern(false))
           F2 = P;
   }
