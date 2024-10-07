@@ -559,6 +559,7 @@ namespace clang {
     ExpectedDecl VisitTemplateTypeParmDecl(TemplateTypeParmDecl *D);
     ExpectedDecl VisitNonTypeTemplateParmDecl(NonTypeTemplateParmDecl *D);
     ExpectedDecl VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D);
+
     ExpectedDecl VisitClassTemplateDecl(ClassTemplateDecl *D);
     ExpectedDecl VisitClassTemplateSpecializationDecl(
                                             ClassTemplateSpecializationDecl *D);
@@ -6038,8 +6039,7 @@ ASTNodeImporter::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
           ToD, D, Importer.getToContext(),
           Importer.getToContext().getTranslationUnitDecl(), *LocationOrErr,
           D->getDepth(), D->getPosition(), D->isParameterPack(),
-          (*NameOrErr).getAsIdentifierInfo(), D->wasDeclaredWithTypename(),
-          *TemplateParamsOrErr))
+          (*NameOrErr).getAsIdentifierInfo(), D->kind(), D->wasDeclaredWithTypename(), *TemplateParamsOrErr))
     return ToD;
 
   if (Error Err = importTemplateParameterDefaultArgument(D, ToD))

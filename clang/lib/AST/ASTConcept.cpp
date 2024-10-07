@@ -14,6 +14,9 @@
 #include "clang/AST/ASTConcept.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/PrettyPrinter.h"
+#include "clang/AST/Decl.h"
+#include "clang/AST/DeclTemplate.h"
+#include "clang/AST/TemplateBase.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 
@@ -88,7 +91,7 @@ ConceptReference *
 ConceptReference::Create(const ASTContext &C, NestedNameSpecifierLoc NNS,
                          SourceLocation TemplateKWLoc,
                          DeclarationNameInfo ConceptNameInfo,
-                         NamedDecl *FoundDecl, ConceptDecl *NamedConcept,
+                         NamedDecl *FoundDecl, TemplateDecl *NamedConcept,
                          const ASTTemplateArgumentListInfo *ArgsAsWritten) {
   return new (C) ConceptReference(NNS, TemplateKWLoc, ConceptNameInfo,
                                   FoundDecl, NamedConcept, ArgsAsWritten);

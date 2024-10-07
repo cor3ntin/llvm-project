@@ -705,6 +705,7 @@ ASTContext::CanonicalTemplateTemplateParm::Profile(llvm::FoldingSetNodeID &ID,
   ID.AddInteger(Parm->getDepth());
   ID.AddInteger(Parm->getPosition());
   ID.AddBoolean(Parm->isParameterPack());
+  ID.AddInteger(Parm->kind());
 
   TemplateParameterList *Params = Parm->getTemplateParameters();
   ID.AddInteger(Params->size());
@@ -740,7 +741,8 @@ ASTContext::CanonicalTemplateTemplateParm::Profile(llvm::FoldingSetNodeID &ID,
     }
 
     auto *TTP = cast<TemplateTemplateParmDecl>(*P);
-    ID.AddInteger(2);
+    ID.AddInteger(3);
+    ID.AddBoolean(TTP->isParameterPack());
     Profile(ID, C, TTP);
   }
 }
@@ -808,14 +810,16 @@ ASTContext::getCanonicalTemplateTemplateParmDecl(
                                                 TInfo);
       }
       CanonParams.push_back(Param);
-    } else
+    } else {
       CanonParams.push_back(getCanonicalTemplateTemplateParmDecl(
                                            cast<TemplateTemplateParmDecl>(*P)));
+    }
   }
 
   TemplateTemplateParmDecl *CanonTTP = TemplateTemplateParmDecl::Create(
       *this, getTranslationUnitDecl(), SourceLocation(), TTP->getDepth(),
-      TTP->getPosition(), TTP->isParameterPack(), nullptr, /*Typename=*/false,
+      TTP->getPosition(), TTP->isParameterPack(), nullptr,  TTP->kind(),
+      /*Typename=*/false,
       TemplateParameterList::Create(*this, SourceLocation(), SourceLocation(),
                                     CanonParams, SourceLocation(),
                                     /*RequiresClause=*/nullptr));
@@ -6241,7 +6245,7 @@ QualType ASTContext::getUnaryTransformType(QualType BaseType,
 
 QualType ASTContext::getAutoTypeInternal(
     QualType DeducedType, AutoTypeKeyword Keyword, bool IsDependent,
-    bool IsPack, ConceptDecl *TypeConstraintConcept,
+    bool IsPack, TemplateDecl *TypeConstraintConcept,
     ArrayRef<TemplateArgument> TypeConstraintArgs, bool IsCanon) const {
   if (DeducedType.isNull() && Keyword == AutoTypeKeyword::Auto &&
       !TypeConstraintConcept && !IsDependent)
@@ -6261,7 +6265,7 @@ QualType ASTContext::getAutoTypeInternal(
       Canon = DeducedType.getCanonicalType();
     } else if (TypeConstraintConcept) {
       bool AnyNonCanonArgs = false;
-      ConceptDecl *CanonicalConcept = TypeConstraintConcept->getCanonicalDecl();
+      TemplateDecl *CanonicalConcept = cast<TemplateDecl>(TypeConstraintConcept->getCanonicalDecl());
       auto CanonicalConceptArgs = ::getCanonicalTemplateArguments(
           *this, TypeConstraintArgs, AnyNonCanonArgs);
       if (CanonicalConcept != TypeConstraintConcept || AnyNonCanonArgs) {
@@ -6296,7 +6300,7 @@ QualType ASTContext::getAutoTypeInternal(
 QualType
 ASTContext::getAutoType(QualType DeducedType, AutoTypeKeyword Keyword,
                         bool IsDependent, bool IsPack,
-                        ConceptDecl *TypeConstraintConcept,
+                        TemplateDecl *TypeConstraintConcept,
                         ArrayRef<TemplateArgument> TypeConstraintArgs) const {
   assert((!IsPack || IsDependent) && "only use IsPack for a dependent pack");
   assert((!IsDependent || DeducedType.isNull()) &&
@@ -13766,8 +13770,8 @@ static QualType getCommonSugarTypeNode(ASTContext &Ctx, const Type *X,
     if (KW != AY->getKeyword())
       return QualType();
 
-    ConceptDecl *CD = ::getCommonDecl(AX->getTypeConstraintConcept(),
-                                      AY->getTypeConstraintConcept());
+    TemplateDecl *CD = ::getCommonDecl(AX->getTypeConstraintConcept(),
+                                       AY->getTypeConstraintConcept());
     SmallVector<TemplateArgument, 8> As;
     if (CD &&
         getCommonTemplateArguments(Ctx, As, AX->getTypeConstraintArguments(),

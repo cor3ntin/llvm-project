@@ -65,6 +65,8 @@ public:
   VISIT_METHOD(TemplateExpansion);
   VISIT_METHOD(Expression);
   VISIT_METHOD(Pack);
+  VISIT_METHOD(Universal);
+  VISIT_METHOD(UniversalExpansion);
 
   RetTy VisitTemplateArgument(REF(TemplateArgument), ParamTys...) {
     return RetTy();

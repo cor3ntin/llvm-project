@@ -14,8 +14,10 @@
 #define LLVM_CLANG_SEMA_SEMACONCEPT_H
 #include "clang/AST/ASTConcept.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/AST/Expr.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
+#include "clang/AST/ExprConcepts.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
@@ -79,9 +81,11 @@ struct alignas(ConstraintAlignment) AtomicConstraint {
 };
 
 struct alignas(ConstraintAlignment) FoldExpandedConstraint;
+struct alignas(ConstraintAlignment) ConceptDependentConstraint;
+
 
 using NormalFormConstraint =
-    llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *>;
+    llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *, ConceptDependentConstraint*>;
 struct NormalizedConstraint;
 using NormalForm =
     llvm::SmallVector<llvm::SmallVector<NormalFormConstraint, 2>, 4>;
@@ -111,12 +115,13 @@ struct NormalizedConstraint {
   using CompoundConstraint = llvm::PointerIntPair<NormalizedConstraintPair *, 1,
                                                   CompoundConstraintKind>;
 
-  llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *,
+  llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *, ConceptDependentConstraint*,
                      CompoundConstraint>
       Constraint;
 
   NormalizedConstraint(AtomicConstraint *C): Constraint{C} { };
   NormalizedConstraint(FoldExpandedConstraint *C) : Constraint{C} {};
+  NormalizedConstraint(ConceptDependentConstraint *C) : Constraint{C} {};
 
   NormalizedConstraint(ASTContext &C, NormalizedConstraint LHS,
                        NormalizedConstraint RHS, CompoundConstraintKind Kind);
@@ -139,6 +144,11 @@ struct NormalizedConstraint {
   bool isFoldExpanded() const {
     return Constraint.is<FoldExpandedConstraint *>();
   }
+
+  bool isConceptDependent() const {
+    return Constraint.is<ConceptDependentConstraint *>();
+  }
+
   bool isCompound() const { return Constraint.is<CompoundConstraint>(); }
 
   CompoundConstraintKind getCompoundKind() const {
@@ -161,11 +171,22 @@ struct NormalizedConstraint {
     return Constraint.get<FoldExpandedConstraint *>();
   }
 
+  ConceptDependentConstraint *getConceptDependentConstraint() const {
+    assert(isConceptDependent() &&
+           "getConceptDependentConstraint called on non-concept-dependent constraint.");
+    return Constraint.get<ConceptDependentConstraint *>();
+  }
+
 private:
   static std::optional<NormalizedConstraint>
-  fromConstraintExprs(Sema &S, NamedDecl *D, ArrayRef<const Expr *> E);
+  fromConstraintExprs(Sema &S, NamedDecl *D, ArrayRef<const Expr *> E, const ConceptSpecializationExpr* CSE = nullptr);
   static std::optional<NormalizedConstraint>
-  fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E);
+  fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E, const ConceptSpecializationExpr* CSE = nullptr);
+  static std::optional<NormalizedConstraint>
+  BuildConceptDependentConstraint(Sema &S, NamedDecl *D, const UnresolvedLookupExpr *E, const ConceptSpecializationExpr *CSE);
+  static std::optional<unsigned> ConceptTemplateParameterExpansionCount(Sema &S, NamedDecl *D,
+                                                                 const Expr *E,
+                                                                 const ConceptSpecializationExpr *CSE);
 };
 
 struct alignas(ConstraintAlignment) NormalizedConstraintPair {
@@ -187,6 +208,11 @@ struct alignas(ConstraintAlignment) FoldExpandedConstraint {
 
   static bool AreCompatibleForSubsumption(const FoldExpandedConstraint &A,
                                           const FoldExpandedConstraint &B);
+};
+
+struct alignas(ConstraintAlignment) ConceptDependentConstraint {
+  const UnresolvedLookupExpr* Concept;
+  ConceptDependentConstraint(const UnresolvedLookupExpr* Concept) : Concept{Concept} {}
 };
 
 const NormalizedConstraint *getNormalizedAssociatedConstraints(
@@ -277,6 +303,8 @@ bool FoldExpandedConstraint::subsumes(
   NormalForm QCNF = makeCNF(Other.Constraint);
   return clang::subsumes(PDNF, QCNF, E);
 }
+
+bool ConstraintHasConceptTemplateParameterConceptReference(const Expr* E);
 
 } // clang
 

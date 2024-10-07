@@ -934,6 +934,7 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgumentLoc(
 
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());
+
   }
 
   return true;

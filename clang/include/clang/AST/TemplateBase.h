@@ -14,6 +14,7 @@
 #ifndef LLVM_CLANG_AST_TEMPLATEBASE_H
 #define LLVM_CLANG_AST_TEMPLATEBASE_H
 
+#include "clang/AST/ASTFwd.h"
 #include "clang/AST/DependenceFlags.h"
 #include "clang/AST/NestedNameSpecifier.h"
 #include "clang/AST/TemplateName.h"
@@ -104,7 +105,7 @@ public:
 
     /// The template argument is actually a parameter pack. Arguments are stored
     /// in the Args struct.
-    Pack
+    Pack,
   };
 
 private:
@@ -169,6 +170,7 @@ private:
     unsigned IsDefaulted : 1;
     uintptr_t V;
   };
+
   union {
     struct DA DeclArg;
     struct I Integer;
@@ -314,6 +316,8 @@ public:
 
   /// Determine whether this template argument is a pack expansion.
   bool isPackExpansion() const;
+
+  bool isConceptOrConceptTemplateParameter() const;
 
   /// Retrieve the type for a type template argument.
   QualType getAsType() const {
@@ -480,6 +484,7 @@ private:
     SourceLocation EllipsisLoc;
   };
 
+
   llvm::PointerUnion<TemplateTemplateArgLocInfo *, Expr *, TypeSourceInfo *>
       Pointer;
 
@@ -625,6 +630,7 @@ public:
       return SourceLocation();
     return LocInfo.getTemplateEllipsisLoc();
   }
+
 };
 
 /// A convenient class for passing around template argument

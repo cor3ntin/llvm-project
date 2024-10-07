@@ -15,11 +15,13 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/ASTMutationListener.h"
+#include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprConcepts.h"
 #include "clang/AST/PrettyDeclStackTrace.h"
+#include "clang/AST/TemplateBase.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
@@ -37,11 +39,13 @@
 #include "clang/Sema/Template.h"
 #include "clang/Sema/TemplateDeduction.h"
 #include "clang/Sema/TemplateInstCallback.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLForwardCompat.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/TimeProfiler.h"
+#include <cassert>
 #include <optional>
 
 using namespace clang;
@@ -1536,6 +1540,9 @@ namespace {
                           QualType ObjectType = QualType(),
                           NamedDecl *FirstQualifierInScope = nullptr,
                           bool AllowInjectedClassName = false);
+    TemplateArgument
+    TransformNamedTemplateTemplateArgument(CXXScopeSpec &SS, TemplateName Name,
+                                           SourceLocation NameLoc);
 
     const CXXAssumeAttr *TransformCXXAssumeAttr(const CXXAssumeAttr *AA);
     const LoopHintAttr *TransformLoopHintAttr(const LoopHintAttr *LH);
@@ -1798,8 +1805,7 @@ namespace {
 
   private:
     ExprResult
-    transformNonTypeTemplateParmRef(Decl *AssociatedDecl,
-                                    const NonTypeTemplateParmDecl *parm,
+    transformNonTypeTemplateParmRef(Decl *AssociatedDecl, const NamedDecl *parm,
                                     SourceLocation loc, TemplateArgument arg,
                                     std::optional<unsigned> PackIndex);
   };
@@ -1851,6 +1857,7 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
       }
 
       TemplateName Template = Arg.getAsTemplate();
+
       assert(!Template.isNull() && Template.getAsTemplateDecl() &&
              "Wrong kind of template template argument");
       return Template.getAsTemplateDecl();
@@ -2055,6 +2062,43 @@ TemplateName TemplateInstantiator::TransformTemplateName(
                                           AllowInjectedClassName);
 }
 
+TemplateArgument TemplateInstantiator::TransformNamedTemplateTemplateArgument(
+    CXXScopeSpec &SS, TemplateName Name, SourceLocation NameLoc) {
+  if (TemplateTemplateParmDecl *TTP =
+          dyn_cast_or_null<TemplateTemplateParmDecl>(
+              Name.getAsTemplateDecl())) {
+    if (TTP->getDepth() < TemplateArgs.getNumLevels()) {
+      // If the corresponding template argument is NULL or non-existent, it's
+      // because we are performing instantiation from explicitly-specified
+      // template arguments in a function template, but there were some
+      // arguments left unspecified.
+      if (!TemplateArgs.hasTemplateArgument(TTP->getDepth(),
+                                            TTP->getPosition()))
+        return TemplateArgument(Name);
+
+      TemplateArgument Arg = TemplateArgs(TTP->getDepth(), TTP->getPosition());
+    }
+  }
+  TemplateName TN = getDerived().TransformTemplateName(SS, Name, NameLoc);
+  if (!TN.isNull())
+    return TN;
+  return TemplateArgument();
+}
+
+static TemplateNameKind getTemplateNameKind(TemplateName Name) {
+  auto *TD = Name.getAsTemplateDecl();
+  assert(TD);
+  if (isa<ClassTemplateDecl, TypeAliasTemplateDecl>(TD))
+    return TemplateNameKind::TNK_Type_template;
+  if (isa<VarTemplateDecl>(TD))
+    return TemplateNameKind::TNK_Var_template;
+  if (isa<ConceptDecl>(TD))
+    return TemplateNameKind::TNK_Concept_template;
+  if (auto *TTP = dyn_cast<TemplateTemplateParmDecl>(TD))
+    return TTP->kind();
+  llvm_unreachable("Unexpected template kind");
+}
+
 ExprResult
 TemplateInstantiator::TransformPredefinedExpr(PredefinedExpr *E) {
   if (!E->isTypeDependent())
@@ -2191,22 +2235,25 @@ TemplateInstantiator::TransformCodeAlignAttr(const CodeAlignAttr *CA) {
 }
 
 ExprResult TemplateInstantiator::transformNonTypeTemplateParmRef(
-    Decl *AssociatedDecl, const NonTypeTemplateParmDecl *parm,
-    SourceLocation loc, TemplateArgument arg,
-    std::optional<unsigned> PackIndex) {
+    Decl *AssociatedDecl, const NamedDecl *parm, SourceLocation loc,
+    TemplateArgument arg, std::optional<unsigned> PackIndex) {
   ExprResult result;
 
   // Determine the substituted parameter type. We can usually infer this from
   // the template argument, but not always.
   auto SubstParamType = [&] {
-    QualType T;
-    if (parm->isExpandedParameterPack())
-      T = parm->getExpansionType(SemaRef.ArgumentPackSubstitutionIndex);
-    else
-      T = parm->getType();
-    if (parm->isParameterPack() && isa<PackExpansionType>(T))
-      T = cast<PackExpansionType>(T)->getPattern();
-    return SemaRef.SubstType(T, TemplateArgs, loc, parm->getDeclName());
+    if (auto NTTP = dyn_cast<NonTypeTemplateParmDecl>(parm)) {
+      QualType T;
+      if (NTTP->isExpandedParameterPack())
+        T = NTTP->getExpansionType(SemaRef.ArgumentPackSubstitutionIndex);
+      else
+        T = NTTP->getType();
+      if (parm->isParameterPack() && isa<PackExpansionType>(T))
+        T = cast<PackExpansionType>(T)->getPattern();
+      return SemaRef.SubstType(T, TemplateArgs, loc, parm->getDeclName());
+    }
+    return SemaRef.SubstType(arg.getAsExpr()->getType(), TemplateArgs, loc,
+                             parm->getDeclName());
   };
 
   bool refParam = false;
@@ -2262,7 +2309,9 @@ ExprResult TemplateInstantiator::transformNonTypeTemplateParmRef(
   // FIXME: Don't put subst node on final replacement.
   return new (SemaRef.Context) SubstNonTypeTemplateParmExpr(
       resultExpr->getType(), resultExpr->getValueKind(), loc, resultExpr,
-      AssociatedDecl, parm->getIndex(), PackIndex, refParam);
+      AssociatedDecl,
+      clang::getDepthAndIndex(const_cast<NamedDecl *>(parm)).second, PackIndex,
+      refParam);
 }
 
 ExprResult
@@ -4287,6 +4336,124 @@ bool Sema::SubstTemplateArguments(
 }
 
 ExprResult
+Sema::SubstConceptTemplateArguments(const ConceptSpecializationExpr *CSE,
+                                    const Expr *ConstraintExpr,
+                                    const MultiLevelTemplateArgumentList &MLTAL,
+                                    ArrayRef<TemplateArgument> Args) {
+  TemplateInstantiator Instantiator(*this, MLTAL, SourceLocation(),
+                                    DeclarationName());
+  auto *ArgsAsWritten = CSE->getTemplateArgsAsWritten();
+  TemplateArgumentListInfo SubstArgs(ArgsAsWritten->getLAngleLoc(),
+                                     ArgsAsWritten->getRAngleLoc());
+
+  Sema::InstantiatingTemplate Inst(
+      *this, ArgsAsWritten->arguments().front().getSourceRange().getBegin(),
+      Sema::InstantiatingTemplate::ParameterMappingSubstitution{},
+      CSE->getNamedConcept(),
+      ArgsAsWritten->arguments().front().getSourceRange());
+
+  if (Instantiator.TransformConceptTemplateArguments(
+          ArgsAsWritten->getTemplateArgs(),
+          ArgsAsWritten->getTemplateArgs() +
+              ArgsAsWritten->getNumTemplateArgs(),
+          SubstArgs))
+    return true;
+
+  llvm::SmallVector<TemplateArgument, 4> NewArgList;
+  NewArgList.reserve(SubstArgs.arguments().size());
+  for (const auto &ArgLoc : SubstArgs.arguments())
+    NewArgList.push_back(ArgLoc.getArgument());
+
+  Sema::SFINAETrap Trap(*this);
+  MultiLevelTemplateArgumentList MLTALForConstraint =
+      getTemplateInstantiationArgs(CSE->getNamedConcept(), CSE->getNamedConcept()->getDeclContext(), /*Final=*/false,
+                                   NewArgList,
+                                   /*RelativeToPrimary=*/true,
+                                   /*Pattern=*/nullptr,
+                                   /*ForConstraintInstantiation=*/true);
+
+  struct ConstraintExprTransformer : TreeTransform<ConstraintExprTransformer> {
+    using Base = TreeTransform<ConstraintExprTransformer>;
+    MultiLevelTemplateArgumentList &MLTAL;
+
+    ConstraintExprTransformer(Sema &SemaRef,
+                              MultiLevelTemplateArgumentList &MLTAL)
+        : TreeTransform(SemaRef), MLTAL(MLTAL) {}
+
+    ExprResult TransformExpr(Expr *E) {
+      if (!E)
+        return E;
+      switch (E->getStmtClass()) {
+      case Stmt::BinaryOperatorClass:
+      case Stmt::ConceptSpecializationExprClass:
+      case Stmt::ParenExprClass:
+      case Stmt::UnresolvedLookupExprClass:
+        return Base::TransformExpr(E);
+      default:
+        break;
+      }
+      return E;
+    }
+
+    ExprResult
+    TransformConceptSpecializationExpr(ConceptSpecializationExpr *E) {
+      return SemaRef.SubstConstraintExpr(E, MLTAL);
+    }
+
+    ExprResult TransformBinaryOperator(BinaryOperator *E) {
+      if (!(E->getOpcode() == BinaryOperatorKind::BO_LAnd ||
+            E->getOpcode() == BinaryOperatorKind::BO_LOr))
+        return E;
+
+      ExprResult LHS = TransformExpr(E->getLHS());
+      if (LHS.isInvalid())
+        return ExprError();
+
+      ExprResult RHS = TransformExpr(E->getRHS());
+      if (RHS.isInvalid())
+        return ExprError();
+
+      if (LHS.get() == E->getLHS() && RHS.get() == E->getRHS())
+        return E;
+
+      return BinaryOperator::Create(SemaRef.Context, LHS.get(), RHS.get(),
+                                    E->getOpcode(), SemaRef.Context.BoolTy,
+                                    VK_PRValue, OK_Ordinary,
+                                    E->getOperatorLoc(), FPOptionsOverride{});
+    }
+
+    ExprResult TransformUnresolvedLookupExpr(UnresolvedLookupExpr *E, bool IsAddressOfOperand = false) {
+      if (E->isConceptReference() || E->isVarDeclReference()) {
+        TemplateInstantiator Instantiator(SemaRef, MLTAL,
+                                          SourceLocation(),
+                                          DeclarationName());
+        return Instantiator.TransformUnresolvedLookupExpr(E, IsAddressOfOperand);
+      }
+      return E;
+    }
+
+    bool TransformTemplateArgument(const TemplateArgumentLoc &Input,
+                                   TemplateArgumentLoc &Output,
+                                   bool Uneval = false) {
+      if (Input.getArgument().isConceptOrConceptTemplateParameter()) {
+        TemplateInstantiator Instantiator(SemaRef, MLTAL,
+                                          SourceLocation(),
+                                          DeclarationName());
+        return Instantiator.TransformTemplateArgument(Input, Output, Uneval);
+      }
+
+      Output = Input;
+      return false;
+    }
+  };
+
+  ConstraintExprTransformer Transformer(*this, MLTALForConstraint);
+  ExprResult Res =
+      Transformer.TransformExpr(const_cast<Expr *>(ConstraintExpr));
+  return Res;
+}
+
+ExprResult
 Sema::SubstExpr(Expr *E, const MultiLevelTemplateArgumentList &TemplateArgs) {
   if (!E)
     return E;
@@ -4366,6 +4533,7 @@ Sema::SubstTemplateName(NestedNameSpecifierLoc QualifierLoc,
   SS.Adopt(QualifierLoc);
   return Instantiator.TransformTemplateName(SS, Name, Loc);
 }
+
 
 static const Decl *getCanonicalParmVarDecl(const Decl *D) {
   // When storing ParmVarDecls in the local instantiation scope, we always

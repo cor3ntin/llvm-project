@@ -8,14 +8,15 @@
 //  This file implements semantic analysis for C++0x variadic templates.
 //===----------------------------------------------------------------------===/
 
-#include "clang/Sema/Sema.h"
 #include "TypeLocBuilder.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/Template.h"
 #include <optional>
@@ -283,6 +284,16 @@ namespace {
         return true;
 
       return inherited::TraverseLambdaCapture(Lambda, C, Init);
+    }
+
+    bool TraverseUnresolvedLookupExpr(UnresolvedLookupExpr *E) {
+      if (E->getNumDecls() == 1) {
+        NamedDecl *ND = *E->decls_begin();
+        if (auto *TTP = llvm::dyn_cast<TemplateTemplateParmDecl>(ND);
+            TTP && TTP->isParameterPack())
+          addUnexpanded(ND, E->getBeginLoc());
+      }
+      return inherited::TraverseUnresolvedLookupExpr(E);
     }
 
 #ifndef NDEBUG
@@ -625,9 +636,9 @@ Sema::ActOnPackExpansion(const ParsedTemplateArgument &Arg,
         << R;
       return ParsedTemplateArgument();
     }
-
     return Arg.getTemplatePackExpansion(EllipsisLoc);
   }
+
   llvm_unreachable("Unhandled template argument kind?");
 }
 
