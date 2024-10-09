@@ -62,7 +62,7 @@ void swap_value_representations(_Tp& __a, _Tp& __b) {
   // TODO: research better memswap algorithms
   char __buffer[__size];
   if constexpr (__chunk) {
-    for (std::size_t n = 0; n < __chunk; n++, __aptr += __size, __bptr += __size) {
+    for (std::size_t __n = 0; __n < __chunk; __n++, __aptr += __size, __bptr += __size) {
       __builtin_memcpy(__buffer, __aptr, __size);
       __builtin_memmove(__aptr, __bptr, __size);
       __builtin_memmove(__bptr, __buffer, __size);

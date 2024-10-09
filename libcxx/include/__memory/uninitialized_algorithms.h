@@ -539,7 +539,7 @@ private:
   _Iter& __last_;
 };
 
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
 
 template <class _Tp>
 constexpr
@@ -690,7 +690,7 @@ __uninitialized_allocator_relocate(_Alloc& __alloc, _Tp* __first, _Tp* __last, _
   static_assert(__is_cpp17_move_insertable<_Alloc>::value,
                 "The specified type does not meet the requirements of Cpp17MoveInsertable");
 
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
   if (!__libcpp_is_constant_evaluated()) {
     if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
       (void) relocate(__first, __last, const_cast<__remove_const_t<_Tp>*>(__result));

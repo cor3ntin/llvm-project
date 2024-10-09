@@ -1586,7 +1586,7 @@ vector<_Tp, _Allocator>::erase(const_iterator __position) {
       __position != end(), "vector::erase(iterator) called with a non-dereferenceable iterator");
   difference_type __ps = __position - cbegin();
   pointer __p          = this->__begin_ + __ps;
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
   if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
     size_type __old_size = size();
     // destroy the element at __p
@@ -1609,7 +1609,7 @@ vector<_Tp, _Allocator>::erase(const_iterator __first, const_iterator __last) {
   _LIBCPP_ASSERT_VALID_INPUT_RANGE(__first <= __last, "vector::erase(first, last) called with invalid range");
   pointer __p = this->__begin_ + (__first - begin());
   if (__first != __last) {
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
   if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
     size_type __old_size = size();
     size_type __count = __last - __first;
@@ -1653,7 +1653,7 @@ vector<_Tp, _Allocator>::insert(const_iterator __position, const_reference __x) 
     if (__p == this->__end_) {
       __construct_one_at_end(__x);
     } else {
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
       if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
         // Make space by trivially relocating everything
         _ConstructTransaction __tx(*this, 1);
@@ -1693,7 +1693,7 @@ vector<_Tp, _Allocator>::insert(const_iterator __position, value_type&& __x) {
     if (__p == this->__end_) {
       __construct_one_at_end(std::move(__x));
     } else {
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
     if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
       // Make space by trivially relocating everything
       _ConstructTransaction __tx(*this, 1);
@@ -1728,7 +1728,7 @@ vector<_Tp, _Allocator>::emplace(const_iterator __position, _Args&&... __args) {
     if (__p == this->__end_) {
       __construct_one_at_end(std::forward<_Args>(__args)...);
     } else {
-#if _LIBCPP_STD_VER >= 20
+#if _LIBCPP_STD_VER >= 26
     if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
       // Make space by trivially relocating everything
       _ConstructTransaction __tx(*this, 1);
