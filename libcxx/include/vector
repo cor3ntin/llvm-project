@@ -1592,7 +1592,7 @@ vector<_Tp, _Allocator>::erase(const_iterator __position) {
     // destroy the element at __p
     __alloc_traits::destroy(__alloc(), std::__to_address(__p));
     // move the rest down
-    (void) relocate(__p + 1, this->__end_, __p);
+    (void) relocate(std::__to_address(__p + 1), std::__to_address(this->__end_), std::__to_address(__p));
     // update the end
     this->__end_--;
     __annotate_shrink(__old_size);
@@ -1635,6 +1635,19 @@ _LIBCPP_CONSTEXPR_SINCE_CXX20 void
 vector<_Tp, _Allocator>::__move_range(pointer __from_s, pointer __from_e, pointer __to) {
   pointer __old_last  = this->__end_;
   difference_type __n = __old_last - __to;
+
+#if _LIBCPP_STD_VER >= 26
+  if ! consteval {
+    if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
+      const size_t __numSpaces = __to - __from_s;
+      _ConstructTransaction __tx(*this, __numSpaces);
+      (void) relocate(std::__to_address(__from_s), std::__to_address(__from_e), std::__to_address(__to));
+      __tx.__pos_ += __numSpaces;
+      return;
+     }
+   }
+#endif
+
   {
     pointer __i = __from_s + __n;
     _ConstructTransaction __tx(*this, __from_e - __i);
@@ -1653,23 +1666,6 @@ vector<_Tp, _Allocator>::insert(const_iterator __position, const_reference __x) 
     if (__p == this->__end_) {
       __construct_one_at_end(__x);
     } else {
-#if _LIBCPP_STD_VER >= 26
-      if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
-        // Make space by trivially relocating everything
-        _ConstructTransaction __tx(*this, 1);
-        (void) relocate(std::__to_address(__p), std::__to_address(this->__end_), __p + 1);
-        // construct the new element (not assign!)
-        const_pointer __xr = pointer_traits<const_pointer>::pointer_to(__x);
-        if (std::__is_pointer_in_range(std::__to_address(__p), std::__to_address(__end_), std::addressof(__x)))
-          ++__xr;
-        __alloc_traits::construct(this->__alloc(), std::__to_address(__p), *__xr);
-        ++__tx.__pos_;
-        // Need to fix up upon an exception!
-        // update all the invariants.
-        // return an iterator to the new entry
-        return __make_iter(__p);
-        }
-#endif
       __move_range(__p, this->__end_, __p + 1);
       const_pointer __xr = pointer_traits<const_pointer>::pointer_to(__x);
       if (std::__is_pointer_in_range(std::__to_address(__p), std::__to_address(__end_), std::addressof(__x)))
@@ -1693,20 +1689,6 @@ vector<_Tp, _Allocator>::insert(const_iterator __position, value_type&& __x) {
     if (__p == this->__end_) {
       __construct_one_at_end(std::move(__x));
     } else {
-#if _LIBCPP_STD_VER >= 26
-    if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
-      // Make space by trivially relocating everything
-      _ConstructTransaction __tx(*this, 1);
-      (void) relocate(std::__to_address(__p), std::__to_address(this->__end_), __p + 1);
-      // construct the new element (not assign!)
-      __alloc_traits::construct(this->__alloc(), std::__to_address(__p), std::forward<value_type>(__x));
-      ++__tx.__pos_;
-      // Need to fix up upon an exception!
-      // update all the invariants.
-      // return an iterator to the new entry
-      return __make_iter(__p);
-      }
-#endif
       __move_range(__p, this->__end_, __p + 1);
       *__p = std::move(__x);
     }
@@ -1728,20 +1710,6 @@ vector<_Tp, _Allocator>::emplace(const_iterator __position, _Args&&... __args) {
     if (__p == this->__end_) {
       __construct_one_at_end(std::forward<_Args>(__args)...);
     } else {
-#if _LIBCPP_STD_VER >= 26
-    if constexpr (is_trivially_relocatable_v<_Tp> || is_nothrow_move_constructible_v<_Tp>) {
-      // Make space by trivially relocating everything
-      _ConstructTransaction __tx(*this, 1);
-      (void) relocate(std::__to_address(__p), std::__to_address(this->__end_), __p + 1);
-      // construct the new element
-      __alloc_traits::construct(this->__alloc(), std::__to_address(__p), std::forward<_Args>(__args)...);
-      ++__tx.__pos_;
-      // Need to fix up upon an exception!
-      // update all the invariants.
-      // return an iterator to the new entry
-      return __make_iter(__p);
-      }
-#endif
       __temp_value<value_type, _Allocator> __tmp(this->__alloc(), std::forward<_Args>(__args)...);
       __move_range(__p, this->__end_, __p + 1);
       *__p = std::move(__tmp.get());

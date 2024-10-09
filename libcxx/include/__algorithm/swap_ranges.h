@@ -11,6 +11,11 @@
 
 #include <__algorithm/iterator_operations.h>
 #include <__config>
+#include <__cstddef/byte.h>
+#include <__cstddef/size_t.h>
+#include <__iterator/iterator_traits.h>
+#include <__type_traits/is_same.h>
+#include <__type_traits/is_trivially_relocatable.h>
 #include <__utility/move.h>
 #include <__utility/pair.h>
 
