@@ -2074,8 +2074,6 @@ TemplateArgument TemplateInstantiator::TransformNamedTemplateTemplateArgument(
       if (!TemplateArgs.hasTemplateArgument(TTP->getDepth(),
                                             TTP->getPosition()))
         return TemplateArgument(Name);
-
-      TemplateArgument Arg = TemplateArgs(TTP->getDepth(), TTP->getPosition());
     }
   }
   TemplateName TN = getDerived().TransformTemplateName(SS, Name, NameLoc);
@@ -4322,124 +4320,6 @@ bool Sema::SubstTemplateArguments(
   TemplateInstantiator Instantiator(*this, TemplateArgs, SourceLocation(),
                                     DeclarationName());
   return Instantiator.TransformTemplateArguments(Args.begin(), Args.end(), Out);
-}
-
-ExprResult
-Sema::SubstConceptTemplateArguments(const ConceptSpecializationExpr *CSE,
-                                    const Expr *ConstraintExpr,
-                                    const MultiLevelTemplateArgumentList &MLTAL,
-                                    ArrayRef<TemplateArgument> Args) {
-  TemplateInstantiator Instantiator(*this, MLTAL, SourceLocation(),
-                                    DeclarationName());
-  auto *ArgsAsWritten = CSE->getTemplateArgsAsWritten();
-  TemplateArgumentListInfo SubstArgs(ArgsAsWritten->getLAngleLoc(),
-                                     ArgsAsWritten->getRAngleLoc());
-
-  Sema::InstantiatingTemplate Inst(
-      *this, ArgsAsWritten->arguments().front().getSourceRange().getBegin(),
-      Sema::InstantiatingTemplate::ParameterMappingSubstitution{},
-      CSE->getNamedConcept(),
-      ArgsAsWritten->arguments().front().getSourceRange());
-
-  if (Instantiator.TransformConceptTemplateArguments(
-          ArgsAsWritten->getTemplateArgs(),
-          ArgsAsWritten->getTemplateArgs() +
-              ArgsAsWritten->getNumTemplateArgs(),
-          SubstArgs))
-    return true;
-
-  llvm::SmallVector<TemplateArgument, 4> NewArgList;
-  NewArgList.reserve(SubstArgs.arguments().size());
-  for (const auto &ArgLoc : SubstArgs.arguments())
-    NewArgList.push_back(ArgLoc.getArgument());
-
-  Sema::SFINAETrap Trap(*this);
-  MultiLevelTemplateArgumentList MLTALForConstraint =
-      getTemplateInstantiationArgs(CSE->getNamedConcept(), CSE->getNamedConcept()->getDeclContext(), /*Final=*/false,
-                                   NewArgList,
-                                   /*RelativeToPrimary=*/true,
-                                   /*Pattern=*/nullptr,
-                                   /*ForConstraintInstantiation=*/true);
-
-  struct ConstraintExprTransformer : TreeTransform<ConstraintExprTransformer> {
-    using Base = TreeTransform<ConstraintExprTransformer>;
-    MultiLevelTemplateArgumentList &MLTAL;
-
-    ConstraintExprTransformer(Sema &SemaRef,
-                              MultiLevelTemplateArgumentList &MLTAL)
-        : TreeTransform(SemaRef), MLTAL(MLTAL) {}
-
-    ExprResult TransformExpr(Expr *E) {
-      if (!E)
-        return E;
-      switch (E->getStmtClass()) {
-      case Stmt::BinaryOperatorClass:
-      case Stmt::ConceptSpecializationExprClass:
-      case Stmt::ParenExprClass:
-      case Stmt::UnresolvedLookupExprClass:
-        return Base::TransformExpr(E);
-      default:
-        break;
-      }
-      return E;
-    }
-
-    ExprResult
-    TransformConceptSpecializationExpr(ConceptSpecializationExpr *E) {
-      return SemaRef.SubstConstraintExpr(E, MLTAL);
-    }
-
-    ExprResult TransformBinaryOperator(BinaryOperator *E) {
-      if (!(E->getOpcode() == BinaryOperatorKind::BO_LAnd ||
-            E->getOpcode() == BinaryOperatorKind::BO_LOr))
-        return E;
-
-      ExprResult LHS = TransformExpr(E->getLHS());
-      if (LHS.isInvalid())
-        return ExprError();
-
-      ExprResult RHS = TransformExpr(E->getRHS());
-      if (RHS.isInvalid())
-        return ExprError();
-
-      if (LHS.get() == E->getLHS() && RHS.get() == E->getRHS())
-        return E;
-
-      return BinaryOperator::Create(SemaRef.Context, LHS.get(), RHS.get(),
-                                    E->getOpcode(), SemaRef.Context.BoolTy,
-                                    VK_PRValue, OK_Ordinary,
-                                    E->getOperatorLoc(), FPOptionsOverride{});
-    }
-
-    ExprResult TransformUnresolvedLookupExpr(UnresolvedLookupExpr *E, bool IsAddressOfOperand = false) {
-      if (E->isConceptReference() || E->isVarDeclReference()) {
-        TemplateInstantiator Instantiator(SemaRef, MLTAL,
-                                          SourceLocation(),
-                                          DeclarationName());
-        return Instantiator.TransformUnresolvedLookupExpr(E, IsAddressOfOperand);
-      }
-      return E;
-    }
-
-    bool TransformTemplateArgument(const TemplateArgumentLoc &Input,
-                                   TemplateArgumentLoc &Output,
-                                   bool Uneval = false) {
-      if (Input.getArgument().isConceptOrConceptTemplateParameter()) {
-        TemplateInstantiator Instantiator(SemaRef, MLTAL,
-                                          SourceLocation(),
-                                          DeclarationName());
-        return Instantiator.TransformTemplateArgument(Input, Output, Uneval);
-      }
-
-      Output = Input;
-      return false;
-    }
-  };
-
-  ConstraintExprTransformer Transformer(*this, MLTALForConstraint);
-  ExprResult Res =
-      Transformer.TransformExpr(const_cast<Expr *>(ConstraintExpr));
-  return Res;
 }
 
 ExprResult
