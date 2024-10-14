@@ -396,6 +396,16 @@ SourceLocation CXXPseudoDestructorExpr::getEndLoc() const {
   return End;
 }
 
+static bool UnresolvedLookupExprIsVariableOrConceptParameterPack(
+    UnresolvedSetIterator Begin, UnresolvedSetIterator End) {
+  if (std::distance(Begin, End) != 1)
+    return false;
+  NamedDecl *ND = *Begin;
+  if (auto *TTP = llvm::dyn_cast<TemplateTemplateParmDecl>(ND))
+    return TTP->isParameterPack();
+  return false;
+}
+
 // UnresolvedLookupExpr
 UnresolvedLookupExpr::UnresolvedLookupExpr(
     const ASTContext &Context, CXXRecordDecl *NamingClass,
@@ -406,7 +416,8 @@ UnresolvedLookupExpr::UnresolvedLookupExpr(
     bool KnownInstantiationDependent)
     : OverloadExpr(UnresolvedLookupExprClass, Context, QualifierLoc,
                    TemplateKWLoc, NameInfo, TemplateArgs, Begin, End,
-                   KnownDependent, KnownInstantiationDependent, false),
+                   KnownDependent, KnownInstantiationDependent,
+                   UnresolvedLookupExprIsVariableOrConceptParameterPack(Begin, End)),
       NamingClass(NamingClass) {
   UnresolvedLookupExprBits.RequiresADL = RequiresADL;
 }
@@ -1710,8 +1721,8 @@ SizeOfPackExpr *SizeOfPackExpr::CreateDeserialized(ASTContext &Context,
   return new (Storage) SizeOfPackExpr(EmptyShell(), NumPartialArgs);
 }
 
-NonTypeTemplateParmDecl *SubstNonTypeTemplateParmExpr::getParameter() const {
-  return cast<NonTypeTemplateParmDecl>(
+NamedDecl *SubstNonTypeTemplateParmExpr::getParameter() const {
+  return cast<NamedDecl>(
       getReplacedTemplateParameterList(getAssociatedDecl())->asArray()[Index]);
 }
 
@@ -1754,9 +1765,12 @@ QualType SubstNonTypeTemplateParmExpr::getParameterType(
     const ASTContext &Context) const {
   // Note that, for a class type NTTP, we will have an lvalue of type 'const
   // T', so we can't just compute this from the type and value category.
+
+  QualType Type = getType();
+
   if (isReferenceParameter())
-    return Context.getLValueReferenceType(getType());
-  return getType().getUnqualifiedType();
+    return Context.getLValueReferenceType(Type);
+  return Type.getUnqualifiedType();
 }
 
 SubstNonTypeTemplateParmPackExpr::SubstNonTypeTemplateParmPackExpr(
@@ -1958,9 +1972,10 @@ CXXFoldExpr::CXXFoldExpr(QualType T, UnresolvedLookupExpr *Callee,
       EllipsisLoc(EllipsisLoc), RParenLoc(RParenLoc),
       NumExpansions(NumExpansions ? *NumExpansions + 1 : 0), Opcode(Opcode) {
   // We rely on asserted invariant to distinguish left and right folds.
-  assert(((LHS && LHS->containsUnexpandedParameterPack()) !=
-          (RHS && RHS->containsUnexpandedParameterPack())) &&
-         "Exactly one of LHS or RHS should contain an unexpanded pack");
+  if(LHS && RHS)
+    assert(LHS->containsUnexpandedParameterPack() !=
+               RHS->containsUnexpandedParameterPack() &&
+           "Exactly one of LHS or RHS should contain an unexpanded pack");
   SubExprs[SubExpr::Callee] = Callee;
   SubExprs[SubExpr::LHS] = LHS;
   SubExprs[SubExpr::RHS] = RHS;

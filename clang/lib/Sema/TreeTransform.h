@@ -16,8 +16,10 @@
 #include "CoroutineStmtBuilder.h"
 #include "TypeLocBuilder.h"
 #include "clang/AST/Decl.h"
+#include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/DeclarationName.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprConcepts.h"
@@ -29,8 +31,12 @@
 #include "clang/AST/StmtObjC.h"
 #include "clang/AST/StmtOpenACC.h"
 #include "clang/AST/StmtOpenMP.h"
+#include "clang/AST/TemplateBase.h"
+#include "clang/AST/TemplateName.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/DiagnosticParse.h"
 #include "clang/Basic/OpenMPKinds.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Sema/Designator.h"
 #include "clang/Sema/EnterExpressionEvaluationContext.h"
 #include "clang/Sema/Lookup.h"
@@ -45,6 +51,7 @@
 #include "clang/Sema/SemaPseudoObject.h"
 #include "clang/Sema/SemaSYCL.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
 #include <optional>
@@ -608,6 +615,10 @@ public:
                                  TemplateArgumentLoc &Output,
                                  bool Uneval = false);
 
+  TemplateArgument
+  TransformNamedTemplateTemplateArgument(CXXScopeSpec &SS, TemplateName Name,
+                                         SourceLocation NameLoc);
+
   /// Transform the given set of template arguments.
   ///
   /// By default, this operation transforms all of the template arguments
@@ -653,6 +664,12 @@ public:
                                   InputIterator Last,
                                   TemplateArgumentListInfo &Outputs,
                                   bool Uneval = false);
+
+  template <typename InputIterator>
+  bool TransformConceptTemplateArguments(InputIterator First,
+                                         InputIterator Last,
+                                         TemplateArgumentListInfo &Outputs,
+                                         bool Uneval = false);
 
   /// Fakes up a TemplateArgumentLoc for a given TemplateArgument.
   void InventTemplateArgumentLoc(const TemplateArgument &Arg,
@@ -4680,6 +4697,15 @@ TreeTransform<Derived>::TransformTemplateName(CXXScopeSpec &SS,
   llvm_unreachable("overloaded function decl survived to here");
 }
 
+template <typename Derived>
+TemplateArgument TreeTransform<Derived>::TransformNamedTemplateTemplateArgument(
+    CXXScopeSpec &SS, TemplateName Name, SourceLocation NameLoc) {
+  TemplateName TN = getDerived().TransformTemplateName(SS, Name, NameLoc);
+  if (TN.isNull())
+    return TemplateArgument();
+  return TemplateArgument(TN);
+}
+
 template<typename Derived>
 void TreeTransform<Derived>::InventTemplateArgumentLoc(
                                          const TemplateArgument &Arg,
@@ -4764,13 +4790,13 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
 
     CXXScopeSpec SS;
     SS.Adopt(QualifierLoc);
-    TemplateName Template = getDerived().TransformTemplateName(
-        SS, Arg.getAsTemplate(), Input.getTemplateNameLoc());
-    if (Template.isNull())
-      return true;
 
-    Output = TemplateArgumentLoc(SemaRef.Context, TemplateArgument(Template),
-                                 QualifierLoc, Input.getTemplateNameLoc());
+    TemplateArgument Out = getDerived().TransformNamedTemplateTemplateArgument(
+        SS, Arg.getAsTemplate(), Input.getTemplateNameLoc());
+    if (Out.isNull())
+      return true;
+    Output = TemplateArgumentLoc(SemaRef.Context, Out, QualifierLoc,
+                                 Input.getTemplateNameLoc());
     return false;
   }
 
@@ -4797,6 +4823,8 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
     Output = TemplateArgumentLoc(TemplateArgument(E.get()), E.get());
     return false;
   }
+  default:
+    llvm_unreachable("Unhandled template argument kind");
   }
 
   // Work around bogus GCC warning
@@ -4978,6 +5006,56 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
 
   return false;
 
+}
+
+template <typename Derived>
+template <typename InputIterator>
+bool TreeTransform<Derived>::TransformConceptTemplateArguments(
+    InputIterator First, InputIterator Last, TemplateArgumentListInfo &Outputs,
+    bool Uneval) {
+
+  auto isConcept = [](const TemplateArgument &Arg) {
+    bool isConcept = false;
+    if (Arg.getKind() == TemplateArgument::Template)
+      if (auto *TTP = dyn_cast_if_present<TemplateTemplateParmDecl>(
+              Arg.getAsTemplate().getAsTemplateDecl()))
+        isConcept = TTP->kind() == TNK_Concept_template;
+    return isConcept;
+  };
+
+  for (; First != Last; ++First) {
+    TemplateArgumentLoc Out;
+    TemplateArgumentLoc In = *First;
+
+    if (In.getArgument().getKind() == TemplateArgument::Pack) {
+      // if(In.getArgument().pack_size() == 00  ||
+      // !isConcept(In.getArgument().pack_elements()[0])) {
+      //   Outputs.addArgument(In);
+      //   continue;
+      // }
+      typedef TemplateArgumentLocInventIterator<Derived,
+                                                TemplateArgument::pack_iterator>
+          PackLocIterator;
+      if (TransformConceptTemplateArguments(
+              PackLocIterator(*this, In.getArgument().pack_begin()),
+              PackLocIterator(*this, In.getArgument().pack_end()), Outputs,
+              Uneval))
+        return true;
+      continue;
+    }
+
+    if (!isConcept(In.getArgument())) {
+      Outputs.addArgument(In);
+      continue;
+    }
+
+    if (getDerived().TransformTemplateArgument(In, Out, Uneval))
+      return true;
+
+    Outputs.addArgument(Out);
+  }
+
+  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -13904,7 +13982,6 @@ TreeTransform<Derived>::TransformUnresolvedLookupExpr(UnresolvedLookupExpr *Old,
     R.clear();
     return ExprError();
   }
-
   // An UnresolvedLookupExpr can refer to a class member. This occurs e.g. when
   // a non-static data member is named in an unevaluated operand, or when
   // a member is named in a dependent class scope function template explicit

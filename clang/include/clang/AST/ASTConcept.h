@@ -26,6 +26,7 @@
 namespace clang {
 
 class ConceptDecl;
+class TemplateDecl;
 class Expr;
 class NamedDecl;
 struct PrintingPolicy;
@@ -122,6 +123,7 @@ struct ASTConstraintSatisfaction final :
 ///   template <std::derives_from<Expr> T> void dump();
 ///             ~~~~~~~~~~~~~~~~~~~~~~~ (in TemplateTypeParmDecl)
 class ConceptReference {
+protected:
   // \brief The optional nested name specifier used when naming the concept.
   NestedNameSpecifierLoc NestedNameSpec;
 
@@ -139,7 +141,7 @@ class ConceptReference {
   NamedDecl *FoundDecl;
 
   /// \brief The concept named.
-  ConceptDecl *NamedConcept;
+  TemplateDecl *NamedConcept;
 
   /// \brief The template argument list source info used to specialize the
   /// concept.
@@ -147,7 +149,7 @@ class ConceptReference {
 
   ConceptReference(NestedNameSpecifierLoc NNS, SourceLocation TemplateKWLoc,
                    DeclarationNameInfo ConceptNameInfo, NamedDecl *FoundDecl,
-                   ConceptDecl *NamedConcept,
+                   TemplateDecl *NamedConcept,
                    const ASTTemplateArgumentListInfo *ArgsAsWritten)
       : NestedNameSpec(NNS), TemplateKWLoc(TemplateKWLoc),
         ConceptName(ConceptNameInfo), FoundDecl(FoundDecl),
@@ -157,7 +159,7 @@ public:
   static ConceptReference *
   Create(const ASTContext &C, NestedNameSpecifierLoc NNS,
          SourceLocation TemplateKWLoc, DeclarationNameInfo ConceptNameInfo,
-         NamedDecl *FoundDecl, ConceptDecl *NamedConcept,
+         NamedDecl *FoundDecl, TemplateDecl *NamedConcept,
          const ASTTemplateArgumentListInfo *ArgsAsWritten);
 
   const NestedNameSpecifierLoc &getNestedNameSpecifierLoc() const {
@@ -196,9 +198,7 @@ public:
     return FoundDecl;
   }
 
-  ConceptDecl *getNamedConcept() const {
-    return NamedConcept;
-  }
+  TemplateDecl *getNamedConcept() const { return NamedConcept; }
 
   const ASTTemplateArgumentListInfo *getTemplateArgsAsWritten() const {
     return ArgsAsWritten;
@@ -247,7 +247,7 @@ public:
 
   // FIXME: Instead of using these concept related functions the callers should
   // directly work with the corresponding ConceptReference.
-  ConceptDecl *getNamedConcept() const { return ConceptRef->getNamedConcept(); }
+  TemplateDecl *getNamedConcept() const { return ConceptRef->getNamedConcept(); }
 
   SourceLocation getConceptNameLoc() const {
     return ConceptRef->getConceptNameLoc();
@@ -278,7 +278,9 @@ public:
   void print(llvm::raw_ostream &OS, const PrintingPolicy &Policy) const {
     ConceptRef->print(OS, Policy);
   }
+
 };
+
 
 } // clang
 

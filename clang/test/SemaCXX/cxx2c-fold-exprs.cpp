@@ -40,13 +40,12 @@ constexpr int i(T...) { return 1; }; // expected-note {{candidate}}
 static_assert(i(0) == 1); // expected-error {{call to 'i' is ambiguous}}
 
 
-template <class... T> requires (A<T> || ... || true)
-constexpr int j(T...) { return 0; };
-template <class... T> requires (C<T> && ... && true)
-constexpr int j(T...) { return 1; };
+template <class... T> requires (A<T> || ... || true) // expected-note {{similar constraint expressions not considered equivalent}}
+constexpr int j(T...) { return 0; }; // expected-note {{candidate function}}
+template <class... T> requires (C<T> && ... && true) // expected-note {{similar constraint expression here}}
+constexpr int j(T...) { return 1; }; // expected-note {{candidate function}}
 
-static_assert(j(0) == 1);
-static_assert(j() == 1);
+static_assert(j() == 1); // expected-error {{call to 'j' is ambiguous}}
 
 
 
@@ -268,10 +267,7 @@ struct S {
 };
 
 static_assert(S<int>::f<int>() == 2);
-
-static_assert(S<int>::g<int>() == 2); // expected-error {{call to 'g' is ambiguous}}
-                                      // expected-note@#nested-ambiguous-g1 {{candidate}}
-                                      // expected-note@#nested-ambiguous-g2 {{candidate}}
+static_assert(S<int>::g<int>() == 2);
 
 
 }

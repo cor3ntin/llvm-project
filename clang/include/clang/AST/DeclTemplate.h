@@ -26,6 +26,7 @@
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
+#include "clang/Basic/TemplateKinds.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/PointerIntPair.h"
@@ -1600,15 +1601,22 @@ class TemplateTemplateParmDecl final
   /// The number of parameters in an expanded parameter pack.
   unsigned NumExpandedParams = 0;
 
-  TemplateTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
-                           unsigned P, bool ParameterPack, IdentifierInfo *Id,
-                           bool Typename, TemplateParameterList *Params)
-      : TemplateDecl(TemplateTemplateParm, DC, L, Id, Params),
-        TemplateParmPosition(D, P), Typename(Typename),
-        ParameterPack(ParameterPack), ExpandedParameterPack(false) {}
+  TemplateNameKind ParameterKind = TemplateNameKind::TNK_Type_template;
 
   TemplateTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
-                           unsigned P, IdentifierInfo *Id, bool Typename,
+                           unsigned P, bool ParameterPack, IdentifierInfo *Id,
+                           TemplateNameKind ParameterKind,
+                           bool Typename,
+                           TemplateParameterList *Params)
+      : TemplateDecl(TemplateTemplateParm, DC, L, Id, Params),
+        TemplateParmPosition(D, P), Typename(Typename),
+        ParameterPack(ParameterPack),
+        ExpandedParameterPack(false), ParameterKind(ParameterKind) {}
+
+  TemplateTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
+                           unsigned P, IdentifierInfo *Id,
+                           TemplateNameKind ParameterKind,
+                           bool Typename,
                            TemplateParameterList *Params,
                            ArrayRef<TemplateParameterList *> Expansions);
 
@@ -1619,14 +1627,17 @@ public:
   friend class ASTDeclWriter;
   friend TrailingObjects;
 
-  static TemplateTemplateParmDecl *Create(const ASTContext &C, DeclContext *DC,
-                                          SourceLocation L, unsigned D,
-                                          unsigned P, bool ParameterPack,
-                                          IdentifierInfo *Id, bool Typename,
-                                          TemplateParameterList *Params);
   static TemplateTemplateParmDecl *
   Create(const ASTContext &C, DeclContext *DC, SourceLocation L, unsigned D,
-         unsigned P, IdentifierInfo *Id, bool Typename,
+         unsigned P, bool ParameterPack, IdentifierInfo *Id,
+         TemplateNameKind ParameterKind, bool Typename,
+         TemplateParameterList *Params);
+
+  static TemplateTemplateParmDecl *
+  Create(const ASTContext &C, DeclContext *DC, SourceLocation L, unsigned D,
+         unsigned P, IdentifierInfo *Id,
+         TemplateNameKind ParameterKind,
+         bool Typename,
          TemplateParameterList *Params,
          ArrayRef<TemplateParameterList *> Expansions);
 
@@ -1739,6 +1750,16 @@ public:
     if (hasDefaultArgument() && !defaultArgumentWasInherited())
       End = getDefaultArgument().getSourceRange().getEnd();
     return SourceRange(getTemplateParameters()->getTemplateLoc(), End);
+  }
+
+  TemplateNameKind kind() const {
+      return ParameterKind;
+  }
+
+  bool isTypeConceptTemplateParam() const {
+    return kind() == TemplateNameKind::TNK_Concept_template &&
+           getTemplateParameters()->size() > 0 &&
+           isa<TemplateTypeParmDecl>(getTemplateParameters()->getParam(0));
   }
 
   // Implement isa/cast/dyncast/etc.
@@ -3304,7 +3325,12 @@ inline TemplateDecl *getAsTypeTemplateDecl(Decl *D) {
   return TD && (isa<ClassTemplateDecl>(TD) ||
                 isa<ClassTemplatePartialSpecializationDecl>(TD) ||
                 isa<TypeAliasTemplateDecl>(TD) ||
-                isa<TemplateTemplateParmDecl>(TD))
+                [&]() {
+                  if (TemplateTemplateParmDecl *TTP =
+                          dyn_cast<TemplateTemplateParmDecl>(TD))
+                    return TTP->kind() == TNK_Type_template;
+                  return false;
+                }())
              ? TD
              : nullptr;
 }
