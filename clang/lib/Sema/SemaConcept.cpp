@@ -1650,6 +1650,88 @@ bool clang::ConstraintHasConceptTemplateParameterConceptReference(const Expr* E)
   return false;
 }
 
+Expr *GetSubstitutedConceptExpr(Sema &S, NamedDecl *D, Expr *E,
+                                const ConceptSpecializationExpr *CSE) {
+
+  std::optional<ArrayRef<TemplateArgument>> InnerMostArgs;
+  if (CSE) {
+    InnerMostArgs = CSE->getTemplateArguments();
+  }
+
+  MultiLevelTemplateArgumentList MLTAL =
+      S.getTemplateInstantiationArgs(D, D->getLexicalDeclContext(),
+                                     /*Final=*/false,
+                                     /*Innermost=*/InnerMostArgs,
+                                     /*RelativeToPrimary=*/true,
+                                     /*Pattern=*/nullptr,
+                                     /*ForConstraintInstantiation=*/true);
+
+  struct ConstraintExprTransformer : TreeTransform<ConstraintExprTransformer> {
+    using Base = TreeTransform<ConstraintExprTransformer>;
+    MultiLevelTemplateArgumentList &MLTAL;
+    ConstraintExprTransformer(Sema &SemaRef,
+                              MultiLevelTemplateArgumentList &MLTAL)
+        : TreeTransform(SemaRef), MLTAL(MLTAL) {}
+
+    ExprResult TransformExpr(Expr *E) {
+      if (!E)
+        return E;
+      switch (E->getStmtClass()) {
+      case Stmt::BinaryOperatorClass:
+      case Stmt::ConceptSpecializationExprClass:
+      case Stmt::ParenExprClass:
+      case Stmt::UnresolvedLookupExprClass:
+        return Base::TransformExpr(E);
+      default:
+        break;
+      }
+      return E;
+    }
+    ExprResult
+    TransformConceptSpecializationExpr(ConceptSpecializationExpr *CSE) {
+      SmallVector<TemplateArgument, 4> NewArgs;
+      bool HasTransformedConcept = false;
+      ArrayRef<TemplateArgument> Args = CSE->getTemplateArguments();
+      for (TemplateArgument Arg : Args) {
+        bool CTTP = Arg.isConceptOrConceptTemplateParameter();
+        if (Arg.getKind() == TemplateArgument::Pack) {
+          CTTP = Arg.pack_size() &&
+                 Arg.pack_elements()[0].isConceptOrConceptTemplateParameter();
+        } else if (Arg.isPackExpansion())
+          CTTP = Arg.getPackExpansionPattern()
+                     .isConceptOrConceptTemplateParameter();
+
+        if (!CTTP) {
+          NewArgs.push_back(Arg);
+          continue;
+        }
+        TemplateArgumentLoc Transformed;
+        if (SemaRef.SubstTemplateArgument(
+                SemaRef.getTrivialTemplateArgumentLoc(Arg, {}, {}), MLTAL,
+                Transformed))
+          NewArgs.push_back(Arg);
+        else {
+          NewArgs.push_back(Transformed.getArgument());
+          HasTransformedConcept = true;
+        }
+      }
+
+      if (!HasTransformedConcept)
+        return const_cast<ConceptSpecializationExpr *>(CSE);
+
+      auto *CSD = ImplicitConceptSpecializationDecl::Create(
+          SemaRef.getASTContext(), CSE->getNamedConcept()->getDeclContext(),
+          CSE->getBeginLoc(), NewArgs);
+      return ConceptSpecializationExpr::Create(
+          SemaRef.getASTContext(), CSE->getConceptReference(), CSD, nullptr);
+    }
+  };
+
+  auto Res = ConstraintExprTransformer(S, MLTAL).TransformExpr(E);
+  if (!Res.isUsable())
+    return E;
+  return Res.get();
+}
 
 std::optional<NormalizedConstraint>
 NormalizedConstraint::BuildConceptDependentConstraint(Sema &S, NamedDecl *D,
@@ -1760,15 +1842,20 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E,
 
     return NormalizedConstraint(S.Context, std::move(*LHS), std::move(*RHS),
                                 BO.isAnd() ? CCK_Conjunction : CCK_Disjunction);
-  } else if (auto *ConceptE = dyn_cast<const ConceptSpecializationExpr>(E)) {
+  } else if (auto *ConceptE = dyn_cast<ConceptSpecializationExpr>(E)) {
     const NormalizedConstraint *SubNF;
     {
       Sema::InstantiatingTemplate Inst(
           S, ConceptE->getExprLoc(),
           Sema::InstantiatingTemplate::ConstraintNormalization{}, D,
           ConceptE->getSourceRange());
+
       if (Inst.isInvalid())
         return std::nullopt;
+
+      ConceptE = cast<ConceptSpecializationExpr>(GetSubstitutedConceptExpr(
+          S, D, const_cast<ConceptSpecializationExpr *>(ConceptE), CSE));
+
       // C++ [temp.constr.normal]p1.1
       // [...]
       // The normal form of an id-expression of the form C<A1, A2, ..., AN>,
@@ -1779,7 +1866,6 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E,
       // expression, the program is ill-formed; no diagnostic is required.
       // [...]
       ConceptDecl *CD = ConceptE->getNamedConcept();
-      ConceptE->getTemplateArgsAsWritten();
       SubNF = S.getNormalizedAssociatedConstraints(CD,
                                                    {CD->getConstraintExpr()}, ConceptE);
       if (!SubNF)
@@ -1845,7 +1931,8 @@ NormalizedConstraint::fromConstraintExpr(Sema &S, NamedDecl *D, const Expr *E,
         S.Context, std::move(*LHS), std::move(*RHS),
         FE->getOperator() == BinaryOperatorKind::BO_LAnd ? CCK_Conjunction
                                                          : CCK_Disjunction);
-  } else if (auto* ULE = dyn_cast<UnresolvedLookupExpr>(E); ULE && ULE->isConceptReference()) {
+  } else if (auto *ULE = dyn_cast<UnresolvedLookupExpr>(E);
+             ULE && ULE->isConceptReference()) {
     return BuildConceptDependentConstraint(S, D, ULE, CSE);
   }
 
