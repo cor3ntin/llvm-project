@@ -7291,11 +7291,11 @@ void Sema::CheckCXX2CTriviallyRelocatable(CXXRecordDecl *D) {
       continue;
     if (B.isVirtual() ||
         (!BaseDecl->isDependentType() && !BaseDecl->isTriviallyRelocatable())) {
-      if (MarkedTriviallyRelocatable) {
-        DiagnosticInvalidExplicitSpecifier();
-        Diag(B.getBeginLoc(), diag::note_trivially_relocatable)
-            << (B.isVirtual() ? 1 : 0) << BaseDecl << B.getSourceRange();
-      }
+      //if (MarkedTriviallyRelocatable) {
+      //  DiagnosticInvalidExplicitSpecifier();
+      //  Diag(B.getBeginLoc(), diag::note_trivially_relocatable)
+      //      << (B.isVirtual() ? 1 : 0) << BaseDecl << B.getSourceRange();
+      //}
       IsTriviallyRelocatable = false;
     }
   }
@@ -7392,9 +7392,9 @@ void Sema::CheckMemberwiseReplaceable(CXXRecordDecl *D) {
       continue;
     if ((!BaseDecl->isDependentType() && !BaseDecl->isReplaceable()) || B.isVirtual()) {
       if (MarkedMemberwiseReplaceable) {
-        if (DiagnosticInvalidExplicitSpecifier())
-          Diag(B.getBeginLoc(), diag::note_trivially_relocatable)
-              << (B.isVirtual()? 1 : 0) << BaseDecl << B.getSourceRange();
+       // if (DiagnosticInvalidExplicitSpecifier())
+       //   Diag(B.getBeginLoc(), diag::note_trivially_relocatable)
+       //       << (B.isVirtual()? 1 : 0) << BaseDecl << B.getSourceRange();
       }
       IsReplaceable = false;
     }
@@ -7404,9 +7404,9 @@ void Sema::CheckMemberwiseReplaceable(CXXRecordDecl *D) {
           || !hasSuitableMoveAssignmentOperatorForReplaceability(D, !MarkedMemberwiseReplaceable)) {
       IsReplaceable = false;
       if (MarkedMemberwiseReplaceable) {
-        if (DiagnosticInvalidExplicitSpecifier())
-          Diag(D->getBeginLoc(), diag::note_trivially_relocatable)
-              << 2 << D->getSourceRange();
+       // if (DiagnosticInvalidExplicitSpecifier())
+       //   Diag(D->getBeginLoc(), diag::note_trivially_relocatable)
+       //       << 2 << D->getSourceRange();
       }
   }
 
