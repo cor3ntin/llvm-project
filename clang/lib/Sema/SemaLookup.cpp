@@ -2957,6 +2957,29 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result,
   }
 }
 
+// If T has an explicitly specified set of associated entities S
+// ([class.assoc]), then its associated entities are: the class itself, the
+// associated entities of the types in S, and the namespaces in S;
+static void addExplicitlySpecifiedAssociatedEntities(AssociatedLookup &Result,
+                                                     CXXRecordDecl *Class) {
+  // Add the class itself. If we've already transitively visited this class,
+  // we don't need to visit base classes.
+  if (!Result.addClassTransitive(Class))
+    return;
+  assert(Class->hasExplicitlySpecifiedAssociatedEntities() &&
+         "no explicitly specified associated entities");
+  for (const AssociatedEntity &E :
+       Class->getExplicitlySpecifiedAssociatedEntities()) {
+    if (!E.isValid())
+      continue;
+    assert(!E.isDependent() && "dependent type?!");
+    if (E.isNamespace())
+      Result.Namespaces.insert(E.getNamespace());
+    else
+      addAssociatedClassesAndNamespaces(Result, E.getAsType());
+  }
+}
+
 // Add the associated classes and namespaces for argument-dependent lookup
 // with an argument of class type (C++ [basic.lookup.argdep]p2).
 static void
@@ -2966,6 +2989,9 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result,
   // Just silently ignore anything whose name is __va_list_tag.
   if (Class->getDeclName() == Result.S.VAListTagName)
     return;
+
+  if (Class->hasExplicitlySpecifiedAssociatedEntities())
+    return addExplicitlySpecifiedAssociatedEntities(Result, Class);
 
   // C++ [basic.lookup.argdep]p2:
   //   [...]

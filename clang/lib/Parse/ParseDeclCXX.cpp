@@ -11,12 +11,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/PrettyDeclStackTrace.h"
 #include "clang/Basic/AttributeCommonInfo.h"
 #include "clang/Basic/Attributes.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/OperatorKinds.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/TargetInfo.h"
@@ -31,6 +33,8 @@
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/SemaCodeCompletion.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/TimeProfiler.h"
 #include <optional>
 
@@ -2049,19 +2053,15 @@ void Parser::ParseClassSpecifier(tok::TokenKind TagTokKind,
               NextToken().is(tok::kw_alignas) ||
               NextToken().isRegularKeywordAttribute() ||
               isCXX11VirtSpecifier(NextToken()) != VirtSpecifiers::VS_None ||
-              isCXX2CTriviallyRelocatableKeyword())) {
+              isCXX2CTriviallyRelocatableKeyword() ||
+              isCXX2CMemberwiseReplaceableKeyword() ||
+              isCXX2CADLSpecifierKeyword())) {
     // We can't tell if this is a definition or reference
     // until we skipped the 'final' and C++11 attribute specifiers.
     TentativeParsingAction PA(*this);
 
     // Skip the 'final', abstract'... keywords.
-    while (isClassCompatibleKeyword()) {
-      if (isCXX2CTriviallyRelocatableKeyword()) {
-        if (!SkipCXX2CTriviallyRelocatableSpecifier())
-          break;
-      } else
-        ConsumeToken();
-    }
+    SkipClassSpecifiers();
 
     // Skip C++11 attribute specifiers.
     while (true) {
@@ -2753,11 +2753,99 @@ bool Parser::SkipCXX2CMemberwiseReplaceableSpecifier() {
   return true;
 }
 
+bool Parser::isCXX2CADLSpecifierKeyword(Token Tok) const {
+  return getLangOpts().CPlusPlus26 && Tok.is(tok::kw_namespace);
+}
+
+bool Parser::isCXX2CADLSpecifierKeyword() const {
+  return isCXX2CADLSpecifierKeyword(Tok);
+}
+
+bool Parser::SkipCXX2CADLSpecifierKeyword() {
+  assert(isCXX2CADLSpecifierKeyword() && "expected a namespace specifier");
+  if (!NextToken().is(tok::l_paren))
+    return false;
+  ConsumeToken();
+  ConsumeParen(); //
+  return SkipUntil(tok::r_paren, tok::l_brace, StopAtSemi);
+}
+
+void Parser::ParseCXX2CADLSpecifier(
+    AssociatedEntitiesSpecifier &AssociatedEntities) {
+  assert(isCXX2CADLSpecifierKeyword() && "expected a namespace specifier");
+  AssociatedEntities.Range.setBegin(ConsumeToken());
+  BalancedDelimiterTracker T(*this, tok::l_paren);
+  if (T.expectAndConsume())
+    return;
+
+  auto ParseNamespaceOrType = [&] {
+    if (isTypeIdUnambiguously()) {
+      SourceLocation Loc = Tok.getLocation();
+      TypeResult Ty = ParseTypeName(
+          /*Range=*/nullptr, DeclaratorContext::TypeName);
+      if (Ty.isInvalid()) {
+        SkipUntil(tok::comma, StopAtSemi);
+        return;
+      }
+      SourceLocation EllipsisLoc;
+      TryConsumeToken(tok::ellipsis, EllipsisLoc);
+      AssociatedEntities.Entities.push_back(
+          Actions.ActOnAssociatedEntitySpecifier(Loc, Ty, EllipsisLoc));
+      return;
+    }
+    CXXScopeSpec SS;
+    if (ParseOptionalCXXScopeSpecifier(SS, /*ObjectType=*/nullptr,
+                                       /*ObjectHasErrors=*/false,
+                                       /*EnteringContext=*/false,
+                                       /*MayBePseudoDestructor=*/nullptr,
+                                       /*IsTypename=*/false,
+                                       /*LastII=*/nullptr,
+                                       /*OnlyNamespace=*/true))
+      return;
+
+    if (Tok.is(tok::annot_non_type)) {
+      NamedDecl *ND = getNonTypeAnnotation(Tok);
+      SourceLocation Loc = ConsumeAnnotationToken();
+      if (llvm::isa<NamespaceDecl, NamespaceAliasDecl>(ND)) {
+        AssociatedEntities.Entities.push_back(
+            Actions.ActOnAssociatedEntitySpecifier(Loc, ND));
+        return;
+      }
+    }
+
+    if (!Tok.is(tok::identifier)) {
+      Diag(Tok.getLocation(),
+           diag::err_associated_entities_expected_type_or_namespace);
+      SkipUntil(tok::comma, tok::r_paren, StopBeforeMatch);
+      return;
+    }
+
+    IdentifierInfo *II = Tok.getIdentifierInfo();
+    SourceLocation Loc = ConsumeToken();
+    AssociatedEntities.Entities.push_back(
+        Actions.ActOnAssociatedEntitySpecifier(getCurScope(), SS, Loc, II,
+                                               SourceLocation()));
+  };
+
+  while (true) {
+    if (Tok.is(tok::r_paren))
+      break;
+    ParseNamespaceOrType();
+    if (Tok.is(tok::comma)) {
+      ConsumeToken();
+      continue;
+    }
+  }
+  T.consumeClose();
+  AssociatedEntities.Range.setEnd(T.getCloseLocation());
+}
+
 /// isClassCompatibleKeyword - Determine whether the next token is a C++11
 /// 'final' or Microsoft 'sealed' or 'abstract' contextual keywords.
 bool Parser::isClassCompatibleKeyword(Token Tok) const {
   if (isCXX2CTriviallyRelocatableKeyword(Tok) ||
-      isCXX2CMemberwiseReplaceableKeyword(Tok))
+      isCXX2CMemberwiseReplaceableKeyword(Tok) ||
+      isCXX2CADLSpecifierKeyword(Tok))
     return true;
   VirtSpecifiers::Specifier Specifier = isCXX11VirtSpecifier(Tok);
   return Specifier == VirtSpecifiers::VS_Final ||
@@ -2768,6 +2856,23 @@ bool Parser::isClassCompatibleKeyword(Token Tok) const {
 
 bool Parser::isClassCompatibleKeyword() const {
   return isClassCompatibleKeyword(Tok);
+}
+
+bool Parser::SkipClassSpecifiers() {
+  while (isClassCompatibleKeyword()) {
+    if (isCXX2CTriviallyRelocatableKeyword() &&
+        !SkipCXX2CTriviallyRelocatableSpecifier())
+      return false;
+    else if (isCXX2CMemberwiseReplaceableKeyword() &&
+             !SkipCXX2CMemberwiseReplaceableSpecifier())
+      return false;
+    else if (isCXX2CADLSpecifierKeyword()) {
+      if (!SkipCXX2CADLSpecifierKeyword())
+        return false;
+    } else
+      ConsumeToken();
+  }
+  return true;
 }
 
 /// Parse a C++ member-declarator up to, but not including, the optional
@@ -3645,14 +3750,9 @@ ExprResult Parser::ParseCXXMemberInitializer(Decl *D, bool IsFunction,
 void Parser::SkipCXXMemberSpecification(SourceLocation RecordLoc,
                                         SourceLocation AttrFixitLoc,
                                         unsigned TagType, Decl *TagDecl) {
-  // Skip the optional 'final' keyword.
-  while (isClassCompatibleKeyword()) {
-    if (isCXX2CTriviallyRelocatableKeyword()) {
-      if (!SkipCXX2CTriviallyRelocatableSpecifier())
-        return;
-    } else
-      ConsumeToken();
-  }
+
+  if (!SkipClassSpecifiers())
+    return;
 
   // Diagnose any C++11 attributes after 'final' keyword.
   // We deliberately discard these attributes.
@@ -3879,9 +3979,11 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
   bool IsAbstract = false;
   TriviallyRelocatableSpecifier TriviallyRelocatable;
   MemberwiseReplaceableSpecifier MemberwiseReplacable;
+  std::optional<AssociatedEntitiesSpecifier> AssociatedEntities;
 
   // Parse the optional 'final' keyword.
-  if (getLangOpts().CPlusPlus && Tok.is(tok::identifier)) {
+  if (getLangOpts().CPlusPlus &&
+      Tok.isOneOf(tok::identifier, tok::kw_namespace)) {
     while (true) {
       VirtSpecifiers::Specifier Specifier = isCXX11VirtSpecifier(Tok);
       if (Specifier == VirtSpecifiers::VS_None) {
@@ -3906,6 +4008,18 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
             ParseOptionalCXX2CMemberwiseReplaceableSpecifier(
                 MemberwiseReplacable);
           }
+          continue;
+        } else if (isCXX2CADLSpecifierKeyword(Tok)) {
+          if (AssociatedEntities.has_value()) {
+            auto Skipped = Tok;
+            SkipCXX2CADLSpecifierKeyword();
+            Diag(Skipped, diag::err_duplicate_associated_entities_specifier)
+                << AssociatedEntities.value().Range;
+            continue;
+          }
+          AssociatedEntitiesSpecifier Spec;
+          ParseCXX2CADLSpecifier(Spec);
+          AssociatedEntities.emplace(Spec);
           continue;
         } else {
           break;
@@ -3947,7 +4061,8 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
         Diag(FinalLoc, diag::ext_warn_gnu_final);
     }
     assert((FinalLoc.isValid() || AbstractLoc.isValid() ||
-            TriviallyRelocatable.isSet() || MemberwiseReplacable.isSet()) &&
+            TriviallyRelocatable.isSet() || MemberwiseReplacable.isSet() ||
+            AssociatedEntities.has_value()) &&
            "not a class definition");
 
     // Parse any C++11 attributes after 'final' keyword.
@@ -4022,7 +4137,8 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
   if (TagDecl)
     Actions.ActOnStartCXXMemberDeclarations(
         getCurScope(), TagDecl, FinalLoc, IsFinalSpelledSealed, IsAbstract,
-        TriviallyRelocatable, MemberwiseReplacable, T.getOpenLocation());
+        TriviallyRelocatable, MemberwiseReplacable, AssociatedEntities,
+        T.getOpenLocation());
 
   // C++ 11p3: Members of a class defined with the keyword class are private
   // by default. Members of a class defined with the keywords struct or union

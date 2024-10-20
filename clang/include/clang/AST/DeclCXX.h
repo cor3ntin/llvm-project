@@ -39,6 +39,7 @@
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/Casting.h"
@@ -148,6 +149,54 @@ using TriviallyRelocatableSpecifier = BasicMemberwiseSpecifier<
     MemberwiseRelocatableOrReplaceableKind::Relocatable>;
 using MemberwiseReplaceableSpecifier = BasicMemberwiseSpecifier<
     MemberwiseRelocatableOrReplaceableKind::Replaceable>;
+
+class AssociatedEntity {
+  SourceLocation Loc;
+  llvm::PointerUnion<NamedDecl *, TypeSourceInfo *> Entity;
+  SourceLocation EllipsisLoc;
+
+public:
+  AssociatedEntity(SourceLocation Loc, NamedDecl *Entity,
+                   SourceLocation EllipsisLoc = {})
+      : Loc(Loc), Entity(Entity), EllipsisLoc(EllipsisLoc) {}
+
+  AssociatedEntity(SourceLocation Loc, TypeSourceInfo *Entity,
+                   SourceLocation EllipsisLoc = {})
+      : Loc(Loc), Entity(Entity), EllipsisLoc(EllipsisLoc) {}
+
+  bool isValid() const { return !Entity.isNull(); }
+
+  bool isNamespace() const {
+    return llvm::isa_and_present<NamespaceDecl, NamespaceAliasDecl>(
+        Entity.dyn_cast<NamedDecl *>());
+  }
+
+  NamespaceDecl *getNamespace() const;
+
+  bool isDependent() const {
+    TypeSourceInfo *TI = Entity.dyn_cast<TypeSourceInfo *>();
+    return TI && TI->getType()->isDependentType();
+  }
+
+  QualType getAsType() const {
+    assert(!isNamespace() && "Not a record type");
+    TypeSourceInfo *TI = Entity.get<TypeSourceInfo *>();
+    if (TI) {
+      return TI->getType();
+    }
+    return QualType();
+  }
+
+  const TypeSourceInfo *getTypeSourceInfo() const {
+    return Entity.get<TypeSourceInfo *>();
+  };
+};
+
+class AssociatedEntitiesSpecifier {
+public:
+  SourceRange Range;
+  llvm::SmallVector<AssociatedEntity> Entities;
+};
 
 /// Represents a base class of a C++ class.
 ///
@@ -374,6 +423,8 @@ private:
     TriviallyRelocatableSpecifier TriviallyRelocatable;
 
     MemberwiseReplaceableSpecifier MemberwiseReplaceable;
+
+    AssociatedEntitiesSpecifier *AssociatedEntities = nullptr;
 
     DefinitionData(CXXRecordDecl *D);
 
@@ -632,6 +683,19 @@ public:
   }
 
   unsigned getODRHash() const;
+
+  void
+  setExplicitlyAssociatedEntities(llvm::ArrayRef<AssociatedEntity> Entities);
+  bool hasExplicitlySpecifiedAssociatedEntities() const {
+    return hasDefinition() && data().AssociatedEntities != nullptr;
+  }
+
+  llvm::ArrayRef<AssociatedEntity>
+  getExplicitlySpecifiedAssociatedEntities() const {
+    if (!hasExplicitlySpecifiedAssociatedEntities())
+      return {};
+    return data().AssociatedEntities->Entities;
+  }
 
   /// Sets the base classes of this struct or class.
   void setBases(CXXBaseSpecifier const * const *Bases, unsigned NumBases);

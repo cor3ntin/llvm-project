@@ -2696,6 +2696,10 @@ def note_trivially_relocatable: Note<
   "has a virtual base class %1|"
   "has a deleted move constructor or assignment operator}0">;
 
+
+def err_associated_entity_invalid: Error<
+  "%0 is neither a type nor a namespace an cannot be used as associated entity">;
+
 // C++11 attributes
 def err_repeat_attribute : Error<"%0 attribute cannot be repeated">;
 

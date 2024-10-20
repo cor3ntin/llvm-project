@@ -16,6 +16,7 @@
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/ASTMutationListener.h"
 #include "clang/AST/DeclBase.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprConcepts.h"
@@ -25,6 +26,7 @@
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/TypeVisitor.h"
 #include "clang/Basic/LangOptions.h"
+#include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Stack.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/DeclSpec.h"
@@ -3314,6 +3316,40 @@ bool Sema::SubstDefaultArgument(
   return false;
 }
 
+bool Sema::SubstExplicitAssociatedEntities(
+    CXXRecordDecl *Instantiation, CXXRecordDecl *Pattern,
+    const MultiLevelTemplateArgumentList &TemplateArgs) {
+
+  if (!Pattern->hasExplicitlySpecifiedAssociatedEntities())
+    return false;
+
+  bool Invalid = false;
+  SmallVector<AssociatedEntity, 4> InstantiatedAssociatedEntities;
+  for (auto &Entity : Pattern->getExplicitlySpecifiedAssociatedEntities()) {
+    if (!Entity.isDependent()) {
+      InstantiatedAssociatedEntities.push_back(Entity);
+      continue;
+    }
+    SourceLocation Loc =
+        Entity.getTypeSourceInfo()->getTypeLoc().getSourceRange().getBegin();
+    TypeSourceInfo *Substituted = SubstType(
+        const_cast<TypeSourceInfo *>(Entity.getTypeSourceInfo()), TemplateArgs,
+        Entity.getTypeSourceInfo()->getTypeLoc().getSourceRange().getBegin(),
+        DeclarationName());
+    if (!Substituted) {
+      Invalid = true;
+      continue;
+    }
+    // TODO : check the type
+    InstantiatedAssociatedEntities.push_back(
+        AssociatedEntity(Loc, Substituted));
+  }
+  if (!Invalid)
+    Instantiation->setExplicitlyAssociatedEntities(
+        InstantiatedAssociatedEntities);
+  return Invalid;
+}
+
 bool
 Sema::SubstBaseSpecifiers(CXXRecordDecl *Instantiation,
                           CXXRecordDecl *Pattern,
@@ -3539,6 +3575,8 @@ Sema::InstantiateClass(SourceLocation PointOfInstantiation,
 
   // FIXME: This loses the as-written tag kind for an explicit instantiation.
   Instantiation->setTagKind(Pattern->getTagKind());
+
+  SubstExplicitAssociatedEntities(Instantiation, Pattern, TemplateArgs);
 
   // Do substitution on the base class specifiers.
   if (SubstBaseSpecifiers(Instantiation, Pattern, TemplateArgs))

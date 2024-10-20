@@ -37,6 +37,7 @@
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator_range.h"
@@ -48,6 +49,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 
 using namespace clang;
 
@@ -71,6 +73,14 @@ void LazyASTUnresolvedSet::getFromExternalSource(ASTContext &C) const {
     I.setDecl(
         cast<NamedDecl>(Source->GetExternalDecl(GlobalDeclID(I.getDeclID()))));
   Impl.Decls.setLazy(false);
+}
+
+NamespaceDecl *AssociatedEntity::getNamespace() const {
+  assert(isNamespace() && "not a namespace");
+  NamedDecl *Named = Entity.get<NamedDecl *>();
+  if (NamespaceAliasDecl *A = dyn_cast<NamespaceAliasDecl>(Named))
+    return A->getNamespace();
+  return cast<NamespaceDecl>(Named);
 }
 
 CXXRecordDecl::DefinitionData::DefinitionData(CXXRecordDecl *D)
@@ -496,6 +506,13 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
   }
 
   data().IsParsingBaseSpecifiers = false;
+}
+
+void CXXRecordDecl::setExplicitlyAssociatedEntities(
+    llvm::ArrayRef<AssociatedEntity> Entities) {
+  ASTContext &C = getASTContext();
+  data().AssociatedEntities = new (C) AssociatedEntitiesSpecifier;
+  llvm::copy(Entities, std::back_inserter(data().AssociatedEntities->Entities));
 }
 
 unsigned CXXRecordDecl::getODRHash() const {

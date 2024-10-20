@@ -3180,8 +3180,14 @@ private:
       MemberwiseReplaceableSpecifier &MRS);
   bool SkipCXX2CMemberwiseReplaceableSpecifier();
 
+  bool isCXX2CADLSpecifierKeyword(Token Tok) const;
+  bool isCXX2CADLSpecifierKeyword() const;
+  bool SkipCXX2CADLSpecifierKeyword();
+  void ParseCXX2CADLSpecifier(AssociatedEntitiesSpecifier &AssociatedEntities);
+
   bool isClassCompatibleKeyword(Token Tok) const;
   bool isClassCompatibleKeyword() const;
+  bool SkipClassSpecifiers();
 
   /// DeclaratorScopeObj - RAII object used in Parser::ParseDirectDeclarator to
   /// enter a new C++ declarator scope and exit it when the function is

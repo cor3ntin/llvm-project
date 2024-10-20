@@ -18,10 +18,11 @@
 #include "clang/AST/ASTFwd.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/AttrIterator.h"
-#include "clang/AST/CharUnits.h"
-#include "clang/AST/DeclBase.h"
 #include "clang/AST/Availability.h"
+#include "clang/AST/CharUnits.h"
 #include "clang/AST/ComparisonCategories.h"
+#include "clang/AST/Decl.h"
+#include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DeclarationName.h"
@@ -3991,6 +3992,16 @@ public:
   MemberwiseReplaceableSpecifier
   ActOnMemberwiseReplaceableSpecifier(SourceLocation Loc);
 
+  AssociatedEntity ActOnAssociatedEntitySpecifier(Scope *S, CXXScopeSpec &SS,
+                                                  SourceLocation IdLoc,
+                                                  IdentifierInfo *II,
+                                                  SourceLocation EllipsisLoc);
+  AssociatedEntity ActOnAssociatedEntitySpecifier(SourceLocation Loc,
+                                                  TypeResult Ty,
+                                                  SourceLocation EllipsisLoc);
+  AssociatedEntity ActOnAssociatedEntitySpecifier(SourceLocation Loc,
+                                                  NamedDecl *D);
+
   /// ActOnStartCXXMemberDeclarations - Invoked when we have parsed a
   /// C++ record definition's base-specifiers clause and are starting its
   /// member declarations.
@@ -3999,6 +4010,7 @@ public:
       bool IsFinalSpelledSealed, bool IsAbstract,
       TriviallyRelocatableSpecifier TriviallyRelocatable,
       MemberwiseReplaceableSpecifier MemberwiseReplaceable,
+      std::optional<AssociatedEntitiesSpecifier> AssociatedEntities,
       SourceLocation LBraceLoc);
 
   /// ActOnTagFinishDefinition - Invoked once we have finished parsing
@@ -13408,6 +13420,10 @@ public:
   ExprResult
   SubstInitializer(Expr *E, const MultiLevelTemplateArgumentList &TemplateArgs,
                    bool CXXDirectInit);
+
+  bool SubstExplicitAssociatedEntities(
+      CXXRecordDecl *Instantiation, CXXRecordDecl *Pattern,
+      const MultiLevelTemplateArgumentList &TemplateArgs);
 
   /// Perform substitution on the base class specifiers of the
   /// given class template specialization.

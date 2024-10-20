@@ -1052,6 +1052,12 @@ def err_duplicate_class_virt_specifier : Error<
 def err_duplicate_class_memberwise_specifier : Error<
   "class already marked %select{'memberwise_trivially_relocatable'|'memberwise_replaceable'}0">;
 
+def err_duplicate_associated_entities_specifier : Error<
+  "associated entities already specified">;
+
+def err_associated_entities_expected_type_or_namespace : Error<
+  "expected a type or a namespace in associated entity specifier">;
+
 def err_duplicate_virt_specifier : Error<
   "class member already marked '%0'">;
 

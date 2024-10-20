@@ -24,8 +24,8 @@
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
-#include "clang/AST/NonTrivialTypeVisitor.h"
 #include "clang/AST/MangleNumberingContext.h"
+#include "clang/AST/NonTrivialTypeVisitor.h"
 #include "clang/AST/Randstruct.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/Type.h"
@@ -47,6 +47,7 @@
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaCUDA.h"
 #include "clang/Sema/SemaHLSL.h"
 #include "clang/Sema/SemaInternal.h"
@@ -18037,10 +18038,56 @@ Sema::ActOnMemberwiseReplaceableSpecifier(SourceLocation Loc) {
   return {Loc};
 }
 
+AssociatedEntity Sema::ActOnAssociatedEntitySpecifier(SourceLocation Loc,
+                                                      NamedDecl *D) {
+  if (!isa<TypeDecl, NamespaceDecl, NamespaceAliasDecl>(D)) {
+    Diag(Loc, diag::err_associated_entity_invalid) << D;
+    D = nullptr;
+  }
+  return AssociatedEntity(Loc, D, SourceLocation());
+}
+
+AssociatedEntity
+Sema::ActOnAssociatedEntitySpecifier(clang::Scope *S, CXXScopeSpec &SS,
+                                     SourceLocation IdLoc, IdentifierInfo *II,
+                                     SourceLocation EllipsisLoc) {
+  LookupResult R(*this, II, IdLoc, LookupNestedNameSpecifierName);
+  LookupParsedName(R, S, &SS, /*ObjectType=*/QualType());
+
+  if (R.isAmbiguous()) {
+    return AssociatedEntity(IdLoc, (NamedDecl *)nullptr, EllipsisLoc);
+  }
+  if (R.empty()) {
+    // Diag
+    return AssociatedEntity(IdLoc, (NamedDecl *)nullptr, EllipsisLoc);
+  }
+
+  NamedDecl *ND = R.getAsSingle<NamedDecl>();
+  assert((isa<TypeDecl, NamespaceDecl, NamespaceAliasDecl>(ND)) &&
+         "Expected a type Or Alias");
+  return AssociatedEntity(IdLoc, ND, EllipsisLoc);
+}
+
+AssociatedEntity
+Sema::ActOnAssociatedEntitySpecifier(SourceLocation Loc, TypeResult Ty,
+                                     SourceLocation EllipsisLoc) {
+  TypeSourceInfo *TSI = nullptr;
+  QualType T = GetTypeFromParser(Ty.get(), &TSI);
+  assert(TSI);
+  if (T->isDependentType())
+    return AssociatedEntity(Loc, TSI, EllipsisLoc);
+  NamedDecl *ND = T->getAsTagDecl();
+  if (!ND) {
+    // Error
+  }
+  return AssociatedEntity(Loc, ND, EllipsisLoc);
+}
+
 void Sema::ActOnStartCXXMemberDeclarations(
     Scope *S, Decl *TagD, SourceLocation FinalLoc, bool IsFinalSpelledSealed,
     bool IsAbstract, TriviallyRelocatableSpecifier TriviallyRelocatable,
     MemberwiseReplaceableSpecifier MemberwiseReplaceable,
+    std::optional<AssociatedEntitiesSpecifier> AssociatedEntities,
     SourceLocation LBraceLoc) {
   AdjustDeclIfTemplate(TagD);
   CXXRecordDecl *Record = cast<CXXRecordDecl>(TagD);
@@ -18065,6 +18112,10 @@ void Sema::ActOnStartCXXMemberDeclarations(
 
   if (MemberwiseReplaceable.isSet() && !Record->isInvalidDecl())
     Record->setMemberwiseReplaceableSpecifier(MemberwiseReplaceable);
+
+  if (AssociatedEntities.has_value() && !Record->isInvalidDecl()) {
+    Record->setExplicitlyAssociatedEntities(AssociatedEntities->Entities);
+  }
 
   // C++ [class]p2:
   //   [...] The class-name is also inserted into the scope of the
