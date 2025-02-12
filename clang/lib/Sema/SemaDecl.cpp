@@ -7727,18 +7727,22 @@ NamedDecl *Sema::ActOnVariableDeclarator(
           }
           if (FunctionOrMethod) {
             // C++ [class.static.data]p5: A local class shall not have static
-            // data members.
-            Diag(D.getIdentifierLoc(),
-                 diag::err_static_data_member_not_allowed_in_local_class)
-                << Name << RD->getDeclName() << RD->getTagKind();
+            // data members. C++26 drops this restriction.
+            if (!getLangOpts().CPlusPlus26) {
+              Diag(D.getIdentifierLoc(),
+                   diag::err_static_data_member_not_allowed_in_local_class)
+                  << Name << RD->getDeclName() << RD->getTagKind();
+            }
           } else if (AnonStruct) {
             // C++ [class.static.data]p4: Unnamed classes and classes contained
             // directly or indirectly within unnamed classes shall not contain
-            // static data members.
-            Diag(D.getIdentifierLoc(),
-                 diag::err_static_data_member_not_allowed_in_anon_struct)
-                << Name << AnonStruct->getTagKind();
-            Invalid = true;
+            // static data members. C++26 drops this restriction.
+            if (!getLangOpts().CPlusPlus26) {
+              Diag(D.getIdentifierLoc(),
+                   diag::err_static_data_member_not_allowed_in_anon_struct)
+                  << Name << AnonStruct->getTagKind();
+              Invalid = true;
+            }
           } else if (RD->isUnion()) {
             // C++98 [class.union]p1: If a union contains a static data member,
             // the program is ill-formed. C++11 drops this restriction.

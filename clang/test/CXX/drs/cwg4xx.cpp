@@ -1,10 +1,10 @@
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++98 %s -verify=expected,cxx98-14,cxx98-17,cxx98 -fexceptions -fcxx-exceptions -pedantic-errors
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++11 %s -verify=expected,cxx98-14,cxx98-17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++14 %s -verify=expected,cxx98-14,cxx98-17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++17 %s -verify=expected,since-cxx17,cxx98-17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++20 %s -verify=expected,since-cxx20,since-cxx17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++23 %s -verify=expected,since-cxx20,since-cxx17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
-// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++2c %s -verify=expected,since-cxx20,since-cxx17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++98 %s -verify=expected,cxx98-14,cxx98-17,cxx98,before-cxx26 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++11 %s -verify=expected,cxx98-14,cxx98-17,since-cxx11,before-cxx26 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++14 %s -verify=expected,cxx98-14,cxx98-17,since-cxx11,before-cxx26 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++17 %s -verify=expected,since-cxx17,cxx98-17,since-cxx11,before-cxx26 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++20 %s -verify=expected,since-cxx20,since-cxx17,since-cxx11,before-cxx26 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++23 %s -verify=expected,since-cxx20,since-cxx17,since-cxx11,before-cxx26 -fexceptions -fcxx-exceptions -pedantic-errors
+// RUN: env ASAN_OPTIONS=detect_stack_use_after_return=0 %clang_cc1 -std=c++2c %s -verify=expected,since-cxx26,since-cxx20,since-cxx17,since-cxx11 -fexceptions -fcxx-exceptions -pedantic-errors
 
 #if __cplusplus == 199711L
 #define static_assert(...) __extension__ _Static_assert(__VA_ARGS__)
@@ -152,14 +152,20 @@ namespace cwg405 { // cwg405: 2.7
 
 namespace cwg406 { // cwg406: 2.9
   typedef struct {
-    static int n;
-    // expected-error@-1 {{static data member 'n' not allowed in anonymous struct}}
-  } A;
+    static int n; // #cwg406-A-n
+    // before-cxx26-error@-1 {{static data member 'n' not allowed in anonymous struct}}
+    // since-cxx26-error@-3 {{anonymous non-C-compatible type given name for linkage purposes by typedef declaration; add a tag name here}}
+    //   since-cxx26-note@#cwg406-A-n {{type is not C-compatible due to this member declaration}}
+    //   since-cxx26-note@#cwg406-A {{type is given name 'A' for linkage purposes by this typedef declaration}}
+  } A;  // #cwg406-A
   typedef union {
-    static int n;
-    // expected-error@-1 {{static data member 'n' not allowed in anonymous union}}
-  } B;
-} // namespace cwg406
+    static int n; // #cwg406-B-n
+    // before-cxx26-error@-1 {{static data member 'n' not allowed in anonymous union}}
+    // since-cxx26-error@-3 {{anonymous non-C-compatible type given name for linkage purposes by typedef declaration; add a tag name here}}
+    //   since-cxx26-note@#cwg406-B-n {{type is not C-compatible due to this member declaration}}
+    //   since-cxx26-note@#cwg406-B {{type is given name 'B' for linkage purposes by this typedef declaration}}
+  } B; // #cwg406-B
+}
 
 namespace cwg407 { // cwg407: 3.8
                   // NB: reused by cwg1894 and cwg2199
