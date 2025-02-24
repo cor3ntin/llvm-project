@@ -3995,9 +3995,7 @@ public:
   void ActOnTagFinishDefinition(Scope *S, Decl *TagDecl,
                                 SourceRange BraceRange);
 
-  void CheckCXX2CTriviallyRelocatable(CXXRecordDecl *D);
-
-  void CheckCXX2CReplaceable(CXXRecordDecl *D);
+  void CheckCXX2CRelocatableAndReplaceable(CXXRecordDecl *D);
 
   void ActOnTagFinishSkippedDefinition(SkippedDefinitionContext Context);
 
