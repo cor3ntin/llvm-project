@@ -1726,15 +1726,57 @@ bool FoldExpandedConstraint::AreCompatibleForSubsumption(
   return false;
 }
 
-NormalForm clang::makeCNF(const NormalizedConstraint &Normalized) {
+template <> struct llvm::DenseMapInfo<llvm::FoldingSetNodeID> {
+  static FoldingSetNodeID getEmptyKey() { return {}; }
+
+  static FoldingSetNodeID getTombstoneKey() {
+    FoldingSetNodeID id;
+    for (size_t i = 0; i < sizeof(id) / sizeof(unsigned); ++i) {
+      id.AddInteger(std::numeric_limits<unsigned>::max());
+    }
+    return id;
+  }
+
+  static unsigned getHashValue(const FoldingSetNodeID &Val) {
+    return Val.ComputeHash();
+  }
+
+  static bool isEqual(const FoldingSetNodeID &LHS,
+                      const FoldingSetNodeID &RHS) {
+    return LHS == RHS;
+  }
+};
+
+AtomicConstraintCache::AtomicConstraintCache(const ASTContext &Ctx)
+    : Ctx(Ctx) {}
+
+const clang::AtomicConstraint *
+AtomicConstraintCache::find(AtomicConstraint *Ori) {
+  auto &Elems = AtomicMap[Ori->ConstraintExpr];
+
+  llvm::FoldingSetNodeID ID;
+  const auto &Mapping = Ori->ParameterMapping;
+  ID.AddBoolean(Mapping.has_value());
+  if (Mapping) {
+    for (unsigned I = 0, S = Mapping->size(); I < S; ++I) {
+      Ctx.getCanonicalTemplateArgument((*Mapping)[I].getArgument())
+          .Profile(ID, Ctx);
+    }
+  }
+  const auto & [It, _] = Elems.try_emplace(ID, Ori);
+  return It->getSecond();
+}
+
+NormalForm clang::makeCNF(AtomicConstraintCache &Cache,
+                          const NormalizedConstraint &Normalized) {
   if (Normalized.isAtomic())
-    return {{Normalized.getAtomicConstraint()}};
+    return {{Cache.find(Normalized.getAtomicConstraint())}};
 
   else if (Normalized.isFoldExpanded())
     return {{Normalized.getFoldExpandedConstraint()}};
 
-  NormalForm LCNF = makeCNF(Normalized.getLHS());
-  NormalForm RCNF = makeCNF(Normalized.getRHS());
+  NormalForm LCNF = makeCNF(Cache, Normalized.getLHS());
+  NormalForm RCNF = makeCNF(Cache, Normalized.getRHS());
   if (Normalized.getCompoundKind() == NormalizedConstraint::CCK_Conjunction) {
     LCNF.reserve(LCNF.size() + RCNF.size());
     while (!RCNF.empty())
@@ -1753,20 +1795,21 @@ NormalForm clang::makeCNF(const NormalizedConstraint &Normalized) {
                 std::back_inserter(Combined));
       std::copy(RDisjunction.begin(), RDisjunction.end(),
                 std::back_inserter(Combined));
-      Res.emplace_back(Combined);
+      Res.emplace_back(std::move(Combined));
     }
   return Res;
 }
 
-NormalForm clang::makeDNF(const NormalizedConstraint &Normalized) {
+NormalForm clang::makeDNF(AtomicConstraintCache &Cache,
+                          const NormalizedConstraint &Normalized) {
   if (Normalized.isAtomic())
-    return {{Normalized.getAtomicConstraint()}};
+    return {{Cache.find(Normalized.getAtomicConstraint())}};
 
   else if (Normalized.isFoldExpanded())
     return {{Normalized.getFoldExpandedConstraint()}};
 
-  NormalForm LDNF = makeDNF(Normalized.getLHS());
-  NormalForm RDNF = makeDNF(Normalized.getRHS());
+  NormalForm LDNF = makeDNF(Cache, Normalized.getLHS());
+  NormalForm RDNF = makeDNF(Cache, Normalized.getRHS());
   if (Normalized.getCompoundKind() == NormalizedConstraint::CCK_Disjunction) {
     LDNF.reserve(LDNF.size() + RDNF.size());
     while (!RDNF.empty())
@@ -1785,7 +1828,7 @@ NormalForm clang::makeDNF(const NormalizedConstraint &Normalized) {
                 std::back_inserter(Combined));
       std::copy(RConjunction.begin(), RConjunction.end(),
                 std::back_inserter(Combined));
-      Res.emplace_back(Combined);
+      Res.emplace_back(std::move(Combined));
     }
   }
   return Res;
@@ -1842,11 +1885,10 @@ bool Sema::IsAtLeastAsConstrained(NamedDecl *D1,
     }
   }
 
-  if (clang::subsumes(
-          *this, D1, AC1, D2, AC2, Result,
-          [this](const AtomicConstraint &A, const AtomicConstraint &B) {
-            return A.subsumes(Context, B);
-          }))
+  if (clang::subsumes(*this, Context, D1, AC1, D2, AC2, Result,
+                      [](const AtomicConstraint &A, const AtomicConstraint &B) {
+                        return &A == &B;
+                      }))
     return true;
   SubsumptionCache.try_emplace(Key, Result);
   return false;
@@ -1861,10 +1903,8 @@ bool Sema::MaybeEmitAmbiguousAtomicConstraintsDiagnostic(NamedDecl *D1,
   if (AC1.empty() || AC2.empty())
     return false;
 
-  auto NormalExprEvaluator =
-      [this] (const AtomicConstraint &A, const AtomicConstraint &B) {
-        return A.subsumes(Context, B);
-      };
+  auto NormalExprEvaluator = [](const AtomicConstraint &A,
+                                const AtomicConstraint &B) { return &A == &B; };
 
   const Expr *AmbiguousAtomic1 = nullptr, *AmbiguousAtomic2 = nullptr;
   auto IdenticalExprEvaluator =
@@ -1894,14 +1934,17 @@ bool Sema::MaybeEmitAmbiguousAtomicConstraintsDiagnostic(NamedDecl *D1,
     auto *Normalized1 = getNormalizedAssociatedConstraints(D1, AC1);
     if (!Normalized1)
       return false;
-    const NormalForm DNF1 = makeDNF(*Normalized1);
-    const NormalForm CNF1 = makeCNF(*Normalized1);
+
+    AtomicConstraintCache Cache(getASTContext());
+
+    const NormalForm DNF1 = makeDNF(Cache, *Normalized1);
+    const NormalForm CNF1 = makeCNF(Cache, *Normalized1);
 
     auto *Normalized2 = getNormalizedAssociatedConstraints(D2, AC2);
     if (!Normalized2)
       return false;
-    const NormalForm DNF2 = makeDNF(*Normalized2);
-    const NormalForm CNF2 = makeCNF(*Normalized2);
+    const NormalForm DNF2 = makeDNF(Cache, *Normalized2);
+    const NormalForm CNF2 = makeCNF(Cache, *Normalized2);
 
     bool Is1AtLeastAs2Normally =
         clang::subsumes(DNF1, CNF2, NormalExprEvaluator);

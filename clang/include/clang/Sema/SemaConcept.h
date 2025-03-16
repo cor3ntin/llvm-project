@@ -14,9 +14,10 @@
 #define LLVM_CLANG_SEMA_SEMACONCEPT_H
 #include "clang/AST/ASTConcept.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/AST/Expr.h"
 #include "clang/AST/DeclTemplate.h"
+#include "clang/AST/Expr.h"
 #include "clang/Basic/SourceLocation.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
 #include <optional>
@@ -80,23 +81,36 @@ struct alignas(ConstraintAlignment) AtomicConstraint {
 
 struct alignas(ConstraintAlignment) FoldExpandedConstraint;
 
-using NormalFormConstraint =
-    llvm::PointerUnion<AtomicConstraint *, FoldExpandedConstraint *>;
+using NormalFormConstraint = llvm::PointerUnion<const AtomicConstraint *,
+                                                const FoldExpandedConstraint *>;
 struct NormalizedConstraint;
 using NormalForm =
     llvm::SmallVector<llvm::SmallVector<NormalFormConstraint, 2>, 4>;
+
+class AtomicConstraintCache {
+  llvm::DenseMap<const Expr *, llvm::SmallDenseMap<llvm::FoldingSetNodeID,
+                                                   const AtomicConstraint *>>
+      AtomicMap;
+  const ASTContext &Ctx;
+
+public:
+  AtomicConstraintCache(const ASTContext &);
+  const AtomicConstraint *find(AtomicConstraint *);
+};
 
 // A constraint is in conjunctive normal form when it is a conjunction of
 // clauses where each clause is a disjunction of atomic constraints. For atomic
 // constraints A, B, and C, the constraint A  ∧ (B  ∨ C) is in conjunctive
 // normal form.
-NormalForm makeCNF(const NormalizedConstraint &Normalized);
+NormalForm makeCNF(AtomicConstraintCache &,
+                   const NormalizedConstraint &Normalized);
 
 // A constraint is in disjunctive normal form when it is a disjunction of
 // clauses where each clause is a conjunction of atomic constraints. For atomic
 // constraints A, B, and C, the disjunctive normal form of the constraint A
 //  ∧ (B  ∨ C) is (A  ∧ B)  ∨ (A  ∧ C).
-NormalForm makeDNF(const NormalizedConstraint &Normalized);
+NormalForm makeDNF(AtomicConstraintCache &,
+                   const NormalizedConstraint &Normalized);
 
 struct alignas(ConstraintAlignment) NormalizedConstraintPair;
 
@@ -171,7 +185,7 @@ struct alignas(ConstraintAlignment) FoldExpandedConstraint {
       : Kind(K), Constraint(std::move(C)), Pattern(Pattern) {};
 
   template <typename AtomicSubsumptionEvaluator>
-  bool subsumes(const FoldExpandedConstraint &Other,
+  bool subsumes(AtomicConstraintCache &, const FoldExpandedConstraint &Other,
                 const AtomicSubsumptionEvaluator &E) const;
 
   static bool AreCompatibleForSubsumption(const FoldExpandedConstraint &A,
@@ -199,21 +213,22 @@ bool subsumes(const NormalForm &PDNF, const NormalForm &QCNF,
       bool Found = false;
       for (NormalFormConstraint Pia : Pi) {
         for (NormalFormConstraint Qjb : Qj) {
-          if (isa<FoldExpandedConstraint *>(Pia) &&
-              isa<FoldExpandedConstraint *>(Qjb)) {
-            if (cast<FoldExpandedConstraint *>(Pia)->subsumes(
-                    *cast<FoldExpandedConstraint *>(Qjb), E)) {
-              Found = true;
-              break;
-            }
-          } else if (isa<AtomicConstraint *>(Pia) &&
-                     isa<AtomicConstraint *>(Qjb)) {
-            if (E(*cast<AtomicConstraint *>(Pia),
-                  *cast<AtomicConstraint *>(Qjb))) {
+          if (isa<const AtomicConstraint *>(Pia) &&
+              isa<const AtomicConstraint *>(Qjb)) {
+            if (E(*cast<const AtomicConstraint *>(Pia),
+                  *cast<const AtomicConstraint *>(Qjb))) {
               Found = true;
               break;
             }
           }
+          /*else if (isa<const FoldExpandedConstraint *>(Pia) &&
+              isa<const FoldExpandedConstraint *>(Qjb)) {
+            if (cast<const FoldExpandedConstraint *>(Pia)->subsumes(
+                    *cast<const FoldExpandedConstraint *>(Qjb), E)) {
+              Found = true;
+              break;
+            }
+          }*/
         }
         if (Found)
           break;
@@ -226,8 +241,8 @@ bool subsumes(const NormalForm &PDNF, const NormalForm &QCNF,
 }
 
 template <typename AtomicSubsumptionEvaluator>
-bool subsumes(Sema &S, NamedDecl *DP, ArrayRef<const Expr *> P, NamedDecl *DQ,
-              ArrayRef<const Expr *> Q, bool &Subsumes,
+bool subsumes(Sema &S, ASTContext &Ctx, NamedDecl *DP, ArrayRef<const Expr *> P,
+              NamedDecl *DQ, ArrayRef<const Expr *> Q, bool &Subsumes,
               const AtomicSubsumptionEvaluator &E) {
   // C++ [temp.constr.order] p2
   //   In order to determine if a constraint P subsumes a constraint Q, P is
@@ -237,13 +252,16 @@ bool subsumes(Sema &S, NamedDecl *DP, ArrayRef<const Expr *> P, NamedDecl *DQ,
       getNormalizedAssociatedConstraints(S, DP, P);
   if (!PNormalized)
     return true;
-  NormalForm PDNF = makeDNF(*PNormalized);
+
+  AtomicConstraintCache Cache(Ctx);
+
+  NormalForm PDNF = makeDNF(Cache, *PNormalized);
 
   const NormalizedConstraint *QNormalized =
       getNormalizedAssociatedConstraints(S, DQ, Q);
   if (!QNormalized)
     return true;
-  NormalForm QCNF = makeCNF(*QNormalized);
+  NormalForm QCNF = makeCNF(Cache, *QNormalized);
 
   Subsumes = subsumes(PDNF, QCNF, E);
   return false;
@@ -251,7 +269,7 @@ bool subsumes(Sema &S, NamedDecl *DP, ArrayRef<const Expr *> P, NamedDecl *DQ,
 
 template <typename AtomicSubsumptionEvaluator>
 bool FoldExpandedConstraint::subsumes(
-    const FoldExpandedConstraint &Other,
+    AtomicConstraintCache &Cache, const FoldExpandedConstraint &Other,
     const AtomicSubsumptionEvaluator &E) const {
 
   // [C++26] [temp.constr.order]
@@ -262,8 +280,8 @@ bool FoldExpandedConstraint::subsumes(
   if (Kind != Other.Kind || !AreCompatibleForSubsumption(*this, Other))
     return false;
 
-  NormalForm PDNF = makeDNF(this->Constraint);
-  NormalForm QCNF = makeCNF(Other.Constraint);
+  NormalForm PDNF = makeDNF(Cache, this->Constraint);
+  NormalForm QCNF = makeCNF(Cache, Other.Constraint);
   return clang::subsumes(PDNF, QCNF, E);
 }
 
