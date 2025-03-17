@@ -1769,33 +1769,32 @@ AtomicConstraintCache::find(AtomicConstraint *Ori) {
 
 NormalForm clang::makeCNF(AtomicConstraintCache &Cache,
                           const NormalizedConstraint &Normalized) {
+
   if (Normalized.isAtomic())
     return {{Cache.find(Normalized.getAtomicConstraint())}};
 
-  else if (Normalized.isFoldExpanded())
+  if (Normalized.isFoldExpanded())
     return {{Normalized.getFoldExpandedConstraint()}};
 
-  NormalForm LCNF = makeCNF(Cache, Normalized.getLHS());
   NormalForm RCNF = makeCNF(Cache, Normalized.getRHS());
+  NormalForm LCNF = makeCNF(Cache, Normalized.getLHS());
   if (Normalized.getCompoundKind() == NormalizedConstraint::CCK_Conjunction) {
     LCNF.reserve(LCNF.size() + RCNF.size());
-    while (!RCNF.empty())
-      LCNF.push_back(RCNF.pop_back_val());
+    LCNF.append(std::make_move_iterator(RCNF.begin()), std::make_move_iterator(RCNF.end()));
     return LCNF;
   }
 
   // Disjunction
   NormalForm Res;
   Res.reserve(LCNF.size() * RCNF.size());
+  NormalForm::value_type Combined;
   for (auto &LDisjunction : LCNF)
     for (auto &RDisjunction : RCNF) {
-      NormalForm::value_type Combined;
       Combined.reserve(LDisjunction.size() + RDisjunction.size());
-      std::copy(LDisjunction.begin(), LDisjunction.end(),
-                std::back_inserter(Combined));
-      std::copy(RDisjunction.begin(), RDisjunction.end(),
-                std::back_inserter(Combined));
+      Combined.insert(Combined.end(), LDisjunction.begin(), LDisjunction.end());
+      Combined.insert(Combined.end(), RDisjunction.begin(), RDisjunction.end());
       Res.emplace_back(std::move(Combined));
+      Combined.clear();
     }
   return Res;
 }
@@ -1808,27 +1807,25 @@ NormalForm clang::makeDNF(AtomicConstraintCache &Cache,
   else if (Normalized.isFoldExpanded())
     return {{Normalized.getFoldExpandedConstraint()}};
 
-  NormalForm LDNF = makeDNF(Cache, Normalized.getLHS());
   NormalForm RDNF = makeDNF(Cache, Normalized.getRHS());
+  NormalForm LDNF = makeDNF(Cache, Normalized.getLHS());
   if (Normalized.getCompoundKind() == NormalizedConstraint::CCK_Disjunction) {
     LDNF.reserve(LDNF.size() + RDNF.size());
-    while (!RDNF.empty())
-      LDNF.push_back(RDNF.pop_back_val());
+    LDNF.append(std::make_move_iterator(RDNF.begin()), std::make_move_iterator(RDNF.end()));
     return LDNF;
   }
 
   // Conjunction
   NormalForm Res;
   Res.reserve(LDNF.size() * RDNF.size());
+  NormalForm::value_type Combined;
   for (auto &LConjunction : LDNF) {
     for (auto &RConjunction : RDNF) {
-      NormalForm::value_type Combined;
       Combined.reserve(LConjunction.size() + RConjunction.size());
-      std::copy(LConjunction.begin(), LConjunction.end(),
-                std::back_inserter(Combined));
-      std::copy(RConjunction.begin(), RConjunction.end(),
-                std::back_inserter(Combined));
+      Combined.insert(Combined.end(), LConjunction.begin(), LConjunction.end());
+      Combined.insert(Combined.end(), RConjunction.begin(), RConjunction.end());
       Res.emplace_back(std::move(Combined));
+      Combined.clear();
     }
   }
   return Res;
