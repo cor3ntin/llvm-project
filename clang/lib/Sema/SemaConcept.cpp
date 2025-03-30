@@ -1780,9 +1780,15 @@ bool Sema::IsAtLeastAsConstrained(const NamedDecl *D1,
                    .get();
     }
   }
-
-  SubsumptionChecker SC(*this);
-  std::optional<bool> Subsumes = SC.Subsumes(D1, AC1, D2, AC2);
+  std::optional<bool> Subsumes;
+  if (ShouldUseCurrentSubsumptionChecker) {
+    if (!CurrentSubsumptionChecker)
+      CurrentSubsumptionChecker = std::make_unique<SubsumptionChecker>(*this);
+    Subsumes = CurrentSubsumptionChecker->Subsumes(D1, AC1, D2, AC2);
+  } else {
+    SubsumptionChecker SC(*this);
+    Subsumes = SC.Subsumes(D1, AC1, D2, AC2);
+  }
   if (!Subsumes) {
     // Normalization failed
     return true;
@@ -1973,6 +1979,8 @@ SubsumptionChecker::SubsumptionChecker(Sema &SemaRef,
                                        SubsumptionCallable Callable)
     : SemaRef(SemaRef), Callable(Callable), NextID(1) {}
 
+SubsumptionChecker::~SubsumptionChecker() {}
+
 uint16_t SubsumptionChecker::getNewLiteralId() {
   assert((unsigned(NextID) + 1 < std::numeric_limits<uint16_t>::max()) &&
          "too many constraints!");
@@ -2110,17 +2118,24 @@ std::optional<bool> SubsumptionChecker::Subsumes(const NamedDecl *DP,
                                                  ArrayRef<const Expr *> P,
                                                  const NamedDecl *DQ,
                                                  ArrayRef<const Expr *> Q) {
-  const NormalizedConstraint *PNormalized =
-      getNormalizedAssociatedConstraints(SemaRef, DP, P);
-  if (!PNormalized)
-    return std::nullopt;
+  auto DNFIt = CachedDNFs.find(DP);
+  if (DNFIt == CachedDNFs.end()) {
+    const NormalizedConstraint *PNormalized =
+        getNormalizedAssociatedConstraints(SemaRef, DP, P);
+    if (!PNormalized)
+      return std::nullopt;
+    DNFIt = CachedDNFs.try_emplace(DP, DNF(*PNormalized)).first;
+  }
 
-  const NormalizedConstraint *QNormalized =
-      getNormalizedAssociatedConstraints(SemaRef, DQ, Q);
-  if (!QNormalized)
-    return std::nullopt;
-
-  return Subsumes(PNormalized, QNormalized);
+  auto CNFIt = CachedCNFs.find(DQ);
+  if (CNFIt == CachedCNFs.end()) {
+    const NormalizedConstraint *QNormalized =
+        getNormalizedAssociatedConstraints(SemaRef, DQ, Q);
+    if (!QNormalized)
+      return std::nullopt;
+    CNFIt = CachedCNFs.try_emplace(DQ, CNF(*QNormalized)).first;
+  }
+  return Subsumes(DNFIt->second, CNFIt->second);
 }
 
 bool SubsumptionChecker::Subsumes(const NormalizedConstraint *P,
@@ -2190,4 +2205,14 @@ bool SubsumptionChecker::Subsumes(Literal A, Literal B) {
         static_cast<const FoldExpandedConstraint *>(ReverseMap[B.Value]));
   }
   llvm_unreachable("unknown literal kind");
+}
+
+Sema::SubsumptionCheckerRAII::SubsumptionCheckerRAII(Sema &SemaRef)
+    : SemaRef(SemaRef), Previous(std::move(SemaRef.CurrentSubsumptionChecker)) {
+  SemaRef.ShouldUseCurrentSubsumptionChecker = true;
+}
+
+Sema::SubsumptionCheckerRAII::~SubsumptionCheckerRAII() {
+  SemaRef.ShouldUseCurrentSubsumptionChecker = !!Previous;
+  SemaRef.CurrentSubsumptionChecker = std::move(Previous);
 }

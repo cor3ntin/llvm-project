@@ -10953,6 +10953,8 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
     }
   }
 
+  Sema::SubsumptionCheckerRAII SC(S);
+
   // Find the best viable function.
   Best = end();
   for (auto *Cand : Candidates) {
@@ -13324,6 +13326,9 @@ private:
     //   partial-ordering-constrained than F0. [...]
     assert(Matches[0].second->getPrimaryTemplate() == nullptr &&
            "Call EliminateAllTemplateMatches() first");
+
+    Sema::SubsumptionCheckerRAII SC(S);
+
     SmallVector<std::pair<DeclAccessPair, FunctionDecl *>, 4> Results;
     Results.push_back(Matches[0]);
     for (unsigned I = 1, N = Matches.size(); I < N; ++I) {

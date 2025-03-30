@@ -181,6 +181,7 @@ class SemaSystemZ;
 class SemaWasm;
 class SemaX86;
 class StandardConversionSequence;
+class SubsumptionChecker;
 class TemplateArgument;
 class TemplateArgumentLoc;
 class TemplateInstantiationCallback;
@@ -14701,6 +14702,22 @@ private:
 
   // The current stack of constraint satisfactions, so we can exit-early.
   llvm::SmallVector<SatisfactionStackEntryTy, 10> SatisfactionStack;
+
+public:
+  class SubsumptionCheckerRAII {
+    Sema &SemaRef;
+    std::unique_ptr<SubsumptionChecker> Previous;
+
+  public:
+    SubsumptionCheckerRAII(Sema &SemaRef);
+    ~SubsumptionCheckerRAII();
+  };
+
+private:
+  friend class SubsumptionChecker;
+  friend class SubsumptionCheckerRAII;
+  bool ShouldUseCurrentSubsumptionChecker = false;
+  std::unique_ptr<SubsumptionChecker> CurrentSubsumptionChecker = nullptr;
 
   /// Used by SetupConstraintCheckingTemplateArgumentsAndScope to set up the
   /// LocalInstantiationScope of the current non-lambda function. For lambdas,

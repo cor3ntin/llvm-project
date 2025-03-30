@@ -19102,6 +19102,10 @@ static void SetEligibleMethods(Sema &S, CXXRecordDecl *Record,
     }
   }
 
+  // Make sure we cache CNF/DNF form while we find the most constrained
+  // declaration
+  Sema::SubsumptionCheckerRAII SC(S);
+
   for (size_t i = 0; i < Methods.size(); i++) {
     if (!SatisfactionStatus[i])
       continue;

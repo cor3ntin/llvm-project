@@ -147,12 +147,12 @@ public:
   using SubsumptionCallable = llvm::function_ref<bool(
       const AtomicConstraint &, const AtomicConstraint &)>;
 
-  SubsumptionChecker(Sema &SemaRef, SubsumptionCallable Callable = {});
-
   std::optional<bool> Subsumes(const NamedDecl *DP, ArrayRef<const Expr *> P,
                                const NamedDecl *DQ, ArrayRef<const Expr *> Q);
-
   bool Subsumes(const NormalizedConstraint *P, const NormalizedConstraint *Q);
+
+  SubsumptionChecker(Sema &SemaRef, SubsumptionCallable Callable = {});
+  ~SubsumptionChecker();
 
 private:
   Sema &SemaRef;
@@ -212,6 +212,9 @@ private:
       std::pair<const FoldExpandedConstraint *, const FoldExpandedConstraint *>,
       bool>
       FoldSubsumptionCache;
+
+  llvm::SmallDenseMap<const NamedDecl *, CNFFormula> CachedCNFs;
+  llvm::SmallDenseMap<const NamedDecl *, DNFFormula> CachedDNFs;
 
   // Each <atomic, fold expanded constraint> is represented as a single ID.
   // This is intentionally kept small we can't handle a large number of

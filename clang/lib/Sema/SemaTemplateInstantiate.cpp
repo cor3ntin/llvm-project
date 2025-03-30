@@ -4142,6 +4142,9 @@ static ActionResult<CXXRecordDecl *> getPatternForClassTemplateSpecialization(
         //      specialized than all of the other matching
         //      specializations, then the use of the class template is
         //      ambiguous and the program is ill-formed.
+
+        Sema::SubsumptionCheckerRAII SC(S);
+
         for (SmallVectorImpl<MatchResult>::iterator P = Best + 1,
                                                  PEnd = Matched.end();
              P != PEnd; ++P) {
