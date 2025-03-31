@@ -14710,6 +14710,7 @@ public:
 
   public:
     SubsumptionCheckerRAII(Sema &SemaRef);
+    SubsumptionCheckerRAII(SubsumptionCheckerRAII&&) = delete;
     ~SubsumptionCheckerRAII();
   };
 
