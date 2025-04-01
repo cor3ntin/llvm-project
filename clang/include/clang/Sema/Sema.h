@@ -14718,7 +14718,7 @@ private:
   friend class SubsumptionChecker;
   friend class SubsumptionCheckerRAII;
   bool ShouldUseCurrentSubsumptionChecker = false;
-  std::unique_ptr<SubsumptionChecker> CurrentSubsumptionChecker = nullptr;
+  std::unique_ptr<SubsumptionChecker> CurrentSubsumptionChecker;
 
   /// Used by SetupConstraintCheckingTemplateArgumentsAndScope to set up the
   /// LocalInstantiationScope of the current non-lambda function. For lambdas,

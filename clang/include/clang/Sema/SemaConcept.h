@@ -152,6 +152,7 @@ public:
   bool Subsumes(const NormalizedConstraint *P, const NormalizedConstraint *Q);
 
   SubsumptionChecker(Sema &SemaRef, SubsumptionCallable Callable = {});
+  SubsumptionChecker(SubsumptionChecker&&);
   ~SubsumptionChecker();
 
 private:

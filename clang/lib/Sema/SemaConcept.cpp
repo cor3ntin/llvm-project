@@ -1979,6 +1979,8 @@ SubsumptionChecker::SubsumptionChecker(Sema &SemaRef,
                                        SubsumptionCallable Callable)
     : SemaRef(SemaRef), Callable(Callable), NextID(1) {}
 
+SubsumptionChecker::SubsumptionChecker(SubsumptionChecker&&) = default;
+
 SubsumptionChecker::~SubsumptionChecker() {}
 
 uint16_t SubsumptionChecker::getNewLiteralId() {
