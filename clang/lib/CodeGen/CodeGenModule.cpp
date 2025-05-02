@@ -7124,9 +7124,22 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
           DI->completeUnusedClass(*CRD);
     }
     // Emit any static data members, they may be definitions.
-    for (auto *I : CRD->decls())
-      if (isa<VarDecl>(I) || isa<CXXRecordDecl>(I))
+    auto* callOp = CRD->getLambdaCallOperator();
+    for (auto *I : CRD->decls()) {
+      if (isa<VarDecl>(I) || isa<CXXRecordDecl>(I)) {
         EmitTopLevelDecl(I);
+      }
+      if (I == callOp) {
+        /* If `CRD` is a lambda, its body is not in
+         * `DeferredInlineMemberFunctionDefs` and will be emitted only if
+         * needed.  However, if the body itself contains any records, we must
+         * emit their static data members.
+         */
+        for (auto *J : callOp->decls()) {
+          if (isa<CXXRecordDecl>(J)) EmitTopLevelDecl(J);
+        }
+      }
+    }
     break;
   }
     // No code generation needed.

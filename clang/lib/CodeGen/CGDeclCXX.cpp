@@ -591,6 +591,10 @@ CodeGenModule::EmitCXXGlobalVarDeclInitFunc(const VarDecl *D,
     PrioritizedCXXGlobalInits.push_back(std::make_pair(Key, Fn));
   } else if (isTemplateInstantiation(D->getTemplateSpecializationKind()) ||
              !isUniqueGVALinkage(getContext().GetGVALinkageForVariable(D)) ||
+             // If it's an inline static data member of a local class, force it
+             // to be handled by this branch so that we get the right initialization order.
+             getContext().getInlineVariableDefinitionKind(D) ==
+               ASTContext::InlineVariableDefinitionKind::Weak ||
              D->hasAttr<SelectAnyAttr>()) {
     // For vague linkage globals, put the initializer into its own global_ctors
     // entry with the global as a comdat key. This ensures at most one
