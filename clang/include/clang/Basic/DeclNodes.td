@@ -70,6 +70,7 @@ def Named : DeclNode<Decl, "named declarations", 1>;
       def VarTemplate : DeclNode<RedeclarableTemplate>;
       def TypeAliasTemplate : DeclNode<RedeclarableTemplate>;
     def TemplateTemplateParm : DeclNode<Template>;
+    def UniversalTemplateParm : DeclNode<Named>;
     def BuiltinTemplate : DeclNode<Template>;
     def Concept : DeclNode<Template>;
   def BaseUsing : DeclNode<Named, "", 1>;

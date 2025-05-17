@@ -156,6 +156,7 @@ static_library("AST") {
     "Type.cpp",
     "TypeLoc.cpp",
     "TypePrinter.cpp",
+    "UniversalTemplateParameterName.cpp",
     "VTTBuilder.cpp",
     "VTableBuilder.cpp",
   ]

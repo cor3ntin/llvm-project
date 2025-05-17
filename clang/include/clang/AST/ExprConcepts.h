@@ -84,7 +84,7 @@ public:
 
   ConceptReference *getConceptReference() const { return ConceptRef; }
 
-  ConceptDecl *getNamedConcept() const { return ConceptRef->getNamedConcept(); }
+  ConceptDecl *getNamedConcept() const { return cast<ConceptDecl>(ConceptRef->getNamedConcept()); }
 
   // FIXME: Several of the following functions can be removed. Instead the
   // caller can directly work with the ConceptReference.
@@ -151,6 +151,7 @@ public:
   SourceLocation getExprLoc() const LLVM_READONLY {
     return ConceptRef->getLocation();
   }
+
 
   // Iterators
   child_range children() {

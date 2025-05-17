@@ -5536,6 +5536,8 @@ bool CGDebugInfo::HasReconstitutableArgs(
     ArrayRef<TemplateArgument> Args) const {
   return llvm::all_of(Args, [&](const TemplateArgument &TA) {
     switch (TA.getKind()) {
+    case TemplateArgument::Concept:
+      return false;
     case TemplateArgument::Template:
       // Easy to reconstitute - the value of the parameter in the debug
       // info is the string name of the template. The template name
@@ -5606,7 +5608,6 @@ std::string CGDebugInfo::GetName(const Decl *D, bool Qualified) const {
   } else if (auto *VD = dyn_cast<VarDecl>(ND)) {
     Args = GetTemplateArgs(VD);
   }
-
   // A conversion operator presents complications/ambiguity if there's a
   // conversion to class template that is itself a template, eg:
   // template<typename T>

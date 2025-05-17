@@ -657,6 +657,21 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      ArrayRef<TemplateArgument> Args1,
                                      ArrayRef<TemplateArgument> Args2);
 
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     ArrayRef<TemplateArgumentLoc> Args1,
+                                     ArrayRef<TemplateArgumentLoc> Args2);
+
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     const PartiallyAppliedConcept *C1,
+                                     const PartiallyAppliedConcept *C2) {
+  if (!IsStructurallyEquivalent(Context, C1->getNamedConcept(),
+                                C2->getNamedConcept()))
+     return false;
+  return IsStructurallyEquivalent(Context,
+                                  C1->getTemplateArgsAsWritten()->arguments(),
+                                  C2->getTemplateArgsAsWritten()->arguments());
+}
+
 /// Determine whether two template arguments are equivalent.
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      const TemplateArgument &Arg1,
@@ -689,6 +704,11 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     return IsStructurallyEquivalent(Context, Arg1.getAsTemplate(),
                                     Arg2.getAsTemplate());
 
+  case TemplateArgument::Concept:
+    return IsStructurallyEquivalent(Context,
+                                    Arg1.getAsPartiallyAppliedConcept(),
+                                    Arg2.getAsPartiallyAppliedConcept());
+
   case TemplateArgument::TemplateExpansion:
     return IsStructurallyEquivalent(Context,
                                     Arg1.getAsTemplateOrTemplatePattern(),
@@ -713,6 +733,19 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      ArrayRef<TemplateArgument> Args1,
                                      ArrayRef<TemplateArgument> Args2) {
+  if (Args1.size() != Args2.size())
+    return false;
+  for (unsigned I = 0, N = Args1.size(); I != N; ++I) {
+    if (!IsStructurallyEquivalent(Context, Args1[I], Args2[I]))
+      return false;
+  }
+  return true;
+}
+
+/// Determine structural equivalence of two template argument lists.
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     ArrayRef<TemplateArgumentLoc> Args1,
+                                     ArrayRef<TemplateArgumentLoc> Args2) {
   if (Args1.size() != Args2.size())
     return false;
   for (unsigned I = 0, N = Args1.size(); I != N; ++I) {
@@ -2070,7 +2103,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   }
 
   // Check template parameter lists.
-  return IsStructurallyEquivalent(Context, D1->getTemplateParameters(),
+  return D1->kind() == D2->kind() && IsStructurallyEquivalent(Context, D1->getTemplateParameters(),
                                   D2->getTemplateParameters());
 }
 

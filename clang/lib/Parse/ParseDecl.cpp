@@ -2677,7 +2677,8 @@ bool Parser::ParseAsmAttributesAfterDeclarator(Declarator &D) {
 ///
 Decl *Parser::ParseDeclarationAfterDeclarator(
     Declarator &D, const ParsedTemplateInfo &TemplateInfo) {
-  if (ParseAsmAttributesAfterDeclarator(D))
+
+    if (ParseAsmAttributesAfterDeclarator(D))
     return nullptr;
 
   return ParseDeclarationAfterDeclaratorAndAttributes(D, TemplateInfo);
@@ -3541,6 +3542,8 @@ Parser::DiagnoseMissingSemiAfterTagDefinition(DeclSpec &DS, AccessSpecifier AS,
       case Sema::NC_TypeTemplate:
       case Sema::NC_UndeclaredNonType:
       case Sema::NC_UndeclaredTemplate:
+      case Sema::NC_Concept:
+      case Sema::NC_UniversalTemplateParam:
         // Not a previously-declared non-type entity.
         MightBeDeclarator = false;
         break;
@@ -3551,7 +3554,6 @@ Parser::DiagnoseMissingSemiAfterTagDefinition(DeclSpec &DS, AccessSpecifier AS,
       case Sema::NC_OverloadSet:
       case Sema::NC_VarTemplate:
       case Sema::NC_FunctionTemplate:
-      case Sema::NC_Concept:
         // Might be a redeclaration of a prior entity.
         break;
       }

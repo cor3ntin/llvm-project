@@ -13,6 +13,7 @@
 #ifndef LLVM_CLANG_SEMA_OWNERSHIP_H
 #define LLVM_CLANG_SEMA_OWNERSHIP_H
 
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/Basic/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -36,6 +37,7 @@ class ParsedTemplateArgument;
 class QualType;
 class Stmt;
 class TemplateName;
+class UniversalTemplateParameterName;
 class TemplateParameterList;
 
   /// Wrapper for void* pointer.
@@ -254,6 +256,8 @@ using MemInitResult = ActionResult<CXXCtorInitializer *>;
 using DeclResult = ActionResult<Decl *>;
 using ParsedTemplateTy = OpaquePtr<TemplateName>;
 using UnionParsedTemplateTy = UnionOpaquePtr<TemplateName>;
+using UniversalTemplateParamNameTy =
+    OpaquePtr<UniversalTemplateParameterName *>;
 
 using MultiExprArg = MutableArrayRef<Expr *>;
 using MultiStmtArg = MutableArrayRef<Stmt *>;

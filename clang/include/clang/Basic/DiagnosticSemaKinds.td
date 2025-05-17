@@ -5241,7 +5241,7 @@ def err_template_arg_must_be_expr : Error<
 def err_template_arg_nontype_ambig : Error<
   "template argument for non-type template parameter is treated as function type %0">;
 def err_template_arg_must_be_template : Error<
-  "template argument for template template parameter must be a class template%select{| or type alias template}0">;
+  "template argument for template template parameter must be a %select{class template%select{| or type alias template}1|variable template|concept}0">;
 def ext_template_arg_local_type : ExtWarn<
   "template argument uses local type %0">, InGroup<LocalTypeTemplateArgs>;
 def ext_template_arg_unnamed_type : ExtWarn<
@@ -5257,10 +5257,18 @@ def note_template_unnamed_type_here : Note<
 def err_template_arg_overload_type : Error<
   "template argument is the type of an unresolved overloaded function">;
 def err_template_arg_not_valid_template : Error<
-  "template argument does not refer to a class or alias template, or template "
+  "template argument does not refer to a %select{class or alias template|variable template|concept}0, or template "
   "template parameter">;
-def note_template_arg_refers_here_func : Note<
-  "template argument refers to function template %0, here">;
+def err_partial_concept_valid_template : Error<
+  "name of template argument does not refer to concept, or concept "
+  "template parameter">;
+def err_partial_concept_param_must_have_one_arg : Error<
+  "the corresponding template parameter of a partially applied concept must have exactly one argument">;
+def note_concept_template_parameter_declared_here : Error<
+  "concept template parameter declared here">;
+
+def note_template_arg_refers_to_template_here : Note<
+  "template argument refers to a %select{function template|class template|variable template|concept}0 %1, here">;
 def err_template_arg_template_params_mismatch : Error<
   "template template argument has different template parameters than its "
   "corresponding template template parameter">;
@@ -7657,6 +7665,7 @@ def warn_format_nonliteral : Warning<
 def err_unexpected_interface : Error<
   "unexpected interface name %0: expected expression">;
 def err_ref_non_value : Error<"%0 does not refer to a value">;
+def err_ref_utp : Error<"%0 refers to a universal template parameter outside of a template argument list">;
 def err_ref_vm_type : Error<
   "cannot refer to declaration with a variably modified type inside block">;
 def err_ref_flexarray_type : Error<
