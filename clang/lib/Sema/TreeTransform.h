@@ -649,6 +649,11 @@ public:
                                       Uneval);
   }
 
+  bool InjectAdditionalArgumentsFromPartiallyAppliedConcept(
+      TemplateArgumentListInfo &, TemplateDecl *) {
+    return true;
+  }
+
   /// Transform the given set of template arguments.
   ///
   /// By default, this operation transforms all of the template arguments
@@ -4024,6 +4029,7 @@ public:
     case TemplateArgument::UniversalExpansion:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::NullPtr:
+    case TemplateArgument::Concept:
       llvm_unreachable("Pack expansion pattern has no parameter packs");
 
     case TemplateArgument::Type:
@@ -4836,6 +4842,36 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
     return false;
   }
 
+  case TemplateArgument::Concept: {
+    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+    TemplateDecl *T = cast_or_null<TemplateDecl>(getDerived().TransformDecl(
+        C->getConceptNameLoc(), C->getNamedConcept()));
+    if (!T)
+      return true;
+    DeclarationNameInfo NameInfo = C->getConceptNameInfo();
+    if (NameInfo.getName()) {
+      NameInfo = getDerived().TransformDeclarationNameInfo(NameInfo);
+      if (!NameInfo.getName())
+        return true;
+    }
+
+    TemplateArgumentListInfo NewTemplateArgs;
+    getDerived().TransformTemplateArguments(
+        C->getTemplateArgsAsWritten()->getTemplateArgs(),
+        C->getTemplateArgsAsWritten()->getNumTemplateArgs(), NewTemplateArgs);
+
+    PartiallyAppliedConcept *Transformed = SemaRef.BuildPartiallyAppliedConcept(
+        C->getNestedNameSpecifierLoc(), C->getConceptKWLoc(), NameInfo, T,
+        NewTemplateArgs);
+    if (!Transformed)
+      return true;
+
+    Output = TemplateArgumentLoc(SemaRef.Context, TemplateArgument(Transformed),
+                                 C->getNestedNameSpecifierLoc(),
+                                 NameInfo.getLoc(), SourceLocation());
+    return false;
+  }
+
   case TemplateArgument::Universal: {
     UniversalTemplateParameterName *N =
         Arg.getAsUniversalTemplateParameterName();
@@ -5067,8 +5103,8 @@ bool TreeTransform<Derived>::TransformConceptTemplateArguments(
     bool Uneval) {
 
   auto isConcept = [](const TemplateArgument &Arg) {
-    bool isConcept = false;
-    if (Arg.getKind() == TemplateArgument::Template)
+    bool isConcept = Arg.getKind() == TemplateArgument::Concept;
+    if (!isConcept && Arg.getKind() == TemplateArgument::Template)
       if (auto *TTP = dyn_cast_if_present<TemplateTemplateParmDecl>(
               Arg.getAsTemplate().getAsTemplateDecl()))
         isConcept = TTP->kind() == TNK_Concept_template;
@@ -14029,6 +14065,12 @@ TreeTransform<Derived>::TransformUnresolvedLookupExpr(UnresolvedLookupExpr *Old,
     R.clear();
     return ExprError();
   }
+
+  if (Old->isConceptReference()) {
+    getDerived().InjectAdditionalArgumentsFromPartiallyAppliedConcept(
+        TransArgs, Old->getTemplateDecl());
+  }
+
   // An UnresolvedLookupExpr can refer to a class member. This occurs e.g. when
   // a non-static data member is named in an unevaluated operand, or when
   // a member is named in a dependent class scope function template explicit

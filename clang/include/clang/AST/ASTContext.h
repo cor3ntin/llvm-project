@@ -97,6 +97,7 @@ class ObjCTypeParamDecl;
 class OMPTraitInfo;
 class ParentMapContext;
 struct ParsedTargetAttr;
+class PartiallyAppliedConcept;
 class Preprocessor;
 class ProfileList;
 class StoredDeclsMap;

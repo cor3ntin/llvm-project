@@ -2455,6 +2455,15 @@ void StmtProfiler::VisitTemplateArgument(const TemplateArgument &Arg) {
     VisitTemplateName(Arg.getAsTemplateOrTemplatePattern());
     break;
 
+  case TemplateArgument::Concept: {
+    PartiallyAppliedConcept* C = Arg.getAsPartiallyAppliedConcept();
+    VisitDecl(C->getNamedConcept());
+    for (const auto &P : C->getTemplateArgsAsWritten()->arguments()) {
+      VisitTemplateArgument(P.getArgument());
+    }
+    break;
+  }
+
   case TemplateArgument::Declaration:
     VisitType(Arg.getParamTypeForDecl());
     // FIXME: Do we need to recursively decompose template parameter objects?

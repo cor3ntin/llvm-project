@@ -974,6 +974,7 @@ public:
 
   typedef OpaquePtr<DeclGroupRef> DeclGroupPtrTy;
   typedef OpaquePtr<TemplateName> TemplateTy;
+  typedef OpaquePtr<PartiallyAppliedConcept> ConceptTy;
   typedef OpaquePtr<UniversalTemplateParameterName *>
       UniversalTemplateParamNameTy;
   typedef OpaquePtr<QualType> TypeTy;
@@ -11536,6 +11537,15 @@ public:
                                      bool EnteringContext, TemplateTy &Template,
                                      bool AllowInjectedClassName = false);
 
+  PartiallyAppliedConcept *BuildPartiallyAppliedConcept(
+      NestedNameSpecifierLoc NNS, SourceLocation ConceptKWLoc,
+      DeclarationNameInfo ConceptName, TemplateDecl *TD,
+      const TemplateArgumentListInfo &TemplateArgs);
+  PartiallyAppliedConcept *
+  ActOnPartiallyAppliedConcept(Scope *S, CXXScopeSpec &SS,
+                               SourceLocation ConceptKWLoc,
+                               TemplateIdAnnotation *TemplateId);
+
   bool
   ActOnUniversalTemplateParameterName(Scope *S, const UnqualifiedId &Name,
                                       bool EnteringContext,
@@ -11826,6 +11836,10 @@ public:
                                    TemplateArgument &SugaredConverted,
                                    TemplateArgument &CanonicalConverted,
                                    CheckTemplateArgumentKind CTAK);
+  bool
+  CheckPartiallyAppliedConceptTemplateArgument(TemplateTemplateParmDecl *Param,
+                                               TemplateParameterList *Params,
+                                               TemplateArgumentLoc &Arg);
 
   /// Check a template argument against its corresponding
   /// template template parameter.

@@ -58,6 +58,7 @@ class Expr;
 struct PrintingPolicy;
 class TypeSourceInfo;
 class ValueDecl;
+class PartiallyAppliedConcept;
 
 /// Represents a template argument.
 class TemplateArgument {
@@ -107,6 +108,9 @@ public:
     /// The template argument is actually a parameter pack. Arguments are stored
     /// in the Args struct.
     Pack,
+
+    // A concept with argument
+    Concept,
 
     /// The template argument refers to a universal template parameter
     Universal,
@@ -179,6 +183,12 @@ private:
     uintptr_t V;
   };
 
+  struct ConceptData {
+    unsigned Kind : 31;
+    unsigned IsDefaulted : 1;
+    PartiallyAppliedConcept *C;
+  };
+
   struct UniversalTpl {
     unsigned Kind : 31;
     unsigned IsDefaulted : 1;
@@ -193,6 +203,7 @@ private:
     struct A Args;
     struct TA TemplateArg;
     struct TV TypeOrValue;
+    struct ConceptData PartialConcept;
     struct UniversalTpl UniversalArg;
   };
 
@@ -300,6 +311,13 @@ public:
     this->Args.NumArgs = Args.size();
   }
 
+  explicit TemplateArgument(PartiallyAppliedConcept *C,
+                            bool IsDefaulted = false) {
+    PartialConcept.Kind = Concept;
+    PartialConcept.IsDefaulted = IsDefaulted;
+    PartialConcept.C = C;
+  }
+
   explicit TemplateArgument(UniversalTemplateParameterName *U,
                             bool IsDefaulted = false) {
     UniversalArg.Kind = Universal;
@@ -391,6 +409,11 @@ public:
            "Unexpected kind");
 
     return TemplateName::getFromVoidPointer(TemplateArg.Name);
+  }
+
+  PartiallyAppliedConcept *getAsPartiallyAppliedConcept() const {
+    assert((getKind() == Concept) && "Unexpected kind");
+    return PartialConcept.C;
   }
 
   UniversalTemplateParameterName *getAsUniversalTemplateParameterName() const {
@@ -624,7 +647,8 @@ public:
       : Argument(Argument),
         LocInfo(Ctx, QualifierLoc, TemplateNameLoc, EllipsisLoc) {
     assert(Argument.getKind() == TemplateArgument::Template ||
-           Argument.getKind() == TemplateArgument::TemplateExpansion);
+           Argument.getKind() == TemplateArgument::TemplateExpansion ||
+           Argument.getKind() == TemplateArgument::Concept);
   }
 
   TemplateArgumentLoc(ASTContext &Ctx, const TemplateArgument &Argument,
@@ -638,7 +662,8 @@ public:
   /// - Fetches the primary location of the argument.
   SourceLocation getLocation() const {
     if (Argument.getKind() == TemplateArgument::Template ||
-        Argument.getKind() == TemplateArgument::TemplateExpansion)
+        Argument.getKind() == TemplateArgument::TemplateExpansion ||
+        Argument.getKind() == TemplateArgument::Concept)
       return getTemplateNameLoc();
 
     return getSourceRange().getBegin();
@@ -684,14 +709,16 @@ public:
 
   NestedNameSpecifierLoc getTemplateQualifierLoc() const {
     if (Argument.getKind() != TemplateArgument::Template &&
-        Argument.getKind() != TemplateArgument::TemplateExpansion)
+        Argument.getKind() != TemplateArgument::TemplateExpansion &&
+        Argument.getKind() != TemplateArgument::Concept)
       return NestedNameSpecifierLoc();
     return LocInfo.getTemplateQualifierLoc();
   }
 
   SourceLocation getTemplateNameLoc() const {
     if (Argument.getKind() != TemplateArgument::Template &&
-        Argument.getKind() != TemplateArgument::TemplateExpansion)
+        Argument.getKind() != TemplateArgument::TemplateExpansion &&
+        Argument.getKind() != TemplateArgument::Concept)
       return SourceLocation();
     return LocInfo.getTemplateNameLoc();
   }

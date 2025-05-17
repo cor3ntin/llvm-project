@@ -360,6 +360,13 @@ LinkageComputer::getLVForTemplateArgumentList(ArrayRef<TemplateArgument> Args,
         LV.merge(getLVForDecl(Template, computation));
       continue;
 
+    // FIXME corentin
+    case TemplateArgument::Concept:
+      if (TemplateDecl *Template =
+              Arg.getAsPartiallyAppliedConcept()->getNamedConcept())
+        LV.merge(getLVForDecl(Template, computation));
+      continue;
+
     case TemplateArgument::Pack:
       LV.merge(getLVForTemplateArgumentList(Arg.getPackAsArray(), computation));
       continue;
