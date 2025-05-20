@@ -17757,7 +17757,7 @@ void Sema::PushExpressionEvaluationContextForFunction(
   PushExpressionEvaluationContext(
       FD && FD->isConsteval()
           ? ExpressionEvaluationContext::ImmediateFunctionContext
-          : NewContext);
+          : NewContext, FD);
   const Sema::ExpressionEvaluationContextRecord &Parent =
       parentEvaluationContext();
   Sema::ExpressionEvaluationContextRecord &Current = currentEvaluationContext();

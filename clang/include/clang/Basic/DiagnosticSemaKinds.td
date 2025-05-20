@@ -5763,6 +5763,10 @@ def note_instantiation_contexts_suppressed : Note<
   "(skipping %0 context%s0 in backtrace; use -ftemplate-backtrace-limit=0 to "
   "see all)">;
 
+def note_instantiation_in_discarded_statement : Note<
+  "%select{this declaration|%1}0 was instantiated because"
+  "the condition of the enclosing discarded statement is never value-dependent">;
+
 def err_field_instantiates_to_function : Error<
   "data member instantiated with function type %0">;
 def err_variable_instantiates_to_function : Error<
@@ -12446,7 +12450,7 @@ def warn_zero_as_null_pointer_constant : Warning<
   InGroup<DiagGroup<"zero-as-null-pointer-constant">>, DefaultIgnore;
 
 def warn_not_eliding_copy_on_return : Warning<
-  "not eliding copy on return">, 
+  "not eliding copy on return">,
   InGroup<DiagGroup<"nrvo">>, DefaultIgnore;
 
 def err_nullability_cs_multilevel : Error<

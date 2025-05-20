@@ -15,6 +15,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
 #include "clang/AST/ASTMutationListener.h"
+#include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DynamicRecursiveASTVisitor.h"
@@ -37,6 +38,7 @@
 #include "clang/Sema/TemplateInstCallback.h"
 #include "llvm/ADT/STLForwardCompat.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/TimeProfiler.h"
@@ -1260,6 +1262,24 @@ void Sema::PrintInstantiationStack(InstantiationContextDiagFuncRef DiagFunc) {
                                << Active->InstantiationRange);
       break;
     }
+  }
+  // Discarded statements do not prevent instantiation where they
+  // are not in a templated entity. As this is a common source of
+  // confusion, detect and diagnose this scenario.
+  if(CodeSynthesisContexts.empty())
+    return;
+  CodeSynthesisContext & First = CodeSynthesisContexts[0];
+  const auto* ND = dyn_cast_or_null<NamedDecl>(First.Entity);
+  for(ExpressionEvaluationContextRecord & C : ExprEvalContexts) {
+    if(C.Context != ExpressionEvaluationContext::DiscardedStatement
+        || !C.DiscardedStatementCondition || C.DiscardedStatementCondition->isValueDependent())
+      continue;
+    DiagFunc(C.DiscardedStatementCondition->getExprLoc(),
+             PDiag(diag::note_instantiation_in_discarded_statement)
+                 << !!ND
+                 << ND
+                 << C.DiscardedStatementCondition->getSourceRange());
+    break;
   }
 }
 

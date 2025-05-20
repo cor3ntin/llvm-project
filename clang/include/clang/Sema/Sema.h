@@ -6743,24 +6743,33 @@ public:
 
     // A context can be nested in both a discarded statement context and
     // an immediate function context, so they need to be tracked independently.
-    bool InDiscardedStatement;
-    bool InImmediateFunctionContext;
-    bool InImmediateEscalatingFunctionContext;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned InDiscardedStatement : 1;
 
-    bool IsCurrentlyCheckingDefaultArgumentOrInitializer = false;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned InImmediateFunctionContext : 1;
+
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned InImmediateEscalatingFunctionContext : 1;
+
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned IsCurrentlyCheckingDefaultArgumentOrInitializer : 1;
 
     // We are in a constant context, but we also allow
     // non constant expressions, for example for array bounds (which may be
     // VLAs).
-    bool InConditionallyConstantEvaluateContext = false;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned InConditionallyConstantEvaluateContext : 1;
 
     /// Whether we are currently in a context in which all temporaries must be
     /// lifetime-extended, even if they're not bound to a reference (for
     /// example, in a for-range initializer).
-    bool InLifetimeExtendingContext = false;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned InLifetimeExtendingContext : 1;
 
     /// Whether we should rebuild CXXDefaultArgExpr and CXXDefaultInitExpr.
-    bool RebuildDefaultArgOrDefaultInit = false;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned RebuildDefaultArgOrDefaultInit : 1;
 
     // When evaluating immediate functions in the initializer of a default
     // argument or default member initializer, this is the declaration whose
@@ -6779,6 +6788,8 @@ public:
     };
     std::optional<InitializationContext> DelayedDefaultInitializationContext;
 
+    Expr* DiscardedStatementCondition = nullptr;
+
     ExpressionEvaluationContextRecord(ExpressionEvaluationContext Context,
                                       unsigned NumCleanupObjects,
                                       CleanupInfo ParentCleanup,
@@ -6788,7 +6799,10 @@ public:
           NumCleanupObjects(NumCleanupObjects), NumTypos(0),
           ManglingContextDecl(ManglingContextDecl), ExprContext(ExprContext),
           InDiscardedStatement(false), InImmediateFunctionContext(false),
-          InImmediateEscalatingFunctionContext(false) {}
+          InImmediateEscalatingFunctionContext(false),
+          IsCurrentlyCheckingDefaultArgumentOrInitializer(false),
+          InLifetimeExtendingContext(false),
+          RebuildDefaultArgOrDefaultInit(false){}
 
     bool isUnevaluated() const {
       return Context == ExpressionEvaluationContext::Unevaluated ||

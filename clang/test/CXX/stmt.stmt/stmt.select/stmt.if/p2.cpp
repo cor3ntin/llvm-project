@@ -197,15 +197,16 @@ auto h() {
     return 0;
 }
 
-void test() {
+void test() { // #not-a-templated-entity
     if constexpr (false) {
         int x = f<int &>();
         constexpr int y = g<int &>();
         // expected-error@-1 {{constexpr variable 'y' must be initialized by a constant expression}} \
-        // expected-note@-1{{in instantiation of function template specialization}}
+        // expected-note@-1 {{in instantiation of function template specialization}}  \
+        // expected-note@#not-a-templated-entity {{'g<int &>' was instantiated in a discared statement because 'test' is not a templated entity}}
         int z = h<int &>();
-        // expected-note@-1{{in instantiation of function template specialization}}
-
+        // expected-note@-1 {{in instantiation of function template specialization}} \
+        // expected-note@#not-a-templated-entity {{'h<int &>' was instantiated in a discared statement because 'test' is not a templated entity}}
     }
 }
 }
