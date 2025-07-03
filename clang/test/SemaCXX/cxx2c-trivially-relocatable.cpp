@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -std=c++2c -verify %s
-// RUN: %clang_cc1 -triple aarch64-linux-gnu -fptrauth-intrinsics -fptrauth-calls -std=c++2c -verify %s
+// RUN: %clang_cc1 -std=c++2c -verify -Wno-defaulted-function-deleted %s
+// RUN: %clang_cc1 -triple aarch64-linux-gnu -fptrauth-intrinsics -fptrauth-calls -std=c++2c -Wno-defaulted-function-deleted -verify %s
 
 class Trivial {};
 static_assert(__builtin_is_cpp_trivially_relocatable(Trivial));
@@ -125,7 +125,7 @@ static_assert(__builtin_is_cpp_trivially_relocatable(DefaultedDtr));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserMoveWithDefaultCopy));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserMove));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserCopy));
-static_assert(!__builtin_is_cpp_trivially_relocatable(UserMoveDefault));
+static_assert(__builtin_is_cpp_trivially_relocatable(UserMoveDefault));
 static_assert(__builtin_is_cpp_trivially_relocatable(UserMoveAssignDefault));
 static_assert(__builtin_is_cpp_trivially_relocatable(UserCopyDefault));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserDeletedMove));
@@ -444,5 +444,20 @@ static_assert (__builtin_is_replaceable (J));
 static_assert (__builtin_is_cpp_trivially_relocatable(J));
 static_assert (__builtin_is_replaceable (K));
 static_assert (__builtin_is_cpp_trivially_relocatable(K));
+
+}
+
+namespace implicitly_deleted {
+
+struct E trivially_relocatable_if_eligible { E(){} E(E&&) = delete; };
+struct F { E m; };
+struct G { G(G&&) = delete;      E m; };
+struct H { H(H&&) = default;     E m; };
+struct J { J(const J&) = delete; E m; };
+
+static_assert(__builtin_is_cpp_trivially_relocatable(E));
+static_assert(!__builtin_is_cpp_trivially_relocatable(G));
+static_assert(__builtin_is_cpp_trivially_relocatable(H));
+static_assert(!__builtin_is_cpp_trivially_relocatable(J));
 
 }

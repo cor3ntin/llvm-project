@@ -113,7 +113,7 @@ static CXXMethodDecl *LookupSpecialMemberFromXValue(Sema &SemaRef,
 
 static bool hasSuitableConstructorForRelocation(Sema &SemaRef,
                                                 const CXXRecordDecl *D,
-                                                bool AllowUserDefined) {
+                                                bool ForDefaultMovable) {
   assert(D->hasDefinition() && !D->isInvalidDecl());
 
   if (D->hasSimpleMoveConstructor() || D->hasSimpleCopyConstructor())
@@ -121,12 +121,15 @@ static bool hasSuitableConstructorForRelocation(Sema &SemaRef,
 
   CXXMethodDecl *Decl =
       LookupSpecialMemberFromXValue(SemaRef, D, /*Assign=*/false);
-  return Decl && (AllowUserDefined || !Decl->isUserProvided()) &&
-         !Decl->isDeleted();
+  if (!Decl)
+    return false;
+  if (ForDefaultMovable)
+    return !Decl->isUserProvided() && !Decl->isDeletedAsWritten();
+  return !Decl->isDeleted();
 }
 
 static bool hasSuitableMoveAssignmentOperatorForRelocation(
-    Sema &SemaRef, const CXXRecordDecl *D, bool AllowUserDefined) {
+    Sema &SemaRef, const CXXRecordDecl *D, bool ForDefaultMovable) {
   assert(D->hasDefinition() && !D->isInvalidDecl());
 
   if (D->hasSimpleMoveAssignment() || D->hasSimpleCopyAssignment())
@@ -136,9 +139,9 @@ static bool hasSuitableMoveAssignmentOperatorForRelocation(
       LookupSpecialMemberFromXValue(SemaRef, D, /*Assign=*/true);
   if (!Decl)
     return false;
-
-  return Decl && (AllowUserDefined || !Decl->isUserProvided()) &&
-         !Decl->isDeleted();
+  if (ForDefaultMovable)
+    return !Decl->isUserProvided() && !Decl->isDeletedAsWritten();
+  return !Decl->isDeleted();
 }
 
 // [C++26][class.prop]
@@ -152,11 +155,11 @@ static bool hasSuitableMoveAssignmentOperatorForRelocation(
 // neither user-provided nor deleted.
 static bool IsDefaultMovable(Sema &SemaRef, const CXXRecordDecl *D) {
   if (!hasSuitableConstructorForRelocation(SemaRef, D,
-                                           /*AllowUserDefined=*/false))
+                                           /*ForDefaultMovable=*/true))
     return false;
 
   if (!hasSuitableMoveAssignmentOperatorForRelocation(
-          SemaRef, D, /*AllowUserDefined=*/false))
+          SemaRef, D, /*ForDefaultMovable=*/true))
     return false;
 
   CXXDestructorDecl *Dtr = D->getDestructor();
@@ -246,9 +249,9 @@ Sema::CheckCXX2CRelocatableAndReplaceable(const CXXRecordDecl *D) {
   // to avoid extraneous computations.
   auto HasSuitableSMP = [&] {
     return hasSuitableConstructorForRelocation(*this, D,
-                                               /*AllowUserDefined=*/true) &&
+                                               /*ForDefaultMovable=*/false) &&
            hasSuitableMoveAssignmentOperatorForRelocation(
-               *this, D, /*AllowUserDefined=*/true);
+               *this, D, /*ForDefaultMovable=*/false);
   };
 
   auto IsUnion = [&, Is = std::optional<bool>{}]() mutable {
