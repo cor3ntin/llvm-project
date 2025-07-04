@@ -36,8 +36,6 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/Timer.h"
-#include "llvm/Support/WithColor.h"
 #include <cstddef>
 #include <optional>
 
@@ -1595,7 +1593,8 @@ substituteParameterMappings(Sema &S, NormalizedConstraintWithParamMapping &N,
       SourceLocation Loc = ArgsAsWritten->NumTemplateArgs > I
                                ? ArgsAsWritten->arguments()[I].getLocation()
                                : SourceLocation();
-      // FIXME: Investigate when we couldn't preserve the SourceLoc. What shall we do??
+      // FIXME: Investigate when we couldn't preserve the SourceLoc. What shall
+      // we do??
       // assert(Loc.isValid());
       if (OccurringIndices[I]) {
         NamedDecl *Param = TemplateParams->begin()[I];
