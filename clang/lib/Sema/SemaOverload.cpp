@@ -35,6 +35,7 @@
 #include "clang/Sema/SemaObjC.h"
 #include "clang/Sema/Template.h"
 #include "clang/Sema/TemplateDeduction.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLForwardCompat.h"
@@ -11365,8 +11366,15 @@ OverloadingResult OverloadCandidateSet::BestViableFunction(Sema &S,
   bool TwoPhaseResolution =
       DeferredCandidatesCount != 0 && !ResolutionByPerfectCandidateIsDisabled;
 
+  llvm::SmallVector<OverloadCandidate *, 16> Candidates;
+  Candidates.reserve(this->Candidates.size() + DeferredCandidatesCount);
+
   if(TwoPhaseResolution) {
-      OverloadingResult Res = BestViableFunctionImpl(S, Loc, Best);
+      std::transform(this->Candidates.begin(), this->Candidates.end(),
+                     std::back_inserter(Candidates),
+                     [](OverloadCandidate &Cand) { return &Cand; });
+
+      OverloadingResult Res = BestViableFunctionImpl(S, Loc, Best, Candidates);
       if (Best != end() && Best->isPerfectMatch(S.Context)) {
           if(!(HasDeferredTemplateConstructors &&
                isa_and_nonnull<CXXConversionDecl>(Best->Function)))
@@ -11375,17 +11383,18 @@ OverloadingResult OverloadCandidateSet::BestViableFunction(Sema &S,
   }
 
   InjectNonDeducedTemplateCandidates(S);
-  return BestViableFunctionImpl(S, Loc, Best);
+
+  std::transform(this->Candidates.begin() + Candidates.size(),
+                 this->Candidates.end(),
+                 std::back_inserter(Candidates),
+                 [](OverloadCandidate &Cand) { return &Cand; });
+
+  return BestViableFunctionImpl(S, Loc, Best, Candidates);
 }
 
 OverloadingResult OverloadCandidateSet::BestViableFunctionImpl(
-    Sema &S, SourceLocation Loc, OverloadCandidateSet::iterator &Best) {
-
-  llvm::SmallVector<OverloadCandidate *, 16> Candidates;
-  Candidates.reserve(this->Candidates.size());
-  std::transform(this->Candidates.begin(), this->Candidates.end(),
-                 std::back_inserter(Candidates),
-                 [](OverloadCandidate &Cand) { return &Cand; });
+        Sema &S, SourceLocation Loc, OverloadCandidateSet::iterator &Best,
+        SmallVectorImpl<OverloadCandidate *> &Candidates) {
 
   if (S.getLangOpts().CUDA)
     CudaExcludeWrongSideCandidates(S, Candidates);

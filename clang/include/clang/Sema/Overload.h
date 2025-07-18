@@ -1495,7 +1495,8 @@ class Sema;
         Sema &S, SmallVectorImpl<OverloadCandidate *> &Candidates);
     OverloadingResult
     BestViableFunctionImpl(Sema &S, SourceLocation Loc,
-                           OverloadCandidateSet::iterator &Best);
+                           OverloadCandidateSet::iterator &Best,
+                           SmallVectorImpl<OverloadCandidate *> &Candidates);
   };
 
   bool isBetterOverloadCandidate(Sema &S, const OverloadCandidate &Cand1,
