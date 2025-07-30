@@ -434,9 +434,8 @@ static ExprResult calculateConstraintSatisfaction(
       EvaluateAtomicConstraint(S, Constraint.getConstraintExpr(), Template,
                                TemplateNameLoc, *SubstitutedArgs, Satisfaction);
 
-  if (SubstitutedAtomicExpr.isInvalid()) {
+  if (SubstitutedAtomicExpr.isInvalid())
     return false;
-  }
 
   if (!SubstitutedAtomicExpr.isUsable())
     // Evaluator has decided satisfaction without yielding an expression.
@@ -462,7 +461,8 @@ static ExprResult calculateConstraintSatisfaction(
         new (S.Context) ConstraintSatisfaction::SubstitutionDiagnostic{
             SubstitutedAtomicExpr.get()->getBeginLoc(),
             StringRef(Mem, MessageSize)});
-    return true;
+    // return true;
+    return SubstitutedAtomicExpr;
   }
 
   if (SubstitutedAtomicExpr.get()->isValueDependent()) {
@@ -610,8 +610,8 @@ static ExprResult calculateConstraintSatisfaction(
       S, Constraint.getNormalizedConstraint(), Template, TemplateNameLoc, MLTAL,
       Satisfaction, PackSubstitutionIndex);
 
-  if (!E.isUsable())
-    return E;
+  // if (E.isInvalid())
+  //   return E;
 
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
