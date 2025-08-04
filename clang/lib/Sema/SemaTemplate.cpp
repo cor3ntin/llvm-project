@@ -4766,6 +4766,9 @@ ExprResult Sema::CheckConceptTemplateId(
         Satisfaction, CL);
   }
 
+  if (Error)
+    return ExprError();
+
   if (!DoCheckConstraintSatisfaction)
     Satisfaction.IsSatisfied = false;
   Satisfaction.ContainsErrors = Error;

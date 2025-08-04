@@ -427,7 +427,7 @@ static ExprResult calculateConstraintSatisfaction(
                                       SubstitutedOuterMost,
                                       PackSubstitutionIndex);
   if (!SubstitutedArgs)
-    return false;
+    return true;
 
   Sema::ArgPackSubstIndexRAII SubstIndex(S, PackSubstitutionIndex);
   ExprResult SubstitutedAtomicExpr =
@@ -435,11 +435,11 @@ static ExprResult calculateConstraintSatisfaction(
                                TemplateNameLoc, *SubstitutedArgs, Satisfaction);
 
   if (SubstitutedAtomicExpr.isInvalid())
-    return false;
-
-  if (!SubstitutedAtomicExpr.isUsable())
-    // Evaluator has decided satisfaction without yielding an expression.
     return true;
+
+  if (SubstitutedAtomicExpr.isUnset())
+    // Evaluator has decided satisfaction without yielding an expression.
+    return false;
 
   // We don't have the ability to evaluate this, since it contains a
   // RecoveryExpr, so we want to fail overload resolution.  Otherwise,
@@ -468,7 +468,7 @@ static ExprResult calculateConstraintSatisfaction(
   if (SubstitutedAtomicExpr.get()->isValueDependent()) {
     Satisfaction.IsSatisfied = true;
     Satisfaction.ContainsErrors = false;
-    return true;
+    return SubstitutedAtomicExpr;
   }
 
   EnterExpressionEvaluationContext ConstantEvaluated(
@@ -486,7 +486,7 @@ static ExprResult calculateConstraintSatisfaction(
         << SubstitutedAtomicExpr.get()->getSourceRange();
     for (const PartialDiagnosticAt &PDiag : EvaluationDiags)
       S.Diag(PDiag.first, PDiag.second);
-    return false;
+    return true;
   }
 
   assert(EvalResult.Val.isInt() &&
@@ -598,20 +598,23 @@ static ExprResult calculateConstraintSatisfaction(
       S, Constraint.getConceptId()->getNamedConcept()->getDeclContext(),
       /*NewThisContext=*/false);
 
-  Sema::InstantiatingTemplate Tpl(
-      S, Constraint.getConceptId()->getBeginLoc(),
-      Sema::InstantiatingTemplate::ConstraintsCheck{},
-      Constraint.getConceptId()->getNamedConcept(), MLTAL.getInnermost(),
-      Constraint.getSourceRange());
+  std::optional<Sema::InstantiatingTemplate> InstTemplate;
+  InstTemplate.emplace(S, Constraint.getConceptId()->getBeginLoc(),
+                       Sema::InstantiatingTemplate::ConstraintsCheck{},
+                       Constraint.getConceptId()->getNamedConcept(),
+                       MLTAL.getInnermost(), Constraint.getSourceRange());
 
-  auto Size = Satisfaction.Details.size();
+  unsigned Size = Satisfaction.Details.size();
 
   ExprResult E = calculateConstraintSatisfaction(
       S, Constraint.getNormalizedConstraint(), Template, TemplateNameLoc, MLTAL,
       Satisfaction, PackSubstitutionIndex);
 
-  // if (E.isInvalid())
-  //   return E;
+  if (!E.isUsable()) {
+    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
+                                Constraint.getConceptId());
+    return E;
+  }
 
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
@@ -620,7 +623,7 @@ static ExprResult calculateConstraintSatisfaction(
                                       PackSubstitutionIndex);
 
   if (!SubstitutedArgs)
-    return E.isUsable();
+    return E;
 
   Sema::SFINAETrap Trap(S);
   Sema::ArgPackSubstIndexRAII SubstIndex(
@@ -639,14 +642,41 @@ static ExprResult calculateConstraintSatisfaction(
   AdjustConstraintDepth Adjust(S, Depth);
   if (Adjust.TransformTemplateArguments(Ori->getTemplateArgs(),
                                         Ori->NumTemplateArgs, TransArgs))
-    return false;
+    return E;
+
+  TemplateDeductionInfo Info(TemplateNameLoc);
+  InstTemplate.emplace(
+      S, TemplateNameLoc, Sema::InstantiatingTemplate::ConstraintSubstitution{},
+      const_cast<NamedDecl *>(Template), Info, Constraint.getSourceRange());
 
   if (S.SubstTemplateArguments(TransArgs.arguments(), *SubstitutedArgs,
                                OutArgs) ||
       Trap.hasErrorOccurred()) {
     Satisfaction.ContainsErrors = true;
     Satisfaction.IsSatisfied = false;
-    return false;
+    if (!Trap.hasErrorOccurred())
+      return ExprError();
+
+    PartialDiagnosticAt SubstDiag{SourceLocation(),
+                                  PartialDiagnostic::NullDiagnostic()};
+    Info.takeSFINAEDiagnostic(SubstDiag);
+    // FIXME: Concepts: This is an unfortunate consequence of there
+    //  being no serialization code for PartialDiagnostics and the fact
+    //  that serializing them would likely take a lot more storage than
+    //  just storing them as strings. We would still like, in the
+    //  future, to serialize the proper PartialDiagnostic as serializing
+    //  it as a string defeats the purpose of the diagnostic mechanism.
+    SmallString<128> DiagString;
+    DiagString = ": ";
+    SubstDiag.second.EmitToString(S.getDiagnostics(), DiagString);
+    unsigned MessageSize = DiagString.size();
+    char *Mem = new (S.Context) char[MessageSize];
+    memcpy(Mem, DiagString.c_str(), MessageSize);
+    Satisfaction.Details.insert(
+        Satisfaction.Details.begin() + Size,
+        new (S.Context) ConstraintSatisfaction::SubstitutionDiagnostic{
+            SubstDiag.first, StringRef(Mem, MessageSize)});
+    return ExprError();
   }
 
   CXXScopeSpec SS;
@@ -659,7 +689,7 @@ static ExprResult calculateConstraintSatisfaction(
       /*CheckConstraintSatisfaction=*/false);
 
   if (SubstitutedConceptId.isInvalid() || Trap.hasErrorOccurred())
-    return false;
+    return E;
 
   if (Size != Satisfaction.Details.size()) {
 
@@ -688,7 +718,7 @@ static ExprResult calculateConstraintSatisfaction(
       PackSubstitutionIndex);
 
   if (Conjunction && !LHS.isUsable())
-    return false;
+    return LHS;
 
   if (!Conjunction && LHS.isUsable() && Satisfaction.IsSatisfied &&
       !Satisfaction.ContainsErrors)
@@ -804,6 +834,9 @@ static bool CheckConstraintSatisfaction(
   ExprResult Res = calculateConstraintSatisfaction(
               S, *C, Template, TemplateIDRange.getBegin(), TemplateArgsLists,
               Satisfaction, S.ArgPackSubstIndex);
+
+  if (Res.isInvalid())
+    return true;
 
   if (Res.isUsable() && ConvertedExpr)
     *ConvertedExpr = Res.get();
