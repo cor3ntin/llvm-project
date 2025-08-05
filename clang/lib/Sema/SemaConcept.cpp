@@ -717,15 +717,11 @@ static ExprResult calculateConstraintSatisfaction(
       S, Constraint.getLHS(), Template, TemplateNameLoc, MLTAL, Satisfaction,
       PackSubstitutionIndex);
 
-  if (Conjunction && !LHS.isUsable())
+  if (Conjunction && (!Satisfaction.IsSatisfied || Satisfaction.ContainsErrors))
     return LHS;
 
   if (!Conjunction && LHS.isUsable() && Satisfaction.IsSatisfied &&
       !Satisfaction.ContainsErrors)
-    return LHS;
-
-  if (Conjunction && LHS.isUsable() &&
-      (!Satisfaction.IsSatisfied || Satisfaction.ContainsErrors))
     return LHS;
 
   Satisfaction.ContainsErrors = false;
