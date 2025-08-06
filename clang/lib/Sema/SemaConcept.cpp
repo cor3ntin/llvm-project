@@ -594,10 +594,6 @@ static ExprResult calculateConstraintSatisfaction(
     ConstraintSatisfaction &Satisfaction,
     UnsignedOrNone PackSubstitutionIndex) {
 
-  Sema::ContextRAII CurContext(
-      S, Constraint.getConceptId()->getNamedConcept()->getDeclContext(),
-      /*NewThisContext=*/false);
-
   std::optional<Sema::InstantiatingTemplate> InstTemplate;
   InstTemplate.emplace(S, Constraint.getConceptId()->getBeginLoc(),
                        Sema::InstantiatingTemplate::ConstraintsCheck{},
@@ -622,8 +618,12 @@ static ExprResult calculateConstraintSatisfaction(
                                       SubstitutedOuterMost,
                                       PackSubstitutionIndex);
 
-  if (!SubstitutedArgs)
-    return E;
+  if (!SubstitutedArgs) {
+    Satisfaction.ContainsErrors = true;
+    Satisfaction.IsSatisfied = false;
+    // FIXME: diagnostics?
+    return ExprError();
+  }
 
   Sema::SFINAETrap Trap(S);
   Sema::ArgPackSubstIndexRAII SubstIndex(
@@ -641,8 +641,11 @@ static ExprResult calculateConstraintSatisfaction(
                        : 0;
   AdjustConstraintDepth Adjust(S, Depth);
   if (Adjust.TransformTemplateArguments(Ori->getTemplateArgs(),
-                                        Ori->NumTemplateArgs, TransArgs))
+                                        Ori->NumTemplateArgs, TransArgs)) {
+    Satisfaction.ContainsErrors = true;
+    Satisfaction.IsSatisfied = false;
     return E;
+  }
 
   TemplateDeductionInfo Info(TemplateNameLoc);
   InstTemplate.emplace(
@@ -679,20 +682,23 @@ static ExprResult calculateConstraintSatisfaction(
     return ExprError();
   }
 
+  if (Satisfaction.IsSatisfied)
+    return E;
+
   CXXScopeSpec SS;
   SS.Adopt(Constraint.getConceptId()->getNestedNameSpecifierLoc());
+
   ExprResult SubstitutedConceptId = S.CheckConceptTemplateId(
       SS, Constraint.getConceptId()->getTemplateKWLoc(),
       Constraint.getConceptId()->getConceptNameInfo(),
       Constraint.getConceptId()->getFoundDecl(),
       Constraint.getConceptId()->getNamedConcept(), &OutArgs,
-      /*CheckConstraintSatisfaction=*/false);
+      /*DoCheckConstraintSatisfaction=*/false);
 
   if (SubstitutedConceptId.isInvalid() || Trap.hasErrorOccurred())
     return E;
 
   if (Size != Satisfaction.Details.size()) {
-
     Satisfaction.Details.insert(
         Satisfaction.Details.begin() + Size,
         UnsatisfiedConstraintRecord(
@@ -1285,10 +1291,6 @@ static bool CheckFunctionConstraintsWithoutInstantiation(
   MLTAL.replaceInnermostTemplateArguments(Template, TemplateArgs);
 
   Sema::ContextRAII SavedContext(SemaRef, FD);
-  std::optional<Sema::CXXThisScopeRAII> ThisScope;
-  if (auto *Method = dyn_cast<CXXMethodDecl>(FD))
-    ThisScope.emplace(SemaRef, /*Record=*/Method->getParent(),
-                      /*ThisQuals=*/Method->getMethodQualifiers());
   return SemaRef.CheckConstraintSatisfaction(
       Template, TemplateAC, MLTAL, PointOfInstantiation, Satisfaction);
 }

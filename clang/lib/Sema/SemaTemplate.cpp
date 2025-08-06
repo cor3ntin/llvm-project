@@ -4764,14 +4764,15 @@ ExprResult Sema::CheckConceptTemplateId(
         SourceRange(SS.isSet() ? SS.getBeginLoc() : ConceptNameInfo.getLoc(),
                     TemplateArgs->getRAngleLoc()),
         Satisfaction, CL);
+    Satisfaction.ContainsErrors = Error;
   }
 
   if (Error)
     return ExprError();
 
-  if (!DoCheckConstraintSatisfaction)
-    Satisfaction.IsSatisfied = false;
-  Satisfaction.ContainsErrors = Error;
+  // if (!DoCheckConstraintSatisfaction)
+  //   Satisfaction.IsSatisfied = false;
+  // Satisfaction.ContainsErrors = Error;
 
   return ConceptSpecializationExpr::Create(
       Context, CL, CSD, AreArgsDependent ? nullptr : &Satisfaction);
