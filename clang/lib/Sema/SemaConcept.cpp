@@ -353,10 +353,14 @@ SubstitutionInTemplateArguments(
     Sema &S, const NormalizedConstraintWithParamMapping &Constraint,
     const NamedDecl *Template, MultiLevelTemplateArgumentList MLTAL,
     llvm::SmallVector<TemplateArgument> &SubstitutedOuterMost,
+    ConstraintSatisfaction &Satisfaction,
     // FIXME: Having both PackSubstitutionIndex and
     // NormalizedConstraintWithParamMapping::getPackSubstitutionIndex is
     // confusing
     UnsignedOrNone PackSubstitutionIndex) {
+
+  if (!Constraint.hasParameterMapping())
+    return std::move(MLTAL);
 
   Sema::InstantiatingTemplate Inst(
       S, Constraint.getBeginLoc(),
@@ -369,49 +373,50 @@ SubstitutionInTemplateArguments(
   Sema::SFINAETrap Trap(S);
 
   TemplateArgumentListInfo SubstArgs;
-  if (Constraint.hasParameterMapping()) {
-    Sema::ArgPackSubstIndexRAII SubstIndex(
-        S, Constraint.getPackSubstitutionIndex()
-               ? Constraint.getPackSubstitutionIndex()
-               : PackSubstitutionIndex);
-    if (S.SubstTemplateArgumentsInParameterMapping(
-            Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
-            SubstArgs) ||
-        Trap.hasErrorOccurred())
-      return std::nullopt;
-    Sema::CheckTemplateArgumentInfo CTAI;
-    auto *TD = const_cast<TemplateDecl *>(
-        cast<TemplateDecl>(Constraint.getConstraintDecl()));
-    if (S.CheckTemplateArgumentList(TD, Constraint.getUsedTemplateParamList(),
-                                    TD->getLocation(), SubstArgs,
-                                    /*DefaultArguments=*/{},
-                                    /*PartialTemplateArgs=*/false, CTAI))
-      return std::nullopt;
-    NormalizedConstraint::OccurenceList Used =
-        Constraint.mappingOccurenceList();
-    SubstitutedOuterMost =
-        llvm::to_vector_of<TemplateArgument>(MLTAL.getOutermost());
-    unsigned Offset = 0;
-    for (unsigned I = 0, MappedIndex = 0; I < Used.size(); I++) {
-      TemplateArgument Arg;
-      if (Used[I])
-        Arg = S.Context.getCanonicalTemplateArgument(
-            CTAI.SugaredConverted[MappedIndex++]);
-      if (I < SubstitutedOuterMost.size()) {
-        SubstitutedOuterMost[I] = Arg;
-        Offset = I + 1;
-      } else {
-        SubstitutedOuterMost.push_back(Arg);
-        Offset = SubstitutedOuterMost.size();
-      }
-    }
-    if (Offset < SubstitutedOuterMost.size())
-      SubstitutedOuterMost.erase(SubstitutedOuterMost.begin() + Offset);
+  Sema::ArgPackSubstIndexRAII SubstIndex(
+      S, Constraint.getPackSubstitutionIndex()
+             ? Constraint.getPackSubstitutionIndex()
+             : PackSubstitutionIndex);
 
-    MLTAL.replaceOutermostTemplateArguments(
-        const_cast<NamedDecl *>(Constraint.getConstraintDecl()),
-        SubstitutedOuterMost);
+  if (S.SubstTemplateArgumentsInParameterMapping(
+          Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
+          SubstArgs)) {
+    Satisfaction.ContainsErrors = true;
+    Satisfaction.IsSatisfied = false;
+    return std::nullopt;
   }
+
+  Sema::CheckTemplateArgumentInfo CTAI;
+  auto *TD = const_cast<TemplateDecl *>(
+      cast<TemplateDecl>(Constraint.getConstraintDecl()));
+  if (S.CheckTemplateArgumentList(TD, Constraint.getUsedTemplateParamList(),
+                                  TD->getLocation(), SubstArgs,
+                                  /*DefaultArguments=*/{},
+                                  /*PartialTemplateArgs=*/false, CTAI))
+    return std::nullopt;
+  NormalizedConstraint::OccurenceList Used = Constraint.mappingOccurenceList();
+  SubstitutedOuterMost =
+      llvm::to_vector_of<TemplateArgument>(MLTAL.getOutermost());
+  unsigned Offset = 0;
+  for (unsigned I = 0, MappedIndex = 0; I < Used.size(); I++) {
+    TemplateArgument Arg;
+    if (Used[I])
+      Arg = S.Context.getCanonicalTemplateArgument(
+          CTAI.SugaredConverted[MappedIndex++]);
+    if (I < SubstitutedOuterMost.size()) {
+      SubstitutedOuterMost[I] = Arg;
+      Offset = I + 1;
+    } else {
+      SubstitutedOuterMost.push_back(Arg);
+      Offset = SubstitutedOuterMost.size();
+    }
+  }
+  if (Offset < SubstitutedOuterMost.size())
+    SubstitutedOuterMost.erase(SubstitutedOuterMost.begin() + Offset);
+
+  MLTAL.replaceOutermostTemplateArguments(
+      const_cast<NamedDecl *>(Constraint.getConstraintDecl()),
+      SubstitutedOuterMost);
   return std::move(MLTAL);
 }
 
@@ -424,10 +429,13 @@ static ExprResult calculateConstraintSatisfaction(
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
       SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
-                                      SubstitutedOuterMost,
+                                      SubstitutedOuterMost, Satisfaction,
                                       PackSubstitutionIndex);
-  if (!SubstitutedArgs)
-    return true;
+  if (!SubstitutedArgs) {
+    Satisfaction.IsSatisfied = false;
+    Satisfaction.ContainsErrors = true;
+    return ExprEmpty();
+  }
 
   Sema::ArgPackSubstIndexRAII SubstIndex(S, PackSubstitutionIndex);
   ExprResult SubstitutedAtomicExpr =
@@ -435,11 +443,11 @@ static ExprResult calculateConstraintSatisfaction(
                                TemplateNameLoc, *SubstitutedArgs, Satisfaction);
 
   if (SubstitutedAtomicExpr.isInvalid())
-    return true;
+    return ExprError();
 
   if (SubstitutedAtomicExpr.isUnset())
     // Evaluator has decided satisfaction without yielding an expression.
-    return false;
+    return ExprEmpty();
 
   // We don't have the ability to evaluate this, since it contains a
   // RecoveryExpr, so we want to fail overload resolution.  Otherwise,
@@ -461,7 +469,6 @@ static ExprResult calculateConstraintSatisfaction(
         new (S.Context) ConstraintSatisfaction::SubstitutionDiagnostic{
             SubstitutedAtomicExpr.get()->getBeginLoc(),
             StringRef(Mem, MessageSize)});
-    // return true;
     return SubstitutedAtomicExpr;
   }
 
@@ -486,7 +493,7 @@ static ExprResult calculateConstraintSatisfaction(
         << SubstitutedAtomicExpr.get()->getSourceRange();
     for (const PartialDiagnosticAt &PDiag : EvaluationDiags)
       S.Diag(PDiag.first, PDiag.second);
-    return true;
+    return ExprError();
   }
 
   assert(EvalResult.Val.isInt() &&
@@ -538,7 +545,7 @@ static ExprResult calculateConstraintSatisfaction(
 
   bool Conjunction =
       FE.getFoldOperator() == FoldExpandedConstraint::FoldOperatorKind::And;
-  size_t EffectiveDetailEndIndex = Satisfaction.Details.size();
+  unsigned EffectiveDetailEndIndex = Satisfaction.Details.size();
 
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
@@ -547,45 +554,55 @@ static ExprResult calculateConstraintSatisfaction(
           static_cast<const NormalizedConstraintWithParamMapping &>(
               FE.getNormalizedPattern()),
           // FIXME: Is PackSubstitutionIndex correct?
-          Template, MLTAL, SubstitutedOuterMost, S.ArgPackSubstIndex);
-  if (!SubstitutedArgs)
-    return false;
+          Template, MLTAL, SubstitutedOuterMost, Satisfaction,
+          S.ArgPackSubstIndex);
+  if (!SubstitutedArgs) {
+    Satisfaction.IsSatisfied = false;
+    Satisfaction.ContainsErrors = true;
+    return ExprError();
+  }
 
   ExprResult Out;
   UnsignedOrNone NumExpansions = EvaluateFoldExpandedConstraintSize(
       S, FE, Template, TemplateNameLoc, *SubstitutedArgs, Satisfaction);
   if (!NumExpansions)
-    return false;
+    return ExprEmpty();
 
   if (*NumExpansions == 0) {
     Satisfaction.IsSatisfied = Conjunction;
-    return true;
+    return ExprEmpty();
   }
 
   for (unsigned I = 0; I < *NumExpansions; I++) {
     Sema::ArgPackSubstIndexRAII SubstIndex(S, I);
     Satisfaction.IsSatisfied = false;
     Satisfaction.ContainsErrors = false;
-    // FIXME
     ExprResult Expr = calculateConstraintSatisfaction(
         S, FE.getNormalizedPattern(), Template, TemplateNameLoc,
         *SubstitutedArgs, Satisfaction, UnsignedOrNone(I));
-    // SFINAE errors shouldn't prevent disjunction from evaluating
-    // FIXME: Does !Success == SFINAE errors occurred?
-    if (!Expr.isUsable() && Conjunction)
-      return false;
+    if (Expr.isUsable()) {
+      if (Out.isUnset())
+        Out = Expr;
+      else
+        Out = BinaryOperator::Create(S.Context, Out.get(), Expr.get(),
+                                     Conjunction ? BinaryOperatorKind::BO_LAnd
+                                                 : BinaryOperatorKind::BO_LOr,
+                                     S.Context.BoolTy, VK_PRValue, OK_Ordinary,
+                                     FE.getBeginLoc(), FPOptionsOverride{});
+    } else {
+      assert(!Satisfaction.IsSatisfied);
+    }
     if (!Conjunction && Satisfaction.IsSatisfied) {
       Satisfaction.Details.erase(Satisfaction.Details.begin() +
                                      EffectiveDetailEndIndex,
                                  Satisfaction.Details.end());
       break;
     }
+    if (Satisfaction.IsSatisfied != Conjunction)
+      return Out;
   }
-  // Satisfaction.IsSatisfied might be overwritten.
-  // How to handle errors here ?? Shall we substitute into the concept?
-  if (Satisfaction.Details.size() != EffectiveDetailEndIndex)
-    Satisfaction.IsSatisfied = false;
-  return true;
+
+  return Out;
 }
 
 static ExprResult calculateConstraintSatisfaction(
@@ -615,7 +632,7 @@ static ExprResult calculateConstraintSatisfaction(
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
       SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
-                                      SubstitutedOuterMost,
+                                      SubstitutedOuterMost, Satisfaction,
                                       PackSubstitutionIndex);
 
   if (!SubstitutedArgs) {
@@ -633,7 +650,6 @@ static ExprResult calculateConstraintSatisfaction(
 
   const ASTTemplateArgumentListInfo *Ori =
       Constraint.getConceptId()->getTemplateArgsAsWritten();
-  TemplateArgumentListInfo OutArgs(Ori->LAngleLoc, Ori->RAngleLoc);
 
   TemplateArgumentListInfo TransArgs(Ori->LAngleLoc, Ori->RAngleLoc);
   unsigned Depth = Template && Template->getTemplateDepth()
@@ -652,6 +668,7 @@ static ExprResult calculateConstraintSatisfaction(
       S, TemplateNameLoc, Sema::InstantiatingTemplate::ConstraintSubstitution{},
       const_cast<NamedDecl *>(Template), Info, Constraint.getSourceRange());
 
+  TemplateArgumentListInfo OutArgs(Ori->LAngleLoc, Ori->RAngleLoc);
   if (S.SubstTemplateArguments(TransArgs.arguments(), *SubstitutedArgs,
                                OutArgs) ||
       Trap.hasErrorOccurred()) {
@@ -714,7 +731,7 @@ static ExprResult calculateConstraintSatisfaction(
     ConstraintSatisfaction &Satisfaction,
     UnsignedOrNone PackSubstitutionIndex) {
 
-  auto EffectiveDetailEndIndex = Satisfaction.Details.size();
+  unsigned EffectiveDetailEndIndex = Satisfaction.Details.size();
 
   bool Conjunction =
       Constraint.getCompoundKind() == NormalizedConstraint::CCK_Conjunction;
@@ -747,14 +764,11 @@ static ExprResult calculateConstraintSatisfaction(
   if (!RHS.isUsable())
     return LHS;
 
-  return BinaryOperator::Create(
-      S.Context, LHS.get(), RHS.get(),
-      BinaryOperator::getOverloadedOpcode(
-          Constraint.getCompoundKind() == NormalizedConstraint::CCK_Conjunction
-              ? OO_AmpAmp
-              : OO_PipePipe),
-      S.Context.BoolTy, VK_PRValue, OK_Ordinary, Constraint.getBeginLoc(),
-      FPOptionsOverride{});
+  return BinaryOperator::Create(S.Context, LHS.get(), RHS.get(),
+                                Conjunction ? BinaryOperatorKind::BO_LAnd
+                                            : BinaryOperatorKind::BO_LOr,
+                                S.Context.BoolTy, VK_PRValue, OK_Ordinary,
+                                Constraint.getBeginLoc(), FPOptionsOverride{});
 }
 
 static ExprResult calculateConstraintSatisfaction(

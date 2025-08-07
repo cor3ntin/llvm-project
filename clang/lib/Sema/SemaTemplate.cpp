@@ -4770,10 +4770,6 @@ ExprResult Sema::CheckConceptTemplateId(
   if (Error)
     return ExprError();
 
-  // if (!DoCheckConstraintSatisfaction)
-  //   Satisfaction.IsSatisfied = false;
-  // Satisfaction.ContainsErrors = Error;
-
   return ConceptSpecializationExpr::Create(
       Context, CL, CSD, AreArgsDependent ? nullptr : &Satisfaction);
 }
