@@ -381,7 +381,6 @@ SubstitutionInTemplateArguments(
   if (S.SubstTemplateArgumentsInParameterMapping(
           Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
           SubstArgs)) {
-    Satisfaction.ContainsErrors = true;
     Satisfaction.IsSatisfied = false;
     return std::nullopt;
   }
@@ -433,7 +432,6 @@ static ExprResult calculateConstraintSatisfaction(
                                       PackSubstitutionIndex);
   if (!SubstitutedArgs) {
     Satisfaction.IsSatisfied = false;
-    Satisfaction.ContainsErrors = true;
     return ExprEmpty();
   }
 
@@ -558,7 +556,6 @@ static ExprResult calculateConstraintSatisfaction(
           S.ArgPackSubstIndex);
   if (!SubstitutedArgs) {
     Satisfaction.IsSatisfied = false;
-    Satisfaction.ContainsErrors = true;
     return ExprError();
   }
 
@@ -636,7 +633,6 @@ static ExprResult calculateConstraintSatisfaction(
                                       PackSubstitutionIndex);
 
   if (!SubstitutedArgs) {
-    Satisfaction.ContainsErrors = true;
     Satisfaction.IsSatisfied = false;
     // FIXME: diagnostics?
     return ExprError();
@@ -658,7 +654,6 @@ static ExprResult calculateConstraintSatisfaction(
   AdjustConstraintDepth Adjust(S, Depth);
   if (Adjust.TransformTemplateArguments(Ori->getTemplateArgs(),
                                         Ori->NumTemplateArgs, TransArgs)) {
-    Satisfaction.ContainsErrors = true;
     Satisfaction.IsSatisfied = false;
     return E;
   }
@@ -672,7 +667,6 @@ static ExprResult calculateConstraintSatisfaction(
   if (S.SubstTemplateArguments(TransArgs.arguments(), *SubstitutedArgs,
                                OutArgs) ||
       Trap.hasErrorOccurred()) {
-    Satisfaction.ContainsErrors = true;
     Satisfaction.IsSatisfied = false;
     if (!Trap.hasErrorOccurred())
       return ExprError();
