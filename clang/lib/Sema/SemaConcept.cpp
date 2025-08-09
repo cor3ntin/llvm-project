@@ -193,7 +193,8 @@ static bool DiagRecursiveConstraintEval(
   if (MLTAL) {
     for (const auto &List : *MLTAL)
       for (const auto &TemplateArg : List.Args)
-        TemplateArg.Profile(ID, S.Context);
+        S.Context.getCanonicalTemplateArgument(TemplateArg)
+            .Profile(ID, S.Context);
   }
   if (S.SatisfactionStackContains(Templ, ID)) {
     S.Diag(E->getExprLoc(), diag::err_constraint_depends_on_self)
@@ -883,7 +884,8 @@ bool Sema::CheckConstraintSatisfaction(
   // here.
   llvm::SmallVector<TemplateArgument, 4> FlattenedArgs;
   for (auto List : TemplateArgsLists)
-    llvm::append_range(FlattenedArgs, List.Args);
+    for (const TemplateArgument &Arg : List.Args)
+      FlattenedArgs.emplace_back(Context.getCanonicalTemplateArgument(Arg));
 
   const NamedDecl *Owner = Template;
   if (TopLevelConceptId)
@@ -1776,7 +1778,7 @@ substituteParameterMappings(Sema &S, ConceptIdConstraint &N,
                                 /*UpdateArgsWithConversions=*/false))
       return true;
     TemplateArgs.replaceOutermostTemplateArguments(
-        TemplateArgs.getAssociatedDecl(0).first, CTAI.CanonicalConverted);
+        TemplateArgs.getAssociatedDecl(0).first, CTAI.SugaredConverted);
   }
   return substituteParameterMappings(S, N.getNormalizedConstraint(),
                                      TemplateArgs, ArgsAsWritten);
@@ -1816,7 +1818,7 @@ static bool substituteParameterMappings(Sema &S, NormalizedConstraint &N,
                                         const ConceptSpecializationExpr *CSE) {
   MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(
       CSE->getNamedConcept(), CSE->getNamedConcept()->getLexicalDeclContext(),
-      /*Final=*/false, CSE->getTemplateArguments(),
+      /*Final=*/true, CSE->getTemplateArguments(),
       /*RelativeToPrimary=*/true,
       /*Pattern=*/nullptr,
       /*ForConstraintInstantiation=*/true);
