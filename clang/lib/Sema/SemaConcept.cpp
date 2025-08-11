@@ -1818,6 +1818,18 @@ substituteParameterMappings(Sema &S, NormalizedConstraint &N,
     return substituteParameterMappings(S, static_cast<AtomicConstraint &>(N),
                                        MLTAL, ArgsAsWritten);
   case NormalizedConstraint::ConstraintKind::FoldExpanded: {
+    auto &FE = static_cast<FoldExpandedConstraint &>(N);
+    // FIXME: This is not used.
+    ConstraintSatisfaction CS;
+    UnsignedOrNone PackSize = EvaluateFoldExpandedConstraintSize(
+        S, FE, /*Template=*/nullptr, /*TemplateNameLoc=*/SourceLocation(),
+        MLTAL, CS);
+    if (!PackSize)
+      return true;
+
+    // Do we need to do something else when pack is empty?
+    if (!*PackSize)
+      return false;
     Sema::ArgPackSubstIndexRAII _(S, std::nullopt);
     return substituteParameterMappings(
         S, static_cast<FoldExpandedConstraint &>(N).getNormalizedPattern(),
