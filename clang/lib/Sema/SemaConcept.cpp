@@ -1738,10 +1738,6 @@ substituteParameterMappings(Sema &S, NormalizedConstraintWithParamMapping &N,
     TempArgs[I] = S.getTrivialTemplateArgumentLoc(CTAI.SugaredConverted[I],
                                                   QualType(), Loc);
   }
-  // llvm::copy(SubstArgs.arguments(), TempArgs);
-  // N.updateParameterMapping(
-  //     N.mappingOccurenceList(),
-  //     MutableArrayRef<TemplateArgumentLoc>(TempArgs, SubstArgs.size()));
   MutableArrayRef<TemplateArgumentLoc> Mapping(TempArgs,
                                                CTAI.SugaredConverted.size());
   N.updateParameterMapping(N.mappingOccurenceList(), Mapping,
@@ -1754,11 +1750,6 @@ substituteParameterMappings(Sema &S, ConceptIdConstraint &N,
                             const MultiLevelTemplateArgumentList &MLTAL,
                             const ASTTemplateArgumentListInfo *ArgsAsWritten) {
   assert(N.getConstraintDecl());
-#if 0
-  return substituteParameterMappings(
-          S, static_cast<NormalizedConstraintWithParamMapping &>(N), MLTAL,
-          ArgsAsWritten);
-#else
   auto TemplateArgs = MLTAL;
   if (N.getConstraintDecl()) {
     if (substituteParameterMappings(
@@ -1805,7 +1796,6 @@ substituteParameterMappings(Sema &S, ConceptIdConstraint &N,
     }
   return substituteParameterMappings(S, N.getNormalizedConstraint(),
                                      TemplateArgs, ArgsAsWritten);
-#endif
 }
 
 static bool
