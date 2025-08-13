@@ -67,7 +67,7 @@ protected:
     unsigned Kind : 5;
     unsigned Placeholder : 1;
     unsigned PackSubstitutionIndex : 26;
-    llvm::SmallBitVector Indexes;
+    OccurenceList Indexes;
     TemplateArgumentLoc *Args;
     TemplateParameterList *ParamList;
     ExprOrConcept ConstraintExpr;
@@ -79,7 +79,7 @@ protected:
     unsigned Kind : 5;
     LLVM_PREFERRED_TYPE(FoldOperatorKind)
     unsigned FoldOperator : 1;
-    unsigned Placeholder : 26;
+    unsigned NumExpansions : 26;
     OccurenceList Indexes;
     TemplateArgumentLoc *Args;
     TemplateParameterList *ParamList;
@@ -131,7 +131,7 @@ protected:
                        NormalizedConstraint *Constraint)
       : FoldExpanded{llvm::to_underlying(ConstraintKind::FoldExpanded),
                      llvm::to_underlying(OpKind),
-                     /*Placeholder=*/0,
+                     /*NumExpansions=*/0,
                      /*Indexes=*/{},
                      /*Args=*/nullptr,
                      /*ParamList=*/nullptr,

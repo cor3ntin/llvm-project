@@ -1639,6 +1639,258 @@ void Sema::DiagnoseUnsatisfiedConstraint(
                                   ConstraintExpr->getBeginLoc(), First);
 }
 
+namespace {
+
+class SubstituteParameterMappings {
+  Sema &SemaRef;
+
+  const MultiLevelTemplateArgumentList *MLTAL;
+  const ASTTemplateArgumentListInfo *ArgsAsWritten;
+
+  SubstituteParameterMappings(Sema &SemaRef,
+                              const MultiLevelTemplateArgumentList *MLTAL,
+                              const ASTTemplateArgumentListInfo *ArgsAsWritten)
+      : SemaRef(SemaRef), MLTAL(MLTAL), ArgsAsWritten(ArgsAsWritten) {}
+
+  void buildParameterMapping(NormalizedConstraintWithParamMapping &N);
+
+  bool substitute(NormalizedConstraintWithParamMapping &N);
+
+  bool substitute(ConceptIdConstraint &CC);
+
+public:
+  SubstituteParameterMappings(Sema &SemaRef)
+      : SemaRef(SemaRef), MLTAL(nullptr), ArgsAsWritten(nullptr) {}
+
+  bool substitute(NormalizedConstraint &N);
+};
+
+void SubstituteParameterMappings::buildParameterMapping(
+    NormalizedConstraintWithParamMapping &N) {
+  TemplateParameterList *TemplateParams =
+      cast<TemplateDecl>(N.getConstraintDecl())->getTemplateParameters();
+
+  llvm::SmallBitVector OccurringIndices(TemplateParams->size());
+
+  if (N.getKind() == NormalizedConstraint::ConstraintKind::Atomic) {
+    SemaRef.MarkUsedTemplateParameters(
+        static_cast<AtomicConstraint &>(N).getConstraintExpr(),
+        /*OnlyDeduced=*/false,
+        /*Depth=*/0, OccurringIndices);
+  } else if (N.getKind() == NormalizedConstraint::ConstraintKind::ConceptId) {
+    auto *Args = static_cast<ConceptIdConstraint &>(N)
+                     .getConceptId()
+                     ->getTemplateArgsAsWritten();
+    if (Args)
+      SemaRef.MarkUsedTemplateParameters(Args->arguments(),
+                                         /*Depth=*/0, OccurringIndices);
+  }
+  TemplateArgumentLoc *TempArgs =
+      new (SemaRef.Context) TemplateArgumentLoc[OccurringIndices.count()];
+  llvm::SmallVector<NamedDecl *> UsedParams;
+  for (unsigned I = 0, J = 0, C = TemplateParams->size(); I != C; ++I) {
+    SourceLocation Loc = ArgsAsWritten->NumTemplateArgs > I
+                             ? ArgsAsWritten->arguments()[I].getLocation()
+                             : SourceLocation();
+    // FIXME: Investigate why we couldn't always preserve the SourceLoc. We
+    // can't assert Loc.isValid() now.
+    if (OccurringIndices[I]) {
+      NamedDecl *Param = TemplateParams->begin()[I];
+      new (&(TempArgs)[J]) TemplateArgumentLoc(
+          SemaRef.getIdentityTemplateArgumentLoc(Param, Loc));
+      UsedParams.push_back(Param);
+      J++;
+    }
+  }
+  auto *UsedList = TemplateParameterList::Create(
+      SemaRef.Context, TemplateParams->getTemplateLoc(),
+      TemplateParams->getLAngleLoc(), UsedParams,
+      /*RAngleLoc=*/SourceLocation(),
+      /*RequiresClause=*/nullptr);
+  N.updateParameterMapping(
+      OccurringIndices,
+      MutableArrayRef<TemplateArgumentLoc>{TempArgs, OccurringIndices.count()},
+      UsedList);
+}
+
+bool SubstituteParameterMappings::substitute(
+    NormalizedConstraintWithParamMapping &N) {
+  if (!N.hasParameterMapping())
+    buildParameterMapping(N);
+
+  SourceLocation InstLocBegin, InstLocEnd;
+  llvm::ArrayRef Arguments = ArgsAsWritten->arguments();
+  if (Arguments.empty()) {
+    InstLocBegin = ArgsAsWritten->getLAngleLoc();
+    InstLocEnd = ArgsAsWritten->getRAngleLoc();
+  } else {
+    // FIXME: Is it useful?
+    auto SR = Arguments[0].getSourceRange();
+    InstLocBegin = SR.getBegin();
+    InstLocEnd = SR.getEnd();
+  }
+  Sema::InstantiatingTemplate Inst(
+      SemaRef, InstLocBegin,
+      Sema::InstantiatingTemplate::ParameterMappingSubstitution{},
+      const_cast<NamedDecl *>(N.getConstraintDecl()),
+      {InstLocBegin, InstLocEnd});
+  if (Inst.isInvalid())
+    return true;
+
+  // TransformTemplateArguments is unable to preserve the source location of a
+  // pack. The SourceLocation is necessary for the instantiation location.
+  // FIXME: The BaseLoc will be used as the location of the pack expansion,
+  // which is wrong.
+  TemplateArgumentListInfo SubstArgs;
+  if (SemaRef.SubstTemplateArgumentsInParameterMapping(
+          N.getParameterMapping(), N.getBeginLoc(), *MLTAL, SubstArgs))
+    return true;
+  Sema::CheckTemplateArgumentInfo CTAI;
+  auto *TD =
+      const_cast<TemplateDecl *>(cast<TemplateDecl>(N.getConstraintDecl()));
+  if (SemaRef.CheckTemplateArgumentList(TD, N.getUsedTemplateParamList(),
+                                        TD->getLocation(), SubstArgs,
+                                        /*DefaultArguments=*/{},
+                                        /*PartialTemplateArgs=*/false, CTAI))
+    return true;
+
+  TemplateArgumentLoc *TempArgs =
+      new (SemaRef.Context) TemplateArgumentLoc[CTAI.SugaredConverted.size()];
+
+  for (unsigned I = 0; I < CTAI.SugaredConverted.size(); ++I) {
+    SourceLocation Loc;
+    // If this is an empty pack, we have no corresponding SubstArgs.
+    if (I < SubstArgs.size())
+      Loc = SubstArgs.arguments()[I].getLocation();
+
+    TempArgs[I] = SemaRef.getTrivialTemplateArgumentLoc(
+        CTAI.SugaredConverted[I], QualType(), Loc);
+  }
+
+  MutableArrayRef<TemplateArgumentLoc> Mapping(TempArgs,
+                                               CTAI.SugaredConverted.size());
+  N.updateParameterMapping(N.mappingOccurenceList(), Mapping,
+                           N.getUsedTemplateParamList());
+  return false;
+}
+
+bool SubstituteParameterMappings::substitute(ConceptIdConstraint &CC) {
+  assert(CC.getConstraintDecl() && MLTAL && ArgsAsWritten);
+
+  if (substitute(static_cast<NormalizedConstraintWithParamMapping &>(CC)))
+    return true;
+
+  auto *CSE = CC.getConceptSpecializationExpr();
+  assert(CSE);
+  assert(!CC.getBeginLoc().isInvalid());
+
+  SourceLocation InstLocBegin, InstLocEnd;
+  if (llvm::ArrayRef Arguments = ArgsAsWritten->arguments();
+      Arguments.empty()) {
+    InstLocBegin = ArgsAsWritten->getLAngleLoc();
+    InstLocEnd = ArgsAsWritten->getRAngleLoc();
+  } else {
+    // FIXME: Is it useful?
+    auto SR = Arguments[0].getSourceRange();
+    InstLocBegin = SR.getBegin();
+    InstLocEnd = SR.getEnd();
+  }
+  // This is useful for name lookup across modules; see Sema::getLookupModules.
+  Sema::InstantiatingTemplate Inst(
+      SemaRef, InstLocBegin,
+      Sema::InstantiatingTemplate::ParameterMappingSubstitution{},
+      const_cast<NamedDecl *>(CC.getConstraintDecl()),
+      {InstLocBegin, InstLocEnd});
+  if (Inst.isInvalid())
+    return true;
+
+  TemplateArgumentListInfo Out;
+  // TransformTemplateArguments is unable to preserve the source location of a
+  // pack. The SourceLocation is necessary for the instantiation location.
+  // FIXME: The BaseLoc will be used as the location of the pack expansion,
+  // which is wrong.
+  const ASTTemplateArgumentListInfo *ArgsAsWritten =
+      CSE->getTemplateArgsAsWritten();
+  if (SemaRef.SubstTemplateArgumentsInParameterMapping(
+          ArgsAsWritten->arguments(), CC.getBeginLoc(), *MLTAL, Out))
+    return true;
+  Sema::CheckTemplateArgumentInfo CTAI;
+  if (SemaRef.CheckTemplateArgumentList(CSE->getNamedConcept(),
+                                        CSE->getConceptNameInfo().getLoc(), Out,
+                                        /*DefaultArgs=*/{},
+                                        /*PartialTemplateArgs=*/false, CTAI,
+                                        /*UpdateArgsWithConversions=*/false))
+    return true;
+  auto TemplateArgs = *MLTAL;
+  TemplateArgs.replaceOutermostTemplateArguments(
+      TemplateArgs.getAssociatedDecl(0).first, CTAI.SugaredConverted);
+  return SubstituteParameterMappings(SemaRef, &TemplateArgs, ArgsAsWritten)
+      .substitute(CC.getNormalizedConstraint());
+}
+
+bool SubstituteParameterMappings::substitute(NormalizedConstraint &N) {
+  switch (N.getKind()) {
+  case NormalizedConstraint::ConstraintKind::Atomic: {
+    if (!MLTAL) {
+      assert(!ArgsAsWritten);
+      return false;
+    }
+    return substitute(static_cast<NormalizedConstraintWithParamMapping &>(N));
+  }
+  case NormalizedConstraint::ConstraintKind::FoldExpanded: {
+    auto &FE = static_cast<FoldExpandedConstraint &>(N);
+    if (!MLTAL) {
+      assert(!ArgsAsWritten);
+      return substitute(FE.getNormalizedPattern());
+    }
+    // FIXME: This is not used.
+    ConstraintSatisfaction CS;
+    UnsignedOrNone PackSize = EvaluateFoldExpandedConstraintSize(
+        SemaRef, FE, /*Template=*/nullptr, /*TemplateNameLoc=*/SourceLocation(),
+        *MLTAL, CS);
+    if (!PackSize)
+      return true;
+
+    // Do we need to do something else when pack is empty?
+    if (!*PackSize)
+      return false;
+    Sema::ArgPackSubstIndexRAII _(SemaRef, std::nullopt);
+    return substitute(FE.getNormalizedPattern());
+  }
+  case NormalizedConstraint::ConstraintKind::ConceptId: {
+    auto &CC = static_cast<ConceptIdConstraint &>(N);
+    if (MLTAL) {
+      assert(ArgsAsWritten);
+      return substitute(CC);
+    }
+    assert(!ArgsAsWritten);
+    const ConceptSpecializationExpr *CSE = CC.getConceptSpecializationExpr();
+    ConceptDecl *Concept = CSE->getNamedConcept();
+    MultiLevelTemplateArgumentList MLTAL = SemaRef.getTemplateInstantiationArgs(
+        Concept, Concept->getLexicalDeclContext(),
+        /*Final=*/true, CSE->getTemplateArguments(),
+        /*RelativeToPrimary=*/true,
+        /*Pattern=*/nullptr,
+        /*ForConstraintInstantiation=*/true);
+
+    // Don't build Subst* nodes to model lambda expressions.
+    // The transform of Subst* is oblivious to the lambda type.
+    MLTAL.setKind(TemplateSubstitutionKind::Rewrite);
+    return SubstituteParameterMappings(SemaRef, &MLTAL,
+                                       CSE->getTemplateArgsAsWritten())
+        .substitute(CC.getNormalizedConstraint());
+  }
+  case NormalizedConstraint::ConstraintKind::Compound: {
+    auto &Compound = static_cast<CompoundConstraint &>(N);
+    if (substitute(Compound.getLHS()))
+      return true;
+    return substitute(Compound.getRHS());
+  }
+  }
+}
+
+} // namespace
+#if 0
 static bool
 substituteParameterMappings(Sema &S, NormalizedConstraint &N,
                             const MultiLevelTemplateArgumentList &MLTAL,
@@ -1831,9 +2083,8 @@ substituteParameterMappings(Sema &S, NormalizedConstraint &N,
     if (!*PackSize)
       return false;
     Sema::ArgPackSubstIndexRAII _(S, std::nullopt);
-    return substituteParameterMappings(
-        S, static_cast<FoldExpandedConstraint &>(N).getNormalizedPattern(),
-        MLTAL, ArgsAsWritten);
+    return substituteParameterMappings(S, FE.getNormalizedPattern(), MLTAL,
+                                       ArgsAsWritten);
   }
   case NormalizedConstraint::ConstraintKind::ConceptId:
     return substituteParameterMappings(S, static_cast<ConceptIdConstraint &>(N),
@@ -1893,6 +2144,7 @@ static bool substituteParameterMappings(Sema &S, NormalizedConstraint &N) {
   }
   }
 }
+#endif
 
 NormalizedConstraint *NormalizedConstraint::fromAssociatedConstraints(
     Sema &S, const NamedDecl *D, ArrayRef<AssociatedConstraint> ACs) {
@@ -2024,7 +2276,8 @@ const NormalizedConstraint *Sema::getNormalizedAssociatedConstraints(
   if (!ConstrainedDeclOrNestedReq) {
     auto *Normalized = NormalizedConstraint::fromAssociatedConstraints(
         *this, nullptr, AssociatedConstraints);
-    if (!Normalized || substituteParameterMappings(*this, *Normalized))
+    if (!Normalized ||
+        SubstituteParameterMappings(*this).substitute(*Normalized))
       return nullptr;
 
     return Normalized;
@@ -2040,7 +2293,8 @@ const NormalizedConstraint *Sema::getNormalizedAssociatedConstraints(
     CacheEntry =
         NormalizationCache.try_emplace(ConstrainedDeclOrNestedReq, Normalized)
             .first;
-    if (!Normalized || substituteParameterMappings(*this, *Normalized))
+    if (!Normalized ||
+        SubstituteParameterMappings(*this).substitute(*Normalized))
       return nullptr;
   }
   return CacheEntry->second;
