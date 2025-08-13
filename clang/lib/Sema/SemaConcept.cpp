@@ -515,9 +515,8 @@ static ExprResult calculateConstraintSatisfaction(
 }
 
 static UnsignedOrNone EvaluateFoldExpandedConstraintSize(
-    Sema &S, const FoldExpandedConstraint &FE, const NamedDecl *Template,
-    SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
-    ConstraintSatisfaction &Satisfaction) {
+    Sema &S, const FoldExpandedConstraint &FE,
+    const MultiLevelTemplateArgumentList &MLTAL) {
 
   // We should ignore errors in the presence of packs of different size.
   Sema::SFINAETrap Trap(S);
@@ -559,9 +558,7 @@ static ExprResult calculateConstraintSatisfaction(
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
       SubstitutionInTemplateArguments(
-          S,
-          static_cast<const NormalizedConstraintWithParamMapping &>(
-              FE.getNormalizedPattern()),
+          S, static_cast<const NormalizedConstraintWithParamMapping &>(FE),
           // FIXME: Is PackSubstitutionIndex correct?
           Template, MLTAL, SubstitutedOuterMost, Satisfaction,
           S.ArgPackSubstIndex);
@@ -571,8 +568,8 @@ static ExprResult calculateConstraintSatisfaction(
   }
 
   ExprResult Out;
-  UnsignedOrNone NumExpansions = EvaluateFoldExpandedConstraintSize(
-      S, FE, Template, TemplateNameLoc, *SubstitutedArgs, Satisfaction);
+  UnsignedOrNone NumExpansions =
+      EvaluateFoldExpandedConstraintSize(S, FE, *SubstitutedArgs);
   if (!NumExpansions)
     return ExprEmpty();
 
@@ -587,8 +584,8 @@ static ExprResult calculateConstraintSatisfaction(
     Satisfaction.ContainsErrors = false;
     // FIXME: We can save a substitution if the next constraint is an atomic.
     ExprResult Expr = calculateConstraintSatisfaction(
-        S, FE.getNormalizedPattern(), Template, TemplateNameLoc, MLTAL,
-        Satisfaction, UnsignedOrNone(I));
+        S, FE.getNormalizedPattern(), Template, TemplateNameLoc,
+        *SubstitutedArgs, Satisfaction, UnsignedOrNone(I));
     if (Expr.isUsable()) {
       if (Out.isUnset())
         Out = Expr;
@@ -1677,6 +1674,12 @@ void SubstituteParameterMappings::buildParameterMapping(
         static_cast<AtomicConstraint &>(N).getConstraintExpr(),
         /*OnlyDeduced=*/false,
         /*Depth=*/0, OccurringIndices);
+  } else if (N.getKind() ==
+             NormalizedConstraint::ConstraintKind::FoldExpanded) {
+    SemaRef.MarkUsedTemplateParameters(
+        static_cast<FoldExpandedConstraint &>(N).getPattern(),
+        /*OnlyDeduced=*/false,
+        /*Depth=*/0, OccurringIndices);
   } else if (N.getKind() == NormalizedConstraint::ConstraintKind::ConceptId) {
     auto *Args = static_cast<ConceptIdConstraint &>(N)
                      .getConceptId()
@@ -1724,7 +1727,6 @@ bool SubstituteParameterMappings::substitute(
     InstLocBegin = ArgsAsWritten->getLAngleLoc();
     InstLocEnd = ArgsAsWritten->getRAngleLoc();
   } else {
-    // FIXME: Is it useful?
     auto SR = Arguments[0].getSourceRange();
     InstLocBegin = SR.getBegin();
     InstLocEnd = SR.getEnd();
@@ -1843,18 +1845,10 @@ bool SubstituteParameterMappings::substitute(NormalizedConstraint &N) {
       assert(!ArgsAsWritten);
       return substitute(FE.getNormalizedPattern());
     }
-    // FIXME: This is not used.
-    ConstraintSatisfaction CS;
-    UnsignedOrNone PackSize = EvaluateFoldExpandedConstraintSize(
-        SemaRef, FE, /*Template=*/nullptr, /*TemplateNameLoc=*/SourceLocation(),
-        *MLTAL, CS);
-    if (!PackSize)
-      return true;
-
-    // Do we need to do something else when pack is empty?
-    if (!*PackSize)
-      return false;
     Sema::ArgPackSubstIndexRAII _(SemaRef, std::nullopt);
+    substitute(static_cast<NormalizedConstraintWithParamMapping &>(FE));
+    return SubstituteParameterMappings(SemaRef).substitute(
+        FE.getNormalizedPattern());
     return substitute(FE.getNormalizedPattern());
   }
   case NormalizedConstraint::ConstraintKind::ConceptId: {
@@ -2250,10 +2244,10 @@ NormalizedConstraint *NormalizedConstraint::fromConstraintExpr(
 
       if (FE->isRightFold())
         LHS = FoldExpandedConstraint::Create(S.getASTContext(),
-                                             FE->getPattern(), Kind, LHS);
+                                             FE->getPattern(), D, Kind, LHS);
       else
         RHS = FoldExpandedConstraint::Create(S.getASTContext(),
-                                             FE->getPattern(), Kind, RHS);
+                                             FE->getPattern(), D, Kind, RHS);
 
       return CompoundConstraint::Create(
           S.getASTContext(), LHS,
@@ -2265,7 +2259,7 @@ NormalizedConstraint *NormalizedConstraint::fromConstraintExpr(
     if (!Sub)
       return nullptr;
     return FoldExpandedConstraint::Create(S.getASTContext(), FE->getPattern(),
-                                          Kind, Sub);
+                                          D, Kind, Sub);
   }
   return AtomicConstraint::Create(S.getASTContext(), E, D, SubstIndex);
 }

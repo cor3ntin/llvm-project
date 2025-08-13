@@ -79,11 +79,12 @@ protected:
     unsigned Kind : 5;
     LLVM_PREFERRED_TYPE(FoldOperatorKind)
     unsigned FoldOperator : 1;
-    unsigned NumExpansions : 26;
+    unsigned Placeholder : 26;
     OccurenceList Indexes;
     TemplateArgumentLoc *Args;
     TemplateParameterList *ParamList;
     const Expr *Pattern;
+    const NamedDecl *ConstraintDecl;
     NormalizedConstraint *Constraint;
   };
 
@@ -128,14 +129,16 @@ protected:
                ConstraintDecl} {}
 
   NormalizedConstraint(const Expr *Pattern, FoldOperatorKind OpKind,
-                       NormalizedConstraint *Constraint)
+                       NormalizedConstraint *Constraint,
+                       const NamedDecl *ConstraintDecl)
       : FoldExpanded{llvm::to_underlying(ConstraintKind::FoldExpanded),
                      llvm::to_underlying(OpKind),
-                     /*NumExpansions=*/0,
+                     /*Placeholder=*/0,
                      /*Indexes=*/{},
                      /*Args=*/nullptr,
                      /*ParamList=*/nullptr,
                      Pattern,
+                     ConstraintDecl,
                      Constraint} {}
 
   NormalizedConstraint(const ConceptReference *ConceptId,
@@ -323,14 +326,17 @@ public:
   }
 };
 
-class FoldExpandedConstraint : public NormalizedConstraint {
-  using NormalizedConstraint::NormalizedConstraint;
+class FoldExpandedConstraint : public NormalizedConstraintWithParamMapping {
+  using NormalizedConstraintWithParamMapping::
+      NormalizedConstraintWithParamMapping;
 
 public:
   static FoldExpandedConstraint *Create(ASTContext &Ctx, const Expr *Pattern,
+                                        const NamedDecl *ConstraintDecl,
                                         FoldOperatorKind OpKind,
                                         NormalizedConstraint *Constraint) {
-    return new (Ctx) FoldExpandedConstraint(Pattern, OpKind, Constraint);
+    return new (Ctx)
+        FoldExpandedConstraint(Pattern, OpKind, Constraint, ConstraintDecl);
   }
 
   using NormalizedConstraint::hasMatchingParameterMapping;
