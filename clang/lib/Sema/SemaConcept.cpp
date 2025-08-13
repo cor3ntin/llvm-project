@@ -1849,7 +1849,6 @@ bool SubstituteParameterMappings::substitute(NormalizedConstraint &N) {
     substitute(static_cast<NormalizedConstraintWithParamMapping &>(FE));
     return SubstituteParameterMappings(SemaRef).substitute(
         FE.getNormalizedPattern());
-    return substitute(FE.getNormalizedPattern());
   }
   case NormalizedConstraint::ConstraintKind::ConceptId: {
     auto &CC = static_cast<ConceptIdConstraint &>(N);
