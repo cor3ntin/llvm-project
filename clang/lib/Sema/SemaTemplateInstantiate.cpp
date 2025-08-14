@@ -1527,10 +1527,12 @@ public:
       }
     }
 
-    // FIXME: Rename the function
-    bool ShouldPreserveTemplateArgumentsPacks() const {
-      return PreserveArgumentPacks;
-    }
+  bool ShouldPreserveTemplateArgumentsPacks() const {
+    // This is disabled temporarily.
+    // We need to figure out a way to correctly handle packs outside of
+    // CheckTemplateArguments
+    return false && PreserveArgumentPacks;
+  }
 
     TemplateArgument
     getTemplateArgumentPackPatternForRewrite(const TemplateArgument &TA) {
