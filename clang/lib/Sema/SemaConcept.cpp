@@ -384,49 +384,49 @@ SubstitutionInTemplateArguments(
   Sema::SFINAETrap Trap(S);
 
   TemplateArgumentListInfo SubstArgs;
-    Sema::ArgPackSubstIndexRAII SubstIndex(
-        S, Constraint.getPackSubstitutionIndex()
-               ? Constraint.getPackSubstitutionIndex()
-               : PackSubstitutionIndex);
+  Sema::ArgPackSubstIndexRAII SubstIndex(
+      S, Constraint.getPackSubstitutionIndex()
+             ? Constraint.getPackSubstitutionIndex()
+             : PackSubstitutionIndex);
 
-    if (S.SubstTemplateArgumentsInParameterMapping(
-            Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
+  if (S.SubstTemplateArgumentsInParameterMapping(
+          Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
           SubstArgs)) {
     Satisfaction.IsSatisfied = false;
-      return std::nullopt;
+    return std::nullopt;
   }
 
-    Sema::CheckTemplateArgumentInfo CTAI;
-    auto *TD = const_cast<TemplateDecl *>(
-        cast<TemplateDecl>(Constraint.getConstraintDecl()));
-    if (S.CheckTemplateArgumentList(TD, Constraint.getUsedTemplateParamList(),
-                                    TD->getLocation(), SubstArgs,
-                                    /*DefaultArguments=*/{},
-                                    /*PartialTemplateArgs=*/false, CTAI))
-      return std::nullopt;
+  Sema::CheckTemplateArgumentInfo CTAI;
+  auto *TD = const_cast<TemplateDecl *>(
+      cast<TemplateDecl>(Constraint.getConstraintDecl()));
+  if (S.CheckTemplateArgumentList(TD, Constraint.getUsedTemplateParamList(),
+                                  TD->getLocation(), SubstArgs,
+                                  /*DefaultArguments=*/{},
+                                  /*PartialTemplateArgs=*/false, CTAI))
+    return std::nullopt;
   NormalizedConstraint::OccurenceList Used = Constraint.mappingOccurenceList();
-    SubstitutedOuterMost =
-        llvm::to_vector_of<TemplateArgument>(MLTAL.getOutermost());
-    unsigned Offset = 0;
-    for (unsigned I = 0, MappedIndex = 0; I < Used.size(); I++) {
-      TemplateArgument Arg;
-      if (Used[I])
-        Arg = S.Context.getCanonicalTemplateArgument(
-            CTAI.SugaredConverted[MappedIndex++]);
-      if (I < SubstitutedOuterMost.size()) {
-          SubstitutedOuterMost[I] = Arg;
-        Offset = I + 1;
-      } else {
-          SubstitutedOuterMost.push_back(Arg);
-        Offset = SubstitutedOuterMost.size();
-      }
+  SubstitutedOuterMost =
+      llvm::to_vector_of<TemplateArgument>(MLTAL.getOutermost());
+  unsigned Offset = 0;
+  for (unsigned I = 0, MappedIndex = 0; I < Used.size(); I++) {
+    TemplateArgument Arg;
+    if (Used[I])
+      Arg = S.Context.getCanonicalTemplateArgument(
+          CTAI.SugaredConverted[MappedIndex++]);
+    if (I < SubstitutedOuterMost.size()) {
+      SubstitutedOuterMost[I] = Arg;
+      Offset = I + 1;
+    } else {
+      SubstitutedOuterMost.push_back(Arg);
+      Offset = SubstitutedOuterMost.size();
     }
-    if (Offset < SubstitutedOuterMost.size())
-      SubstitutedOuterMost.erase(SubstitutedOuterMost.begin() + Offset);
+  }
+  if (Offset < SubstitutedOuterMost.size())
+    SubstitutedOuterMost.erase(SubstitutedOuterMost.begin() + Offset);
 
-    MLTAL.replaceOutermostTemplateArguments(
-        const_cast<NamedDecl *>(Constraint.getConstraintDecl()),
-        SubstitutedOuterMost);
+  MLTAL.replaceOutermostTemplateArguments(
+      const_cast<NamedDecl *>(Constraint.getConstraintDecl()),
+      SubstitutedOuterMost);
   return std::move(MLTAL);
 }
 
@@ -582,7 +582,6 @@ static ExprResult calculateConstraintSatisfaction(
     Sema::ArgPackSubstIndexRAII SubstIndex(S, I);
     Satisfaction.IsSatisfied = false;
     Satisfaction.ContainsErrors = false;
-    // FIXME: We can save a substitution if the next constraint is an atomic.
     ExprResult Expr = calculateConstraintSatisfaction(
         S, FE.getNormalizedPattern(), Template, TemplateNameLoc,
         *SubstitutedArgs, Satisfaction, UnsignedOrNone(I));
@@ -1792,7 +1791,6 @@ bool SubstituteParameterMappings::substitute(ConceptIdConstraint &CC) {
     InstLocBegin = ArgsAsWritten->getLAngleLoc();
     InstLocEnd = ArgsAsWritten->getRAngleLoc();
   } else {
-    // FIXME: Is it useful?
     auto SR = Arguments[0].getSourceRange();
     InstLocBegin = SR.getBegin();
     InstLocEnd = SR.getEnd();

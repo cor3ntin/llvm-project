@@ -5081,9 +5081,11 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
       TemplateArgumentListInfo *PackOutput = &Outputs;
       TemplateArgumentListInfo New;
 
+#if 0
       if (getDerived().ShouldPreserveTemplateArgumentsPacks()) {
         PackOutput = &New;
       }
+#endif
 
       if (TransformTemplateArguments(
               PackLocIterator(*this, In.getArgument().pack_begin()),
@@ -5091,6 +5093,7 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
               Uneval))
         return true;
 
+#if 0
       if (getDerived().ShouldPreserveTemplateArgumentsPacks()) {
         SmallVector<TemplateArgument> Args;
         Args.reserve(New.size());
@@ -5103,6 +5106,7 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
         InventTemplateArgumentLoc(Arg, ArgLoc);
         Outputs.addArgument(ArgLoc);
       }
+#endif
       continue;
     }
 
@@ -5114,6 +5118,24 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
       TemplateArgumentLoc Pattern
         = getSema().getTemplateArgumentPackExpansionPattern(
               In, Ellipsis, OrigNumExpansions);
+
+      if (getDerived().ShouldPreserveTemplateArgumentsPacks() &&
+          getSema().ArgPackSubstIndex) {
+        // We have determined the pack index outside of the TreeTransform.
+        // Use that index to avoid unexpected packs.
+        if (getDerived().TransformTemplateArgument(Pattern, Out, Uneval))
+          return true;
+
+        if (Out.getArgument().containsUnexpandedParameterPack()) {
+          Out = getDerived().RebuildPackExpansion(Out, Ellipsis,
+                                                  OrigNumExpansions);
+          if (Out.getArgument().isNull())
+            return true;
+        }
+
+        Outputs.addArgument(Out);
+        continue;
+      }
 
       SmallVector<UnexpandedParameterPack, 2> Unexpanded;
       getSema().collectUnexpandedParameterPacks(Pattern, Unexpanded);

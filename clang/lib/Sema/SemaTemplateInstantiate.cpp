@@ -1527,12 +1527,10 @@ public:
       }
     }
 
-  bool ShouldPreserveTemplateArgumentsPacks() const {
-    // This is disabled temporarily.
-    // We need to figure out a way to correctly handle packs outside of
-    // CheckTemplateArguments
-    return false && PreserveArgumentPacks;
-  }
+    // FIXME: Rename the function
+    bool ShouldPreserveTemplateArgumentsPacks() const {
+      return PreserveArgumentPacks;
+    }
 
     TemplateArgument
     getTemplateArgumentPackPatternForRewrite(const TemplateArgument &TA) {
@@ -1721,6 +1719,28 @@ public:
       }
       return inherited::TransformTemplateArgument(Input, Output, Uneval);
     }
+
+#if 0
+    // This has to be here to allow its overload.
+    ExprResult RebuildPackExpansion(Expr *Pattern, SourceLocation EllipsisLoc,
+                                    UnsignedOrNone NumExpansions) {
+      return inherited::RebuildPackExpansion(Pattern, EllipsisLoc,
+                                             NumExpansions);
+    }
+
+    TemplateArgumentLoc RebuildPackExpansion(TemplateArgumentLoc Pattern,
+                                             SourceLocation EllipsisLoc,
+                                             UnsignedOrNone NumExpansions) {
+      // We don't rewrite a PackExpansion type when we want to normalize a
+      // CXXFoldExpr constraint. We'll expand it when evaluating the constraint.
+      if (!PreserveArgumentPacks ||
+          !Pattern.getArgument().containsUnexpandedParameterPack() ||
+          !SemaRef.getLangOpts().CPlusPlus26)
+        return inherited::RebuildPackExpansion(Pattern, EllipsisLoc,
+                                               NumExpansions);
+      return Pattern;
+    }
+#endif
 
     UnsignedOrNone ComputeSizeOfPackExprWithoutSubstitution(
         ArrayRef<TemplateArgument> PackArgs) {
