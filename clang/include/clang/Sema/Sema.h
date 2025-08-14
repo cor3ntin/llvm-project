@@ -13799,7 +13799,6 @@ public:
   }
 
   /// Determine whether we are currently performing constraint substitution.
-  // FIXME: Rename it
   bool inConstraintSubstitution() const {
     return !CodeSynthesisContexts.empty() &&
            CodeSynthesisContexts.back().InConstraintSubstitution;
@@ -13807,7 +13806,8 @@ public:
 
   bool inParameterMappingSubstitution() const {
     return !CodeSynthesisContexts.empty() &&
-           CodeSynthesisContexts.back().InParameterMappingSubstitution;
+           CodeSynthesisContexts.back().InParameterMappingSubstitution &&
+           !inConstraintSubstitution();
   }
 
   using EntityPrinter = llvm::function_ref<void(llvm::raw_ostream &)>;

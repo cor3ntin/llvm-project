@@ -628,7 +628,7 @@ Sema::InstantiatingTemplate::InstantiatingTemplate(
     Inst.DeductionInfo = DeductionInfo;
     Inst.InstantiationRange = InstantiationRange;
     Inst.InConstraintSubstitution =
-        Inst.Kind == CodeSynthesisContext::ConstraintsCheck;
+        Inst.Kind == CodeSynthesisContext::ConstraintSubstitution;
     Inst.InParameterMappingSubstitution =
         Inst.Kind == CodeSynthesisContext::ParameterMappingSubstitution;
     if (!SemaRef.CodeSynthesisContexts.empty()) {
@@ -1453,7 +1453,8 @@ public:
                                 bool &ShouldExpand, bool &RetainExpansion,
                                 UnsignedOrNone &NumExpansions) {
     if (SemaRef.CurrentInstantiationScope &&
-        SemaRef.inConstraintSubstitution()) {
+        (SemaRef.inConstraintSubstitution() ||
+         SemaRef.inParameterMappingSubstitution())) {
       for (UnexpandedParameterPack ParmPack : Unexpanded) {
         NamedDecl *VD = ParmPack.first.dyn_cast<NamedDecl *>();
         if (auto *PVD = dyn_cast_if_present<ParmVarDecl>(VD);
@@ -1978,7 +1979,8 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
 
   if (ParmVarDecl *PVD = dyn_cast<ParmVarDecl>(D);
       PVD && SemaRef.CurrentInstantiationScope &&
-      SemaRef.inConstraintSubstitution() &&
+      (SemaRef.inConstraintSubstitution() ||
+       SemaRef.inParameterMappingSubstitution()) &&
       maybeInstantiateFunctionParameterToScope(PVD))
     return nullptr;
 
@@ -2214,7 +2216,8 @@ TemplateInstantiator::TransformTemplateParmRefExpr(DeclRefExpr *E,
     // template parameter.
     Arg = getTemplateArgumentPackPatternForRewrite(Arg);
     if (Arg.getKind() != TemplateArgument::Expression) {
-      assert(SemaRef.inParameterMappingSubstitution());
+      assert(SemaRef.inParameterMappingSubstitution() ||
+             SemaRef.inConstraintSubstitution());
       ExprResult Expr = SemaRef.BuildExpressionFromNonTypeTemplateArgument(
           Arg, E->getLocation());
       if (Expr.isInvalid())
