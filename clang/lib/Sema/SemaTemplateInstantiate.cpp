@@ -1405,7 +1405,8 @@ class TemplateInstantiator : public TreeTransform<TemplateInstantiator> {
     // Whether an incomplete substituion should be treated as an error.
     bool BailOutOnIncomplete;
 
-  bool PreserveArgumentPacks = false;
+    bool PreserveArgumentPacks = false;
+    bool BuildPackExpansionTypes = true;
 
     // CWG2770: Function parameters should be instantiated when they are
     // needed by a satisfaction check of an atomic constraint or
@@ -1427,9 +1428,11 @@ public:
 
   TemplateInstantiator(ForParameterMappingSubstitution_t, Sema &SemaRef,
                        SourceLocation Loc,
-                       const MultiLevelTemplateArgumentList &TemplateArgs)
+                       const MultiLevelTemplateArgumentList &TemplateArgs,
+                       bool BuildPackExpansionTypes)
       : inherited(SemaRef), TemplateArgs(TemplateArgs), Loc(Loc),
-        BailOutOnIncomplete(false), PreserveArgumentPacks(true) {}
+        BailOutOnIncomplete(false), PreserveArgumentPacks(true),
+        BuildPackExpansionTypes(BuildPackExpansionTypes) {}
 
   void setEvaluateConstraints(bool B) { EvaluateConstraints = B; }
   bool getEvaluateConstraints() { return EvaluateConstraints; }
@@ -1720,7 +1723,7 @@ public:
       return inherited::TransformTemplateArgument(Input, Output, Uneval);
     }
 
-#if 0
+#if 1
     // This has to be here to allow its overload.
     ExprResult RebuildPackExpansion(Expr *Pattern, SourceLocation EllipsisLoc,
                                     UnsignedOrNone NumExpansions) {
@@ -1733,9 +1736,7 @@ public:
                                              UnsignedOrNone NumExpansions) {
       // We don't rewrite a PackExpansion type when we want to normalize a
       // CXXFoldExpr constraint. We'll expand it when evaluating the constraint.
-      if (!PreserveArgumentPacks ||
-          !Pattern.getArgument().containsUnexpandedParameterPack() ||
-          !SemaRef.getLangOpts().CPlusPlus26)
+      if (!PreserveArgumentPacks || BuildPackExpansionTypes)
         return inherited::RebuildPackExpansion(Pattern, EllipsisLoc,
                                                NumExpansions);
       return Pattern;
@@ -4517,10 +4518,10 @@ bool Sema::SubstTemplateArguments(
 bool Sema::SubstTemplateArgumentsInParameterMapping(
     ArrayRef<TemplateArgumentLoc> Args, SourceLocation BaseLoc,
     const MultiLevelTemplateArgumentList &TemplateArgs,
-    TemplateArgumentListInfo &Out) {
+    TemplateArgumentListInfo &Out, bool BuildPackExpansionTypes) {
   TemplateInstantiator Instantiator(
       TemplateInstantiator::ForParameterMappingSubstitution, *this, BaseLoc,
-      TemplateArgs);
+      TemplateArgs, BuildPackExpansionTypes);
   return Instantiator.TransformTemplateArguments(Args.begin(), Args.end(), Out);
 }
 

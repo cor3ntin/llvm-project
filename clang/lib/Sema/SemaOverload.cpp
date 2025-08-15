@@ -12738,7 +12738,7 @@ static void NoteFunctionCandidate(Sema &S, OverloadCandidate *Cand,
         << FnDesc /* Ignored */;
     ConstraintSatisfaction Satisfaction;
     if (S.CheckFunctionConstraints(Fn, Satisfaction, SourceLocation(),
-                                   /*ForOverloadResolution=*/false))
+                                   /*ForOverloadResolution=*/true))
       break;
     S.DiagnoseUnsatisfiedConstraint(Satisfaction);
   }

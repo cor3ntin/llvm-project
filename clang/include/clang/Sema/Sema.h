@@ -13339,7 +13339,7 @@ public:
   bool SubstTemplateArgumentsInParameterMapping(
       ArrayRef<TemplateArgumentLoc> Args, SourceLocation BaseLoc,
       const MultiLevelTemplateArgumentList &TemplateArgs,
-      TemplateArgumentListInfo &Out);
+      TemplateArgumentListInfo &Out, bool BuildPackExpansionTypes);
 
   /// Retrieve the template argument list(s) that should be used to
   /// instantiate the definition of the given declaration.

@@ -36,6 +36,7 @@
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include <cstddef>
 #include <optional>
 
@@ -391,7 +392,7 @@ SubstitutionInTemplateArguments(
 
   if (S.SubstTemplateArgumentsInParameterMapping(
           Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
-          SubstArgs)) {
+          SubstArgs, /*BuildPackExpansionTypes=*/false)) {
     Satisfaction.IsSatisfied = false;
     return std::nullopt;
   }
@@ -849,8 +850,8 @@ static bool CheckConstraintSatisfaction(
                                     S.ArgPackSubstIndex);
 
   ExprResult Res = calculateConstraintSatisfaction(
-              S, *C, Template, TemplateIDRange.getBegin(), TemplateArgsLists,
-              Satisfaction, S.ArgPackSubstIndex);
+      S, *C, Template, TemplateIDRange.getBegin(), TemplateArgsLists,
+      Satisfaction, S.ArgPackSubstIndex);
 
   if (Res.isInvalid())
     return true;
@@ -1643,10 +1644,14 @@ class SubstituteParameterMappings {
   const MultiLevelTemplateArgumentList *MLTAL;
   const ASTTemplateArgumentListInfo *ArgsAsWritten;
 
+  bool InFoldExpr;
+
   SubstituteParameterMappings(Sema &SemaRef,
                               const MultiLevelTemplateArgumentList *MLTAL,
-                              const ASTTemplateArgumentListInfo *ArgsAsWritten)
-      : SemaRef(SemaRef), MLTAL(MLTAL), ArgsAsWritten(ArgsAsWritten) {}
+                              const ASTTemplateArgumentListInfo *ArgsAsWritten,
+                              bool InFoldExpr)
+      : SemaRef(SemaRef), MLTAL(MLTAL), ArgsAsWritten(ArgsAsWritten),
+        InFoldExpr(InFoldExpr) {}
 
   void buildParameterMapping(NormalizedConstraintWithParamMapping &N);
 
@@ -1655,8 +1660,9 @@ class SubstituteParameterMappings {
   bool substitute(ConceptIdConstraint &CC);
 
 public:
-  SubstituteParameterMappings(Sema &SemaRef)
-      : SemaRef(SemaRef), MLTAL(nullptr), ArgsAsWritten(nullptr) {}
+  SubstituteParameterMappings(Sema &SemaRef, bool InFoldExpr = false)
+      : SemaRef(SemaRef), MLTAL(nullptr), ArgsAsWritten(nullptr),
+        InFoldExpr(InFoldExpr) {}
 
   bool substitute(NormalizedConstraint &N);
 };
@@ -1744,7 +1750,8 @@ bool SubstituteParameterMappings::substitute(
   // which is wrong.
   TemplateArgumentListInfo SubstArgs;
   if (SemaRef.SubstTemplateArgumentsInParameterMapping(
-          N.getParameterMapping(), N.getBeginLoc(), *MLTAL, SubstArgs))
+          N.getParameterMapping(), N.getBeginLoc(), *MLTAL, SubstArgs,
+          /*BuildPackExpansionTypes=*/!InFoldExpr))
     return true;
   Sema::CheckTemplateArgumentInfo CTAI;
   auto *TD =
@@ -1812,7 +1819,8 @@ bool SubstituteParameterMappings::substitute(ConceptIdConstraint &CC) {
   const ASTTemplateArgumentListInfo *ArgsAsWritten =
       CSE->getTemplateArgsAsWritten();
   if (SemaRef.SubstTemplateArgumentsInParameterMapping(
-          ArgsAsWritten->arguments(), CC.getBeginLoc(), *MLTAL, Out))
+          ArgsAsWritten->arguments(), CC.getBeginLoc(), *MLTAL, Out,
+          /*BuildPackExpansionTypes=*/!InFoldExpr))
     return true;
   Sema::CheckTemplateArgumentInfo CTAI;
   if (SemaRef.CheckTemplateArgumentList(CSE->getNamedConcept(),
@@ -1824,7 +1832,8 @@ bool SubstituteParameterMappings::substitute(ConceptIdConstraint &CC) {
   auto TemplateArgs = *MLTAL;
   TemplateArgs.replaceOutermostTemplateArguments(
       TemplateArgs.getAssociatedDecl(0).first, CTAI.SugaredConverted);
-  return SubstituteParameterMappings(SemaRef, &TemplateArgs, ArgsAsWritten)
+  return SubstituteParameterMappings(SemaRef, &TemplateArgs, ArgsAsWritten,
+                                     InFoldExpr)
       .substitute(CC.getNormalizedConstraint());
 }
 
@@ -1839,14 +1848,15 @@ bool SubstituteParameterMappings::substitute(NormalizedConstraint &N) {
   }
   case NormalizedConstraint::ConstraintKind::FoldExpanded: {
     auto &FE = static_cast<FoldExpandedConstraint &>(N);
+    llvm::SaveAndRestore _1(InFoldExpr, true);
     if (!MLTAL) {
       assert(!ArgsAsWritten);
       return substitute(FE.getNormalizedPattern());
     }
     Sema::ArgPackSubstIndexRAII _(SemaRef, std::nullopt);
     substitute(static_cast<NormalizedConstraintWithParamMapping &>(FE));
-    return SubstituteParameterMappings(SemaRef).substitute(
-        FE.getNormalizedPattern());
+    return SubstituteParameterMappings(SemaRef, /*InFoldExpr=*/true)
+        .substitute(FE.getNormalizedPattern());
   }
   case NormalizedConstraint::ConstraintKind::ConceptId: {
     auto &CC = static_cast<ConceptIdConstraint &>(N);
@@ -1867,8 +1877,8 @@ bool SubstituteParameterMappings::substitute(NormalizedConstraint &N) {
     // Don't build Subst* nodes to model lambda expressions.
     // The transform of Subst* is oblivious to the lambda type.
     MLTAL.setKind(TemplateSubstitutionKind::Rewrite);
-    return SubstituteParameterMappings(SemaRef, &MLTAL,
-                                       CSE->getTemplateArgsAsWritten())
+    return SubstituteParameterMappings(
+               SemaRef, &MLTAL, CSE->getTemplateArgsAsWritten(), InFoldExpr)
         .substitute(CC.getNormalizedConstraint());
   }
   case NormalizedConstraint::ConstraintKind::Compound: {

@@ -5119,24 +5119,6 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
         = getSema().getTemplateArgumentPackExpansionPattern(
               In, Ellipsis, OrigNumExpansions);
 
-      if (getDerived().ShouldPreserveTemplateArgumentsPacks() &&
-          getSema().ArgPackSubstIndex) {
-        // We have determined the pack index outside of the TreeTransform.
-        // Use that index to avoid unexpected packs.
-        if (getDerived().TransformTemplateArgument(Pattern, Out, Uneval))
-          return true;
-
-        if (Out.getArgument().containsUnexpandedParameterPack()) {
-          Out = getDerived().RebuildPackExpansion(Out, Ellipsis,
-                                                  OrigNumExpansions);
-          if (Out.getArgument().isNull())
-            return true;
-        }
-
-        Outputs.addArgument(Out);
-        continue;
-      }
-
       SmallVector<UnexpandedParameterPack, 2> Unexpanded;
       getSema().collectUnexpandedParameterPacks(Pattern, Unexpanded);
       assert(!Unexpanded.empty() && "Pack expansion without parameter packs?");
