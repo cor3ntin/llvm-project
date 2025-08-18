@@ -34,9 +34,11 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include <chrono>
 #include <cstddef>
 #include <optional>
 
@@ -848,10 +850,27 @@ static bool CheckConstraintSatisfaction(
                                     const_cast<NormalizedConstraint *>(C),
                                     Template, /*CSE=*/nullptr,
                                     S.ArgPackSubstIndex);
-
+  auto Point1 = std::chrono::system_clock::now();
   ExprResult Res = calculateConstraintSatisfaction(
       S, *C, Template, TemplateIDRange.getBegin(), TemplateArgsLists,
       Satisfaction, S.ArgPackSubstIndex);
+  auto Point2 = std::chrono::system_clock::now();
+  llvm::errs() << std::chrono::duration_cast<std::chrono::milliseconds>(Point2 -
+                                                                        Point1)
+                      .count()
+               << "ms: ";
+  llvm::errs() << "Computing ";
+  for (auto AC : AssociatedConstraints) {
+    AC.ConstraintExpr->printPretty(llvm::errs(), nullptr,
+                                   S.getPrintingPolicy());
+    llvm::errs() << "\t";
+  }
+  llvm::errs() << "With argument <";
+  for (auto Arg :Args) {
+    Arg.print(S.getPrintingPolicy(), llvm::errs(), /*IncludeType=*/true);
+    llvm::errs() << ", ";
+  }
+  llvm::errs() << ">\n";
 
   if (Res.isInvalid())
     return true;
