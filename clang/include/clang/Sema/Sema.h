@@ -14819,6 +14819,9 @@ public:
       const NamedDecl *D1, ArrayRef<AssociatedConstraint> AC1,
       const NamedDecl *D2, ArrayRef<AssociatedConstraint> AC2);
 
+  llvm::DenseMap<unsigned, CachedConceptIdConstraint>
+      ConceptIdSatisfactionCache;
+
 private:
   /// Caches pairs of template-like decls whose associated constraints were
   /// checked for subsumption and whether or not the first's constraints did in

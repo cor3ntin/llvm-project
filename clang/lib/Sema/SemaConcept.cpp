@@ -34,10 +34,14 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include <chrono>
 #include <cstddef>
+#include <iterator>
 #include <optional>
 
 using namespace clang;
@@ -392,7 +396,7 @@ SubstitutionInTemplateArguments(
 
   if (S.SubstTemplateArgumentsInParameterMapping(
           Constraint.getParameterMapping(), Constraint.getBeginLoc(), MLTAL,
-          SubstArgs, /*BuildPackExpansionTypes=*/false)) {
+          SubstArgs, /*BuildPackExpansionTypes=*/true)) {
     Satisfaction.IsSatisfied = false;
     return std::nullopt;
   }
@@ -611,7 +615,7 @@ static ExprResult calculateConstraintSatisfaction(
   return Out;
 }
 
-static ExprResult calculateConstraintSatisfaction(
+static ExprResult calculateConstraintSatisfactionImpl(
     Sema &S, const ConceptIdConstraint &Constraint, const NamedDecl *Template,
     SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
     ConstraintSatisfaction &Satisfaction,
@@ -635,11 +639,11 @@ static ExprResult calculateConstraintSatisfaction(
     return E;
   }
 
-    llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
-    std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
-        SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
+  llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
+  std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
+      SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
                                       SubstitutedOuterMost, Satisfaction,
-                                        PackSubstitutionIndex);
+                                      PackSubstitutionIndex);
 
   if (!SubstitutedArgs) {
     Satisfaction.IsSatisfied = false;
@@ -647,21 +651,21 @@ static ExprResult calculateConstraintSatisfaction(
     return ExprError();
   }
 
-    Sema::SFINAETrap Trap(S);
-    Sema::ArgPackSubstIndexRAII SubstIndex(
-        S, Constraint.getPackSubstitutionIndex()
-               ? Constraint.getPackSubstitutionIndex()
-               : PackSubstitutionIndex);
+  Sema::SFINAETrap Trap(S);
+  Sema::ArgPackSubstIndexRAII SubstIndex(
+      S, Constraint.getPackSubstitutionIndex()
+             ? Constraint.getPackSubstitutionIndex()
+             : PackSubstitutionIndex);
 
-    const ASTTemplateArgumentListInfo *Ori =
-        Constraint.getConceptId()->getTemplateArgsAsWritten();
+  const ASTTemplateArgumentListInfo *Ori =
+      Constraint.getConceptId()->getTemplateArgsAsWritten();
 
-      TemplateArgumentListInfo TransArgs(Ori->LAngleLoc, Ori->RAngleLoc);
-    unsigned Depth = Template && Template->getTemplateDepth()
-                         ? Template->getTemplateDepth() - 1
-                         : 0;
-    AdjustConstraintDepth Adjust(S, Depth);
-      if (Adjust.TransformTemplateArguments(Ori->getTemplateArgs(),
+  TemplateArgumentListInfo TransArgs(Ori->LAngleLoc, Ori->RAngleLoc);
+  unsigned Depth = Template && Template->getTemplateDepth()
+                       ? Template->getTemplateDepth() - 1
+                       : 0;
+  AdjustConstraintDepth Adjust(S, Depth);
+  if (Adjust.TransformTemplateArguments(Ori->getTemplateArgs(),
                                         Ori->NumTemplateArgs, TransArgs)) {
     Satisfaction.IsSatisfied = false;
     return E;
@@ -673,8 +677,7 @@ static ExprResult calculateConstraintSatisfaction(
       const_cast<NamedDecl *>(Template), Info, Constraint.getSourceRange());
 
   TemplateArgumentListInfo OutArgs(Ori->LAngleLoc, Ori->RAngleLoc);
-    if (S.SubstTemplateArguments(TransArgs.arguments(), *SubstitutedArgs,
-                                 OutArgs) ||
+  if (S.SubstTemplateArguments(Ori->arguments(), *SubstitutedArgs, OutArgs) ||
       Trap.hasErrorOccurred()) {
     Satisfaction.IsSatisfied = false;
     if (!Trap.hasErrorOccurred())
@@ -726,6 +729,72 @@ static ExprResult calculateConstraintSatisfaction(
                 ->getConceptReference()));
   }
   return SubstitutedConceptId;
+}
+
+static ExprResult calculateConstraintSatisfaction(
+    Sema &S, const ConceptIdConstraint &Constraint, const NamedDecl *Template,
+    SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
+    ConstraintSatisfaction &Satisfaction,
+    UnsignedOrNone PackSubstitutionIndex) {
+  unsigned Size = Satisfaction.Details.size();
+  llvm::SmallVector<TemplateArgument, 4> FlattenedArgs;
+  for (auto List : MLTAL)
+    for (const TemplateArgument &Arg : List.Args)
+      FlattenedArgs.emplace_back(S.Context.getCanonicalTemplateArgument(Arg));
+
+  const NamedDecl *Owner = Constraint.getConceptId()->getNamedConcept();
+
+  llvm::FoldingSetNodeID ID;
+  ConstraintSatisfaction::Profile(ID, S.Context, Owner, FlattenedArgs);
+  ID.AddInteger(PackSubstitutionIndex.toInternalRepresentation());
+  unsigned CacheKeyHash = ID.ComputeHash();
+
+
+#define UseCache 0
+  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
+      Iter != S.ConceptIdSatisfactionCache.end()) {
+#if UseCache
+    auto &Cached = Iter->second.Satisfaction;
+    Satisfaction.ContainsErrors = Cached.ContainsErrors;
+    Satisfaction.IsSatisfied = Cached.IsSatisfied;
+    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
+                                Cached.Details.begin(), Cached.Details.end());
+    return Iter->second.SubstExpr;
+#else
+    llvm::errs() << "Cache hit\n";
+#endif
+  }
+#if !UseCache
+  else
+    llvm::errs() << "Cache missed\n";
+#endif
+
+  ExprResult E = calculateConstraintSatisfactionImpl(
+      S, Constraint, Template, TemplateNameLoc, MLTAL, Satisfaction,
+      PackSubstitutionIndex);
+
+  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
+      Iter != S.ConceptIdSatisfactionCache.end()) {
+#if UseCache
+    auto &Cached = Iter->second.Satisfaction;
+    Satisfaction.ContainsErrors = Cached.ContainsErrors;
+    Satisfaction.IsSatisfied = Cached.IsSatisfied;
+    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
+                                Cached.Details.begin(), Cached.Details.end());
+    return Iter->second.SubstExpr;
+#endif
+  }
+
+  CachedConceptIdConstraint Cache;
+  Cache.Satisfaction.ContainsErrors = Satisfaction.ContainsErrors;
+  Cache.Satisfaction.IsSatisfied = Satisfaction.IsSatisfied;
+  std::copy(Satisfaction.Details.begin() + Size, Satisfaction.Details.end(),
+            std::back_inserter(Cache.Satisfaction.Details));
+  Cache.SubstExpr = E;
+  S.ConceptIdSatisfactionCache.insert({CacheKeyHash, std::move(Cache)});
+#undef UseCache
+
+  return E;
 }
 
 static ExprResult calculateConstraintSatisfaction(
@@ -835,6 +904,7 @@ static bool CheckConstraintSatisfaction(
                              const_cast<NamedDecl *>(Template), Args,
                              TemplateIDRange);
   }
+  // auto Point0 = std::chrono::system_clock::now();
 
   const NormalizedConstraint *C =
       S.getNormalizedAssociatedConstraints(Template, AssociatedConstraints);
@@ -848,10 +918,47 @@ static bool CheckConstraintSatisfaction(
                                     const_cast<NormalizedConstraint *>(C),
                                     Template, /*CSE=*/nullptr,
                                     S.ArgPackSubstIndex);
+  // auto Point1 = std::chrono::system_clock::now();
+
+  // llvm::errs() << std::chrono::duration_cast<std::chrono::milliseconds>(Point1 -
+  //                                                                       Point0)
+  //                     .count()
+  //              << "ms: ";
+  // llvm::errs() << "Normalizing ";
+  // for (auto AC : AssociatedConstraints) {
+  //   AC.ConstraintExpr->printPretty(llvm::errs(), nullptr,
+  //                                  S.getPrintingPolicy());
+  //   llvm::errs() << "\t";
+  // }
+  // llvm::errs() << "With argument <";
+  // for (auto Arg : Args) {
+  //   Arg.print(S.getPrintingPolicy(), llvm::errs(), /*IncludeType=*/true);
+  //   llvm::errs() << ", ";
+  // }
+  // llvm::errs() << ">\n";
 
   ExprResult Res = calculateConstraintSatisfaction(
       S, *C, Template, TemplateIDRange.getBegin(), TemplateArgsLists,
       Satisfaction, S.ArgPackSubstIndex);
+  // auto Point2 = std::chrono::system_clock::now();
+  // for (unsigned I = 1; I <= ACDepth; ++I)
+  //   llvm::errs() << "    ";
+  // llvm::errs() << std::chrono::duration_cast<std::chrono::milliseconds>(Point2 -
+  //                                                                       Point1)
+  //                     .count()
+  //              << "ms: ";
+  // llvm::errs() << "Computing ";
+  // for (auto AC : AssociatedConstraints) {
+  //   AC.ConstraintExpr->printPretty(llvm::errs(), nullptr,
+  //                                  S.getPrintingPolicy());
+  //   llvm::errs() << "\t";
+  // }
+  // llvm::errs() << "With argument <";
+  // for (auto Arg :Args) {
+  //   Arg.print(S.getPrintingPolicy(), llvm::errs(), /*IncludeType=*/true);
+  //   llvm::errs() << ", ";
+  // }
+  // llvm::errs() << ">\n";
 
   if (Res.isInvalid())
     return true;

@@ -19,6 +19,7 @@
 #include "clang/AST/ExprConcepts.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/UnsignedOrNone.h"
+#include "clang/Sema/Ownership.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/STLForwardCompat.h"
@@ -389,6 +390,11 @@ public:
   NormalizedConstraint &getNormalizedConstraint() { return *ConceptId.Sub; }
 };
 
+struct CachedConceptIdConstraint {
+  ExprResult SubstExpr;
+  ConstraintSatisfaction Satisfaction;
+};
+
 /// \brief SubsumptionChecker establishes subsumption
 /// between two set of constraints.
 class SubsumptionChecker {
@@ -488,6 +494,6 @@ private:
   uint16_t getNewLiteralId();
 };
 
-} // clang
+} // namespace clang
 
 #endif // LLVM_CLANG_SEMA_SEMACONCEPT_H
