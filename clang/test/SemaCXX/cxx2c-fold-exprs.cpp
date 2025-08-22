@@ -117,7 +117,7 @@ void test() {
 }
 
 namespace substitution {
-    struct S {
+struct S {
     using type = int;
 };
 

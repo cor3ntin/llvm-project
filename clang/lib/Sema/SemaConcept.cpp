@@ -441,10 +441,20 @@ static ExprResult calculateConstraintSatisfactionImpl(
     ConstraintSatisfaction &Satisfaction,
     UnsignedOrNone PackSubstitutionIndex) {
 
+  llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
+  std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
+      SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
+                                      SubstitutedOuterMost, Satisfaction,
+                                      PackSubstitutionIndex);
+  if (!SubstitutedArgs) {
+    Satisfaction.IsSatisfied = false;
+    return ExprEmpty();
+  }
+
   Sema::ArgPackSubstIndexRAII SubstIndex(S, PackSubstitutionIndex);
   ExprResult SubstitutedAtomicExpr =
       EvaluateAtomicConstraint(S, Constraint.getConstraintExpr(), Template,
-                               TemplateNameLoc, MLTAL, Satisfaction);
+                               TemplateNameLoc, *SubstitutedArgs, Satisfaction);
 
   if (SubstitutedAtomicExpr.isInvalid())
     return ExprError();
@@ -515,21 +525,40 @@ static ExprResult calculateConstraintSatisfaction(
     ConstraintSatisfaction &Satisfaction,
     UnsignedOrNone PackSubstitutionIndex) {
 
-  llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
-  std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
-      SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
-                                      SubstitutedOuterMost, Satisfaction,
-                                      PackSubstitutionIndex);
-  if (!SubstitutedArgs) {
-    Satisfaction.IsSatisfied = false;
-    return ExprEmpty();
-  }
-
   unsigned Size = Satisfaction.Details.size();
   llvm::SmallVector<TemplateArgument, 4> FlattenedArgs;
-  for (auto List : *SubstitutedArgs)
-    for (const TemplateArgument &Arg : List.Args)
-      FlattenedArgs.emplace_back(S.Context.getCanonicalTemplateArgument(Arg));
+  UnsignedOrNone SubstPackIndex = Constraint.getPackSubstitutionIndex()
+                                      ? Constraint.getPackSubstitutionIndex()
+                                      : PackSubstitutionIndex;
+
+  if (!Constraint.hasParameterMapping()) {
+    for (auto List : MLTAL)
+      for (const TemplateArgument &Arg : List.Args) {
+        FlattenedArgs.emplace_back(S.Context.getCanonicalTemplateArgument(Arg));
+      }
+  } else {
+    for (auto ArgLoc : Constraint.getParameterMapping()) {
+      FlattenedArgs.emplace_back(
+          S.Context.getCanonicalTemplateArgument(ArgLoc.getArgument()));
+    }
+    for (unsigned Depth = 0; Depth < MLTAL.getNumLevels(); ++Depth) {
+      unsigned NumArgs = MLTAL.getNumSubsitutedArgs(Depth);
+      llvm::SmallBitVector Used(NumArgs);
+      S.MarkUsedTemplateParameters(Constraint.getParameterMapping(), Depth,
+                                   Used);
+      for (unsigned I = 0; I < NumArgs; ++I)
+        if (Used[I]) {
+          if (SubstPackIndex &&
+              MLTAL(Depth, I).getKind() == TemplateArgument::Pack) {
+            FlattenedArgs.emplace_back(S.Context.getCanonicalTemplateArgument(
+                MLTAL(Depth, I).getPackAsArray()[*SubstPackIndex]));
+            continue;
+          }
+          FlattenedArgs.emplace_back(
+              S.Context.getCanonicalTemplateArgument(MLTAL(Depth, I)));
+        }
+    }
+  }
 
   llvm::FoldingSetNodeID ID;
   ID.AddPointer(Constraint.getConstraintExpr());
@@ -560,7 +589,7 @@ static ExprResult calculateConstraintSatisfaction(
 #endif
 
   ExprResult E = calculateConstraintSatisfactionImpl(
-      S, Constraint, Template, TemplateNameLoc, *SubstitutedArgs, Satisfaction,
+      S, Constraint, Template, TemplateNameLoc, MLTAL, Satisfaction,
       PackSubstitutionIndex);
 
   if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
@@ -706,6 +735,9 @@ static ExprResult calculateConstraintSatisfaction(
                                 Constraint.getConceptId());
     return E;
   }
+
+  if (Satisfaction.IsSatisfied)
+    return E;
 
   llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
   std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
