@@ -435,26 +435,16 @@ SubstitutionInTemplateArguments(
   return std::move(MLTAL);
 }
 
-static ExprResult calculateConstraintSatisfaction(
+static ExprResult calculateConstraintSatisfactionImpl(
     Sema &S, const AtomicConstraint &Constraint, const NamedDecl *Template,
     SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
     ConstraintSatisfaction &Satisfaction,
     UnsignedOrNone PackSubstitutionIndex) {
 
-  llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
-  std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
-      SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
-                                      SubstitutedOuterMost, Satisfaction,
-                                      PackSubstitutionIndex);
-  if (!SubstitutedArgs) {
-    Satisfaction.IsSatisfied = false;
-    return ExprEmpty();
-  }
-
   Sema::ArgPackSubstIndexRAII SubstIndex(S, PackSubstitutionIndex);
   ExprResult SubstitutedAtomicExpr =
       EvaluateAtomicConstraint(S, Constraint.getConstraintExpr(), Template,
-                               TemplateNameLoc, *SubstitutedArgs, Satisfaction);
+                               TemplateNameLoc, MLTAL, Satisfaction);
 
   if (SubstitutedAtomicExpr.isInvalid())
     return ExprError();
@@ -517,6 +507,84 @@ static ExprResult calculateConstraintSatisfaction(
     Satisfaction.Details.emplace_back(SubstitutedAtomicExpr.get());
 
   return SubstitutedAtomicExpr;
+}
+
+static ExprResult calculateConstraintSatisfaction(
+    Sema &S, const AtomicConstraint &Constraint, const NamedDecl *Template,
+    SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
+    ConstraintSatisfaction &Satisfaction,
+    UnsignedOrNone PackSubstitutionIndex) {
+
+  llvm::SmallVector<TemplateArgument> SubstitutedOuterMost;
+  std::optional<MultiLevelTemplateArgumentList> SubstitutedArgs =
+      SubstitutionInTemplateArguments(S, Constraint, Template, MLTAL,
+                                      SubstitutedOuterMost, Satisfaction,
+                                      PackSubstitutionIndex);
+  if (!SubstitutedArgs) {
+    Satisfaction.IsSatisfied = false;
+    return ExprEmpty();
+  }
+
+  unsigned Size = Satisfaction.Details.size();
+  llvm::SmallVector<TemplateArgument, 4> FlattenedArgs;
+  for (auto List : *SubstitutedArgs)
+    for (const TemplateArgument &Arg : List.Args)
+      FlattenedArgs.emplace_back(S.Context.getCanonicalTemplateArgument(Arg));
+
+  llvm::FoldingSetNodeID ID;
+  ID.AddPointer(Constraint.getConstraintExpr());
+  ID.AddInteger(FlattenedArgs.size());
+  for (auto &Arg : FlattenedArgs)
+    Arg.Profile(ID, S.Context);
+  ID.AddInteger(PackSubstitutionIndex.toInternalRepresentation());
+  unsigned CacheKeyHash = ID.ComputeHash();
+
+#define UseCache 1
+  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
+      Iter != S.ConceptIdSatisfactionCache.end()) {
+#if UseCache
+    auto &Cached = Iter->second.Satisfaction;
+    Satisfaction.ContainsErrors = Cached.ContainsErrors;
+    Satisfaction.IsSatisfied = Cached.IsSatisfied;
+    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
+                                Cached.Details.begin(), Cached.Details.end());
+    return Iter->second.SubstExpr;
+#else
+    // llvm::errs() << "Cache hit\n";
+#endif
+  }
+#if !UseCache
+  else
+    ;
+    // llvm::errs() << "Cache missed\n";
+#endif
+
+  ExprResult E = calculateConstraintSatisfactionImpl(
+      S, Constraint, Template, TemplateNameLoc, *SubstitutedArgs, Satisfaction,
+      PackSubstitutionIndex);
+
+  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
+      Iter != S.ConceptIdSatisfactionCache.end()) {
+#if UseCache
+    auto &Cached = Iter->second.Satisfaction;
+    Satisfaction.ContainsErrors = Cached.ContainsErrors;
+    Satisfaction.IsSatisfied = Cached.IsSatisfied;
+    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
+                                Cached.Details.begin(), Cached.Details.end());
+    return Iter->second.SubstExpr;
+#endif
+  }
+
+  CachedConceptIdConstraint Cache;
+  Cache.Satisfaction.ContainsErrors = Satisfaction.ContainsErrors;
+  Cache.Satisfaction.IsSatisfied = Satisfaction.IsSatisfied;
+  std::copy(Satisfaction.Details.begin() + Size, Satisfaction.Details.end(),
+            std::back_inserter(Cache.Satisfaction.Details));
+  Cache.SubstExpr = E;
+  S.ConceptIdSatisfactionCache.insert({CacheKeyHash, std::move(Cache)});
+#undef UseCache
+
+  return E;
 }
 
 static UnsignedOrNone EvaluateFoldExpandedConstraintSize(
@@ -615,7 +683,7 @@ static ExprResult calculateConstraintSatisfaction(
   return Out;
 }
 
-static ExprResult calculateConstraintSatisfactionImpl(
+static ExprResult calculateConstraintSatisfaction(
     Sema &S, const ConceptIdConstraint &Constraint, const NamedDecl *Template,
     SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
     ConstraintSatisfaction &Satisfaction,
@@ -660,6 +728,7 @@ static ExprResult calculateConstraintSatisfactionImpl(
   const ASTTemplateArgumentListInfo *Ori =
       Constraint.getConceptId()->getTemplateArgsAsWritten();
 
+#if 0
   TemplateArgumentListInfo TransArgs(Ori->LAngleLoc, Ori->RAngleLoc);
   unsigned Depth = Template && Template->getTemplateDepth()
                        ? Template->getTemplateDepth() - 1
@@ -670,6 +739,7 @@ static ExprResult calculateConstraintSatisfactionImpl(
     Satisfaction.IsSatisfied = false;
     return E;
   }
+#endif
 
   TemplateDeductionInfo Info(TemplateNameLoc);
   InstTemplate.emplace(
@@ -729,72 +799,6 @@ static ExprResult calculateConstraintSatisfactionImpl(
                 ->getConceptReference()));
   }
   return SubstitutedConceptId;
-}
-
-static ExprResult calculateConstraintSatisfaction(
-    Sema &S, const ConceptIdConstraint &Constraint, const NamedDecl *Template,
-    SourceLocation TemplateNameLoc, const MultiLevelTemplateArgumentList &MLTAL,
-    ConstraintSatisfaction &Satisfaction,
-    UnsignedOrNone PackSubstitutionIndex) {
-  unsigned Size = Satisfaction.Details.size();
-  llvm::SmallVector<TemplateArgument, 4> FlattenedArgs;
-  for (auto List : MLTAL)
-    for (const TemplateArgument &Arg : List.Args)
-      FlattenedArgs.emplace_back(S.Context.getCanonicalTemplateArgument(Arg));
-
-  const NamedDecl *Owner = Constraint.getConceptId()->getNamedConcept();
-
-  llvm::FoldingSetNodeID ID;
-  ConstraintSatisfaction::Profile(ID, S.Context, Owner, FlattenedArgs);
-  ID.AddInteger(PackSubstitutionIndex.toInternalRepresentation());
-  unsigned CacheKeyHash = ID.ComputeHash();
-
-
-#define UseCache 0
-  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
-      Iter != S.ConceptIdSatisfactionCache.end()) {
-#if UseCache
-    auto &Cached = Iter->second.Satisfaction;
-    Satisfaction.ContainsErrors = Cached.ContainsErrors;
-    Satisfaction.IsSatisfied = Cached.IsSatisfied;
-    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
-                                Cached.Details.begin(), Cached.Details.end());
-    return Iter->second.SubstExpr;
-#else
-    llvm::errs() << "Cache hit\n";
-#endif
-  }
-#if !UseCache
-  else
-    llvm::errs() << "Cache missed\n";
-#endif
-
-  ExprResult E = calculateConstraintSatisfactionImpl(
-      S, Constraint, Template, TemplateNameLoc, MLTAL, Satisfaction,
-      PackSubstitutionIndex);
-
-  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
-      Iter != S.ConceptIdSatisfactionCache.end()) {
-#if UseCache
-    auto &Cached = Iter->second.Satisfaction;
-    Satisfaction.ContainsErrors = Cached.ContainsErrors;
-    Satisfaction.IsSatisfied = Cached.IsSatisfied;
-    Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
-                                Cached.Details.begin(), Cached.Details.end());
-    return Iter->second.SubstExpr;
-#endif
-  }
-
-  CachedConceptIdConstraint Cache;
-  Cache.Satisfaction.ContainsErrors = Satisfaction.ContainsErrors;
-  Cache.Satisfaction.IsSatisfied = Satisfaction.IsSatisfied;
-  std::copy(Satisfaction.Details.begin() + Size, Satisfaction.Details.end(),
-            std::back_inserter(Cache.Satisfaction.Details));
-  Cache.SubstExpr = E;
-  S.ConceptIdSatisfactionCache.insert({CacheKeyHash, std::move(Cache)});
-#undef UseCache
-
-  return E;
 }
 
 static ExprResult calculateConstraintSatisfaction(
