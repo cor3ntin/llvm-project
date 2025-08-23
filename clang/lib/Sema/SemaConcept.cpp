@@ -569,8 +569,10 @@ class HashUsedTemplateArguments
   ExprResult TransformDeclRefExpr(DeclRefExpr *E) {
     NamedDecl *D = E->getDecl();
     NonTypeTemplateParmDecl *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D);
-    if (!NTTP)
+    if (!NTTP) {
+      TransformDecl(D->getLocation(), D);
       return E;
+    }
 
     TemplateArgument Arg = TemplateArgs(NTTP->getDepth(), NTTP->getPosition());
     if (NTTP->isParameterPack() && SemaRef.ArgPackSubstIndex) {
@@ -582,6 +584,14 @@ class HashUsedTemplateArguments
     UsedTemplateArgs.push_back(
         SemaRef.Context.getCanonicalTemplateArgument(Arg));
     return E;
+  }
+
+  // Why isn't transformOMPMappableExprListClause a member function?
+public:
+  Decl *TransformDecl(SourceLocation Loc, Decl *D) {
+    if (auto *VD = dyn_cast<VarDecl>(D))
+      TransformType(VD->getTypeSourceInfo());
+    return D;
   }
 
 public:
