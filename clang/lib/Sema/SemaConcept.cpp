@@ -378,11 +378,12 @@ SubstitutionInTemplateArguments(
   if (!Constraint.hasParameterMapping())
     return std::move(MLTAL);
 
+  TemplateDeductionInfo Info(Constraint.getBeginLoc());
   Sema::InstantiatingTemplate Inst(
       S, Constraint.getBeginLoc(),
-      Sema::InstantiatingTemplate::ParameterMappingSubstitution{},
+      Sema::InstantiatingTemplate::ConstraintSubstitution{},
       // FIXME: improve const-correctness of InstantiatingTemplate
-      const_cast<NamedDecl *>(Template), Constraint.getSourceRange());
+      const_cast<NamedDecl *>(Template), Info, Constraint.getSourceRange());
   if (Inst.isInvalid())
     return std::nullopt;
 
