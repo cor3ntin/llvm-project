@@ -20,6 +20,7 @@
 #include "clang/AST/DependenceFlags.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprConcepts.h"
+#include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/Basic/OperatorPrecedence.h"
 #include "clang/Basic/UnsignedOrNone.h"
@@ -38,6 +39,7 @@
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include <chrono>
 #include <cstddef>
@@ -522,6 +524,7 @@ static ExprResult calculateConstraintSatisfactionImpl(
 
 namespace {
 
+#if 0
 class HashUsedTemplateArguments
     : public TreeTransform<HashUsedTemplateArguments> {
   using inherited = TreeTransform<HashUsedTemplateArguments>;
@@ -590,8 +593,10 @@ class HashUsedTemplateArguments
   // Why isn't transformOMPMappableExprListClause a member function?
 public:
   Decl *TransformDecl(SourceLocation Loc, Decl *D) {
-    if (auto *VD = dyn_cast<VarDecl>(D))
+    if (auto *VD = dyn_cast_if_present<VarDecl>(D))
       TransformType(VD->getTypeSourceInfo());
+    else if (auto *Typedef = dyn_cast_if_present<TypedefNameDecl>(D))
+      TransformType(Typedef->getTypeSourceInfo());
     return D;
   }
 
@@ -622,6 +627,117 @@ public:
       ID.AddInteger(V);
   }
 };
+
+#else
+
+class HashUsedTemplateArguments
+    : public RecursiveASTVisitor<HashUsedTemplateArguments> {
+  using inherited = RecursiveASTVisitor<HashUsedTemplateArguments>;
+  friend inherited;
+
+  Sema &SemaRef;
+  const MultiLevelTemplateArgumentList &TemplateArgs;
+  llvm::FoldingSetNodeID &ID;
+  llvm::SmallVector<TemplateArgument, 10> UsedTemplateArgs;
+
+  UnsignedOrNone OuterPackSubstIndex;
+
+  TemplateArgument getPackSubstitutedTemplateArgument(TemplateArgument Arg) {
+    assert(*SemaRef.ArgPackSubstIndex < Arg.pack_size());
+    Arg = Arg.pack_begin()[*SemaRef.ArgPackSubstIndex];
+    if (Arg.isPackExpansion())
+      Arg = Arg.getPackExpansionPattern();
+    return Arg;
+  }
+
+  bool shouldVisitTemplateInstantiations() const { return true; }
+
+public:
+  HashUsedTemplateArguments(Sema &SemaRef,
+                            const MultiLevelTemplateArgumentList &TemplateArgs,
+                            llvm::FoldingSetNodeID &ID,
+                            UnsignedOrNone OuterPackSubstIndex)
+      : SemaRef(SemaRef), TemplateArgs(TemplateArgs), ID(ID),
+        OuterPackSubstIndex(OuterPackSubstIndex) {}
+
+  bool VisitTemplateTypeParmType(TemplateTypeParmType *T) {
+    // A lambda expression can introduce template parameters that don't have
+    // corresponding template arguments yet.
+    if (T->getDepth() >= TemplateArgs.getNumLevels())
+      return true;
+
+    TemplateArgument Arg = TemplateArgs(T->getDepth(), T->getIndex());
+
+    if (T->isParameterPack() && SemaRef.ArgPackSubstIndex) {
+      assert(Arg.getKind() == TemplateArgument::Pack &&
+             "Missing argument pack");
+
+      Arg = getPackSubstitutedTemplateArgument(Arg);
+    }
+
+    UsedTemplateArgs.push_back(
+        SemaRef.Context.getCanonicalTemplateArgument(Arg));
+    return true;
+  }
+
+  bool VisitDeclRefExpr(DeclRefExpr *E) {
+    NamedDecl *D = E->getDecl();
+    NonTypeTemplateParmDecl *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D);
+    if (!NTTP)
+      return inherited::TraverseDecl(D);
+
+    TemplateArgument Arg = TemplateArgs(NTTP->getDepth(), NTTP->getPosition());
+    if (NTTP->isParameterPack() && SemaRef.ArgPackSubstIndex) {
+      assert(Arg.getKind() == TemplateArgument::Pack &&
+             "Missing argument pack");
+      Arg = getPackSubstitutedTemplateArgument(Arg);
+    }
+
+    UsedTemplateArgs.push_back(
+        SemaRef.Context.getCanonicalTemplateArgument(Arg));
+    return true;
+  }
+
+  bool VisitTypedefType(TypedefType *TT) {
+    return inherited::TraverseType(TT->desugar());
+  }
+
+  bool TraverseTemplateArgument(const TemplateArgument &Arg) {
+    if (!Arg.containsUnexpandedParameterPack() || Arg.isPackExpansion()) {
+      // Act as if we are fully expanding this pack, if it is a PackExpansion.
+      Sema::ArgPackSubstIndexRAII _1(SemaRef, std::nullopt);
+      llvm::SaveAndRestore<UnsignedOrNone> _2(OuterPackSubstIndex,
+                                              std::nullopt);
+      return inherited::TraverseTemplateArgument(Arg);
+    }
+
+    Sema::ArgPackSubstIndexRAII _1(SemaRef, OuterPackSubstIndex);
+    return inherited::TraverseTemplateArgument(Arg);
+  }
+
+  void TraverseTemplateParameterMapping(
+      llvm::ArrayRef<TemplateArgumentLoc> Mapping) {
+    for (auto &ArgLoc : Mapping) {
+      TemplateArgument Canonical =
+          SemaRef.Context.getCanonicalTemplateArgument(ArgLoc.getArgument());
+      // We don't want sugars to impede the profile of cache.
+      UsedTemplateArgs.push_back(Canonical);
+      TraverseTemplateArgument(Canonical);
+    }
+
+    llvm::SmallSet<unsigned, 10> ArgHash;
+    for (auto &Used : UsedTemplateArgs) {
+      llvm::FoldingSetNodeID ID;
+      Used.Profile(ID, SemaRef.Context);
+      ArgHash.insert(ID.ComputeHash());
+    }
+
+    for (unsigned V : ArgHash)
+      ID.AddInteger(V);
+  }
+};
+
+#endif
 
 } // namespace
 
@@ -667,11 +783,10 @@ static ExprResult calculateConstraintSatisfaction(
         }
     }
 #else
-    Sema::ArgPackSubstIndexRAII SubstIndex(
-        S, Constraint.getPackSubstitutionIndex()
-               ? Constraint.getPackSubstitutionIndex()
-               : PackSubstitutionIndex);
-    HashUsedTemplateArguments(S, MLTAL, ID)
+    HashUsedTemplateArguments(S, MLTAL, ID,
+                              Constraint.getPackSubstitutionIndex()
+                                  ? Constraint.getPackSubstitutionIndex()
+                                  : PackSubstitutionIndex)
         .TraverseTemplateParameterMapping(Constraint.getParameterMapping());
 #endif
   }
