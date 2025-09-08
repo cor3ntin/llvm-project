@@ -741,7 +741,8 @@ CalculateConstraintSatisfaction::EvaluateFoldExpandedConstraintSize(
   UnsignedOrNone NumExpansions(std::nullopt);
   if (S.CheckParameterPacksForExpansion(
           Pattern->getExprLoc(), Pattern->getSourceRange(), Unexpanded, MLTAL,
-          Expand, RetainExpansion, NumExpansions) ||
+          /*FailOnPackProducingTemplates=*/false, Expand, RetainExpansion,
+          NumExpansions) ||
       !Expand || RetainExpansion)
     return std::nullopt;
 
@@ -2239,11 +2240,13 @@ bool FoldExpandedConstraint::AreCompatibleForSubsumption(
                                         BPacks);
 
   for (const UnexpandedParameterPack &APack : APacks) {
-    std::pair<unsigned, unsigned> DepthAndIndex = getDepthAndIndex(APack);
-    auto it = llvm::find_if(BPacks, [&](const UnexpandedParameterPack &BPack) {
-      return getDepthAndIndex(BPack) == DepthAndIndex;
+    auto ADI = getDepthAndIndex(APack);
+    if (!ADI)
+      continue;
+    auto It = llvm::find_if(BPacks, [&](const UnexpandedParameterPack &BPack) {
+      return getDepthAndIndex(BPack) == ADI;
     });
-    if (it != BPacks.end())
+    if (It != BPacks.end())
       return true;
   }
   return false;
