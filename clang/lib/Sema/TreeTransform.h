@@ -5123,32 +5123,12 @@ bool TreeTransform<Derived>::TransformTemplateArguments(
       TemplateArgumentListInfo *PackOutput = &Outputs;
       TemplateArgumentListInfo New;
 
-#if 0
-      if (getDerived().ShouldPreserveTemplateArgumentsPacks()) {
-        PackOutput = &New;
-      }
-#endif
-
       if (TransformTemplateArguments(
               PackLocIterator(*this, In.getArgument().pack_begin()),
               PackLocIterator(*this, In.getArgument().pack_end()), *PackOutput,
               Uneval))
         return true;
 
-#if 0
-      if (getDerived().ShouldPreserveTemplateArgumentsPacks()) {
-        SmallVector<TemplateArgument> Args;
-        Args.reserve(New.size());
-        llvm::transform(
-            New.arguments(), std::back_inserter(Args),
-            [](const TemplateArgumentLoc &Loc) { return Loc.getArgument(); });
-        TemplateArgumentLoc ArgLoc;
-        TemplateArgument Arg =
-            TemplateArgument::CreatePackCopy(SemaRef.getASTContext(), Args);
-        InventTemplateArgumentLoc(Arg, ArgLoc);
-        Outputs.addArgument(ArgLoc);
-      }
-#endif
       continue;
     }
 
