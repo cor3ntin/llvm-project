@@ -391,6 +391,9 @@ public:
 };
 
 struct CachedConceptIdConstraint {
+#ifndef NDEBUG
+  const Expr *E;
+#endif
   ExprResult SubstExpr;
   ConstraintSatisfaction Satisfaction;
 };

@@ -14842,7 +14842,7 @@ public:
       const NamedDecl *D1, ArrayRef<AssociatedConstraint> AC1,
       const NamedDecl *D2, ArrayRef<AssociatedConstraint> AC2);
 
-  llvm::DenseMap<unsigned, CachedConceptIdConstraint>
+  llvm::DenseMap<llvm::FoldingSetNodeID, CachedConceptIdConstraint>
       ConceptIdSatisfactionCache;
 
 private:

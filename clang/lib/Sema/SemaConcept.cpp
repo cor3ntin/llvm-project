@@ -41,6 +41,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/Support/raw_ostream.h"
 #include <chrono>
 #include <cstddef>
 #include <iterator>
@@ -320,7 +321,7 @@ public:
     NamedDecl *D = E->getDecl();
     NonTypeTemplateParmDecl *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D);
     if (!NTTP)
-      return inherited::TraverseDecl(D);
+      return TraverseDecl(D);
 
     TemplateArgument Arg = TemplateArgs(NTTP->getDepth(), NTTP->getPosition());
     if (NTTP->isParameterPack() && SemaRef.ArgPackSubstIndex) {
@@ -336,6 +337,18 @@ public:
 
   bool VisitTypedefType(TypedefType *TT) {
     return inherited::TraverseType(TT->desugar());
+  }
+
+  bool TraverseDecl(Decl *D) {
+    if (auto *VD = dyn_cast<ValueDecl>(D))
+      return TraverseType(VD->getType());
+
+    return inherited::TraverseDecl(D);
+  }
+
+  bool TraverseTypeLoc(TypeLoc TL, bool TraverseQualifier = true) {
+    // We don't care about TypeLocs. So traverse Types instead.
+    return TraverseType(TL.getType(), TraverseQualifier);
   }
 
   bool TraverseTemplateArgument(const TemplateArgument &Arg) {
@@ -370,15 +383,16 @@ public:
       TraverseTemplateArgument(Canonical);
     }
 
-    llvm::SmallSet<unsigned, 10> ArgHash;
+    // llvm::SmallSet<llvm::FoldingSetNodeID, 10> ArgHash;
     for (auto &Used : UsedTemplateArgs) {
-      llvm::FoldingSetNodeID ID;
-      Used.Profile(ID, SemaRef.Context);
-      ArgHash.insert(ID.ComputeHash());
+      llvm::FoldingSetNodeID R;
+      Used.Profile(R, SemaRef.Context);
+      ID.AddNodeID(R);
+      // ArgHash.insert(R);
     }
 
-    for (unsigned V : ArgHash)
-      ID.AddInteger(V);
+    // for (const llvm::FoldingSetNodeID &V : ArgHash)
+    //   ID.AddNodeID(V);
   }
 };
 
@@ -673,18 +687,23 @@ ExprResult CalculateConstraintSatisfaction::Calculate(
 
   unsigned Size = Satisfaction.Details.size();
   llvm::FoldingSetNodeID ID;
-  HashParameterMapping(S, MLTAL, ID,
-                       Constraint.getPackSubstitutionIndex()
-                           ? Constraint.getPackSubstitutionIndex()
-                           : PackSubstitutionIndex)
-      .VisitConstraint(Constraint);
+  UnsignedOrNone OuterPackSubstIndex =
+      Constraint.getPackSubstitutionIndex()
+          ? Constraint.getPackSubstitutionIndex()
+          : PackSubstitutionIndex;
+  // Constraint.getConstraintExpr()->Profile(ID, S.Context, /*Canonical=*/true,
+  //                                         /*ProfileLambdaExpr=*/true);
+  auto *Previous = Constraint.getConstraintExpr();
   ID.AddPointer(Constraint.getConstraintExpr());
-  ID.AddInteger(PackSubstitutionIndex.toInternalRepresentation());
+  ID.AddInteger(OuterPackSubstIndex.toInternalRepresentation());
+  ID.AddBoolean(Constraint.hasParameterMapping());
+  HashParameterMapping(S, MLTAL, ID, OuterPackSubstIndex)
+      .VisitConstraint(Constraint);
 
-  unsigned CacheKeyHash = ID.ComputeHash();
+  unsigned CacheKeyHash = ID.computeStableHash();
 
 #define UseCache 1
-  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
+  if (auto Iter = S.ConceptIdSatisfactionCache.find(ID);
       Iter != S.ConceptIdSatisfactionCache.end()) {
 #if UseCache
     auto &Cached = Iter->second.Satisfaction;
@@ -692,6 +711,30 @@ ExprResult CalculateConstraintSatisfaction::Calculate(
     Satisfaction.IsSatisfied = Cached.IsSatisfied;
     Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
                                 Cached.Details.begin(), Cached.Details.end());
+#ifndef NDEBUG
+    if (Iter->second.E != Constraint.getConstraintExpr()) {
+      llvm::errs() << "CacheKey: " << CacheKeyHash << " "
+                   << S.ConceptIdSatisfactionCache.size() << "\n";
+      if (Constraint.hasParameterMapping()) {
+        llvm::errs() << "Mapping: ";
+        for (auto Arg : Constraint.getParameterMapping()) {
+          Arg.getArgument().print(S.getPrintingPolicy(), llvm::errs(),
+                                  /*IncludeType=*/false);
+          llvm::errs() << " ";
+        }
+        llvm::errs() << "\n";
+      }
+      llvm::errs() << "Previous 1: " << Iter->second.E << " ";
+      Iter->second.E->printPretty(llvm::errs(), /*Helper=*/nullptr,
+                                  S.getPrintingPolicy());
+      llvm::errs() << "\n";
+      llvm::errs() << "Current 1: " << Constraint.getConstraintExpr() << " ";
+      Constraint.getConstraintExpr()->printPretty(
+          llvm::errs(), /*Helper=*/nullptr, S.getPrintingPolicy());
+      llvm::errs() << "\n";
+    }
+    assert(Iter->second.E == Constraint.getConstraintExpr());
+#ifndef NDEBUG
     return Iter->second.SubstExpr;
 #else
 #endif
@@ -699,7 +742,9 @@ ExprResult CalculateConstraintSatisfaction::Calculate(
 
   ExprResult E = CalculateSlow(Constraint, MLTAL);
 
-  if (auto Iter = S.ConceptIdSatisfactionCache.find(CacheKeyHash);
+  assert(Constraint.getConstraintExpr() == Previous);
+
+  if (auto Iter = S.ConceptIdSatisfactionCache.find(ID);
       Iter != S.ConceptIdSatisfactionCache.end()) {
 #if UseCache
     auto &Cached = Iter->second.Satisfaction;
@@ -707,6 +752,20 @@ ExprResult CalculateConstraintSatisfaction::Calculate(
     Satisfaction.IsSatisfied = Cached.IsSatisfied;
     Satisfaction.Details.insert(Satisfaction.Details.begin() + Size,
                                 Cached.Details.begin(), Cached.Details.end());
+#ifndef NDEBUG
+    if (Iter->second.E != Constraint.getConstraintExpr()) {
+      llvm::errs() << "CacheKey: " << CacheKeyHash << " ";
+      llvm::errs() << "Previous: ";
+      Iter->second.E->printPretty(llvm::errs(), /*Helper=*/nullptr,
+                                  S.getPrintingPolicy());
+      llvm::errs() << "\n";
+      llvm::errs() << "Current: ";
+      Constraint.getConstraintExpr()->printPretty(
+          llvm::errs(), /*Helper=*/nullptr, S.getPrintingPolicy());
+      llvm::errs() << "\n";
+    }
+    assert(Iter->second.E == Constraint.getConstraintExpr());
+#ifndef NDEBUG
     return Iter->second.SubstExpr;
 #endif
   }
@@ -717,7 +776,8 @@ ExprResult CalculateConstraintSatisfaction::Calculate(
   std::copy(Satisfaction.Details.begin() + Size, Satisfaction.Details.end(),
             std::back_inserter(Cache.Satisfaction.Details));
   Cache.SubstExpr = E;
-  S.ConceptIdSatisfactionCache.insert({CacheKeyHash, std::move(Cache)});
+  Cache.E = Constraint.getConstraintExpr();
+  S.ConceptIdSatisfactionCache.insert({ID, std::move(Cache)});
 #undef UseCache
 
   return E;
@@ -2389,32 +2449,6 @@ bool Sema::MaybeEmitAmbiguousAtomicConstraintsDiagnostic(
 // ------------------------ Subsumption -----------------------------------
 //
 //
-
-template <> struct llvm::DenseMapInfo<llvm::FoldingSetNodeID> {
-
-  static FoldingSetNodeID getEmptyKey() {
-    FoldingSetNodeID ID;
-    ID.AddInteger(std::numeric_limits<unsigned>::max());
-    return ID;
-  }
-
-  static FoldingSetNodeID getTombstoneKey() {
-    FoldingSetNodeID ID;
-    for (unsigned I = 0; I < sizeof(ID) / sizeof(unsigned); ++I) {
-      ID.AddInteger(std::numeric_limits<unsigned>::max());
-    }
-    return ID;
-  }
-
-  static unsigned getHashValue(const FoldingSetNodeID &Val) {
-    return Val.ComputeHash();
-  }
-
-  static bool isEqual(const FoldingSetNodeID &LHS,
-                      const FoldingSetNodeID &RHS) {
-    return LHS == RHS;
-  }
-};
 
 SubsumptionChecker::SubsumptionChecker(Sema &SemaRef,
                                        SubsumptionCallable Callable)
