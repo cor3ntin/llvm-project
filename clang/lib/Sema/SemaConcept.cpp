@@ -776,7 +776,9 @@ ExprResult CalculateConstraintSatisfaction::Calculate(
   std::copy(Satisfaction.Details.begin() + Size, Satisfaction.Details.end(),
             std::back_inserter(Cache.Satisfaction.Details));
   Cache.SubstExpr = E;
+#ifndef NDEBUG
   Cache.E = Constraint.getConstraintExpr();
+#endif
   S.ConceptIdSatisfactionCache.insert({ID, std::move(Cache)});
 #undef UseCache
 
