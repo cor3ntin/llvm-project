@@ -3864,5 +3864,4 @@ typename clang::LazyGenerationalUpdatePtr<Owner, T, Update>::ValueType
   return Value;
 }
 
-
 #endif // LLVM_CLANG_AST_ASTCONTEXT_H
