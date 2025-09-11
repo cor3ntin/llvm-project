@@ -306,6 +306,7 @@ public:
 
 namespace {
 
+// FIXME: Convert it to DynamicRecursiveASTVisitor
 class HashParameterMapping : public RecursiveASTVisitor<HashParameterMapping> {
   using inherited = RecursiveASTVisitor<HashParameterMapping>;
   friend inherited;
@@ -387,6 +388,20 @@ public:
   bool TraverseTypeLoc(TypeLoc TL, bool TraverseQualifier = true) {
     // We don't care about TypeLocs. So traverse Types instead.
     return TraverseType(TL.getType(), TraverseQualifier);
+  }
+
+  bool TraverseTagType(const TagType *T, bool TraverseQualifier) {
+    // T's parent can be dependent while T doesn't have any template arguments.
+    // We should have already traversed its qualifier.
+    // FIXME: Add an assert to catch cases where we failed to profile the
+    // concept. assert(!T->isDependentType() && "We missed a case in profiling
+    // concepts!");
+    return true;
+  }
+
+  bool TraverseInjectedClassNameType(InjectedClassNameType *T,
+                                     bool TraverseQualifier) {
+    return TraverseTemplateArguments(T->getTemplateArgs(SemaRef.Context));
   }
 
   bool TraverseTemplateArgument(const TemplateArgument &Arg) {
