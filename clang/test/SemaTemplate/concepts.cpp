@@ -1311,4 +1311,24 @@ static_assert(!E<int>);
 
 }
 
+namespace case3 {
+
+template<int N> concept A = N != 0; // #case3_A
+template<char C> concept B = A<C>; // #case3_B
+template<int N> concept C = B<N>;
+
+template<int N> void f() requires C<N> {} // #case3_N
+
+void g() {
+  f<1>();
+  f<256>(); // expected-error {{no matching function}}
+  // expected-note@#case3_N {{candidate template ignored}}
+  // expected-note@#case3_N {{because '256' does not satisfy 'C'}}
+  // FIXME: ''\x00''? It's not ideal..
+  // expected-note@#case3_B {{because ''\x00'' does not satisfy 'A'}}
+  // expected-note@#case3_A {{evaluated to false}}
+}
+
+}
+
 }
