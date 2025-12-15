@@ -125,7 +125,7 @@ static bool hasSuitableConstructorForRelocation(Sema &SemaRef,
   CXXMethodDecl *Decl =
       LookupSpecialMemberFromXValue(SemaRef, D, /*Assign=*/false);
   return Decl && (AllowUserDefined || !Decl->isUserProvided()) &&
-         !Decl->isDeleted();
+         !Decl->isDeletedAsWritten();
 }
 
 static bool hasSuitableMoveAssignmentOperatorForRelocation(
@@ -141,7 +141,7 @@ static bool hasSuitableMoveAssignmentOperatorForRelocation(
     return false;
 
   return Decl && (AllowUserDefined || !Decl->isUserProvided()) &&
-         !Decl->isDeleted();
+         !Decl->isDeletedAsWritten();
 }
 
 // [C++26][class.prop]
@@ -169,10 +169,10 @@ static bool IsDefaultMovable(Sema &SemaRef, const CXXRecordDecl *D) {
 
   Dtr = Dtr->getCanonicalDecl();
 
-  if (Dtr->isUserProvided() && (!Dtr->isDefaulted() || Dtr->isDeleted()))
+  if (Dtr->isUserProvided() && (!Dtr->isDefaulted() || Dtr->isDeletedAsWritten()))
     return false;
 
-  return !Dtr->isDeleted();
+  return !Dtr->isDeletedAsWritten();
 }
 
 // [C++26][class.prop]
