@@ -184,12 +184,12 @@ struct __attribute__((trivial_abi)) CopyDeleted {
   CopyDeleted(CopyDeleted &&) = default;
 };
 #if defined(_WIN64) && !defined(__MINGW32__)
-static_assert(!__is_trivially_relocatable(CopyDeleted), ""); // expected-warning{{deprecated}}
-static_assert(!__builtin_is_cpp_trivially_relocatable(CopyDeleted), "");
+static_assert(__is_trivially_relocatable(CopyDeleted), ""); // expected-warning{{deprecated}}
+static_assert(__builtin_is_cpp_trivially_relocatable(CopyDeleted), "");
 
 #else
 static_assert(__is_trivially_relocatable(CopyDeleted), ""); // expected-warning{{deprecated}}
-static_assert(!__builtin_is_cpp_trivially_relocatable(CopyDeleted), "");
+static_assert(__builtin_is_cpp_trivially_relocatable(CopyDeleted), "");
 #endif
 
 struct __attribute__((trivial_abi)) MoveDeleted {

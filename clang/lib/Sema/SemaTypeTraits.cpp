@@ -208,7 +208,7 @@ static bool IsEligibleForTrivialRelocation(Sema &SemaRef,
                        Field->getType()))
       return false;
   }
-  return !D->hasDeletedDestructor();
+  return true;
 }
 
 // [C++26][class.prop]

@@ -125,7 +125,7 @@ static_assert(__builtin_is_cpp_trivially_relocatable(DefaultedDtr));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserMoveWithDefaultCopy));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserMove));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserCopy));
-static_assert(!__builtin_is_cpp_trivially_relocatable(UserMoveDefault));
+static_assert(__builtin_is_cpp_trivially_relocatable(UserMoveDefault));
 static_assert(__builtin_is_cpp_trivially_relocatable(UserMoveAssignDefault));
 static_assert(__builtin_is_cpp_trivially_relocatable(UserCopyDefault));
 static_assert(!__builtin_is_cpp_trivially_relocatable(UserDeletedMove));
@@ -446,3 +446,16 @@ static_assert (__builtin_is_replaceable (K));
 static_assert (__builtin_is_cpp_trivially_relocatable(K));
 
 }
+
+struct Cwg3049Base  trivially_relocatable_if_eligible
+{
+    Cwg3049Base(const Cwg3049Base&) = delete;
+    ~Cwg3049Base() = delete;
+};
+struct Cwg3049Derived : Cwg3049Base
+{
+};
+static_assert(__builtin_is_cpp_trivially_relocatable(Cwg3049Base));
+static_assert(__builtin_is_cpp_trivially_relocatable(Cwg3049Derived));
+
+
