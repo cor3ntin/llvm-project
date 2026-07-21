@@ -171,7 +171,8 @@ ExprResult Sema::ActOnContractAssertCondition(Expr *Cond)  {
 StmtResult Sema::BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
                                    Expr *Cond, DeclStmt *RND,
                                    ArrayRef<const Attr *> Attrs) {
-  return ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND, Attrs);
+  return ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND,
+                              /*ControlObjectType=*/QualType(), Attrs);
 }
 
 StmtResult Sema::ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,

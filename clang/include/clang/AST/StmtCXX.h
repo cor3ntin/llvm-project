@@ -566,6 +566,12 @@ class ContractStmt final
 
   SourceLocation KeywordLoc;
 
+  // The D4324 assertion-control object type named by pre<T>/post<T>/
+  // contract_assert<T>. A null type means no control object was named, in which
+  // case code generation applies the built-in defaults and does not depend on
+  // the <contracts> header.
+  QualType ControlObjectType;
+
   ArrayRef<Stmt *> getSubStmts() const {
     return llvm::ArrayRef(getTrailingObjects<Stmt *>(),
                           numTrailingObjects(OverloadToken<Stmt *>{}));
@@ -593,8 +599,10 @@ class ContractStmt final
   }
 
   ContractStmt(ContractKind CK, SourceLocation KeywordLoc, Expr *Condition,
-               DeclStmt *RN, ArrayRef<const Attr *> Attrs = {})
-      : Stmt(ContractStmtClass), KeywordLoc(KeywordLoc) {
+               DeclStmt *RN, QualType ControlObjectType,
+               ArrayRef<const Attr *> Attrs = {})
+      : Stmt(ContractStmtClass), KeywordLoc(KeywordLoc),
+        ControlObjectType(ControlObjectType) {
     ContractAssertBits.ContractKind = static_cast<unsigned>(CK);
     ContractAssertBits.HasResultName = RN != nullptr;
     ContractAssertBits.NumAttrs = Attrs.size();
@@ -619,6 +627,7 @@ public:
   static ContractStmt *Create(const ASTContext &C, ContractKind Kind,
                               SourceLocation KeywordLoc, Expr *Condition,
                               DeclStmt *ResultNameDecl,
+                              QualType ControlObjectType,
                               ArrayRef<const Attr *> Attrs = {});
 
   static ContractStmt *CreateEmpty(const ASTContext &C, ContractKind Kind,
@@ -637,6 +646,12 @@ public:
   const Expr *getCond() const {
     return const_cast<ContractStmt *>(this)->getCond();
   }
+
+  /// The assertion-control object type named by pre<T>/post<T>/
+  /// contract_assert<T>, or a null type when no control object was named.
+  QualType getControlObjectType() const { return ControlObjectType; }
+  void setControlObjectType(QualType T) { ControlObjectType = T; }
+  bool hasExplicitControlType() const { return !ControlObjectType.isNull(); }
 
 public:
   // Convert the contract semantic to a string for use in diagnostics.

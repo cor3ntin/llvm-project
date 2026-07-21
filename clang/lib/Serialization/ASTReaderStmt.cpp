@@ -518,6 +518,7 @@ void ASTStmtReader::VisitContractStmt(ContractStmt *S) {
   unsigned NumAttrs = Record.readInt();
 
   S->KeywordLoc = Record.readSourceLocation();
+  S->setControlObjectType(Record.readType());
   S->setCondition(Record.readExpr());
   if (S->hasResultName())
     S->setResultName(cast<DeclStmt>(Record.readStmt()));

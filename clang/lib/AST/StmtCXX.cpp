@@ -142,14 +142,15 @@ ContractStmt *ContractStmt::CreateEmpty(const ASTContext &C, ContractKind Kind,
 ContractStmt *ContractStmt::Create(const ASTContext &C, ContractKind Kind,
                                    SourceLocation KeywordLoc, Expr *Condition,
                                    DeclStmt *ResultNameDecl,
+                                   QualType ControlObjectType,
                                    ArrayRef<const Attr *> Attrs) {
   assert((ResultNameDecl == nullptr || Kind == ContractKind::Post) &&
          "Only a postcondition can have a result name declaration");
   void *Mem = C.Allocate(totalSizeToAlloc<Stmt *, const Attr *>(
                              1 + (ResultNameDecl != nullptr), Attrs.size()),
                          alignof(ContractStmt));
-  return new (Mem)
-      ContractStmt(Kind, KeywordLoc, Condition, ResultNameDecl, Attrs);
+  return new (Mem) ContractStmt(Kind, KeywordLoc, Condition, ResultNameDecl,
+                                ControlObjectType, Attrs);
 }
 
 ResultNameDecl *ContractStmt::getResultName() const {

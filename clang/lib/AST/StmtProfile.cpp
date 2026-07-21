@@ -2491,7 +2491,10 @@ void StmtProfiler::VisitCoyieldExpr(const CoyieldExpr *S) {
   VisitExpr(S);
 }
 
-void StmtProfiler::VisitContractStmt(const ContractStmt *S) { VisitStmt(S); }
+void StmtProfiler::VisitContractStmt(const ContractStmt *S) {
+  VisitStmt(S);
+  VisitType(S->getControlObjectType());
+}
 
 void StmtProfiler::VisitOpaqueValueExpr(const OpaqueValueExpr *E) {
   VisitExpr(E);
