@@ -7171,6 +7171,9 @@ public:
     bool WasInContractContext = false;
     bool HadNoFunctionScope = false;
     unsigned FunctionScopeStartAtPush = 0;
+    // Whether predicates in this contract are constified (D4324: decided by the
+    // control object's `constify` property rather than a global flag).
+    bool Constify = true;
     const DeclContext *getFunctionContext(bool AllowLambda = true) const;
 
   };
@@ -7185,8 +7188,14 @@ public:
 
   SourceLocation getContractLocForFunctionScope(const sema::FunctionScopeInfo *FSI) const;
 
-  void PushContractScope(ContractKind CK, ContractScopeOffset ScopeOffset, SourceLocation Loc);
+  void PushContractScope(ContractKind CK, ContractScopeOffset ScopeOffset,
+                         SourceLocation Loc, bool Constify);
   ContractScopeRecord PopContractScope();
+
+  /// Whether predicates governed by the given assertion-control object type are
+  /// constified. A null type (no control object named) follows the build's
+  /// legacy default; otherwise the type's `constify` member decides.
+  bool shouldConstifyContractPredicate(QualType ControlObjectType);
 
   const ContractScopeRecord *getContractScopeForContext(const DeclContext *DC) const;
 
@@ -7200,7 +7209,8 @@ public:
   getInterveningFunctionScopesForContracts(const ValueDecl *VD) const;
 
   struct ContractScopeRAII {
-    ContractScopeRAII(Sema &S, ContractKind CK, ContractScopeOffset Offset, SourceLocation ContractLoc);
+    ContractScopeRAII(Sema &S, ContractKind CK, ContractScopeOffset Offset,
+                      SourceLocation ContractLoc, bool Constify);
     ~ContractScopeRAII();
 
   private:

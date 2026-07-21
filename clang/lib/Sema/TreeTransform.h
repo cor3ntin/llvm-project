@@ -9093,7 +9093,19 @@ StmtResult TreeTransform<Derived>::TransformContractStmt(ContractStmt *S) {
 
   assert(getSema().getFunctionLevelDeclContext(true)->isFunctionOrMethod());
 
-  Sema::ContractScopeRAII ContractScope(getSema(), S->getContractKind(), CSO_FunctionContext, S->getKeywordLoc());
+  // Substitute into the assertion-control type first, so its constify policy is
+  // known before the (constified-or-not) predicate is transformed.
+  QualType ControlObjectType = S->getControlObjectType();
+  if (!ControlObjectType.isNull()) {
+    ControlObjectType = getDerived().TransformType(ControlObjectType);
+    if (ControlObjectType.isNull())
+      return StmtError();
+  }
+  bool Constify = getSema().shouldConstifyContractPredicate(ControlObjectType);
+
+  Sema::ContractScopeRAII ContractScope(getSema(), S->getContractKind(),
+                                        CSO_FunctionContext, S->getKeywordLoc(),
+                                        Constify);
 
   StmtResult NewResultName;
   if (S->hasResultName()) {
@@ -9108,14 +9120,6 @@ StmtResult TreeTransform<Derived>::TransformContractStmt(ContractStmt *S) {
     return StmtError();
 
   Cond = CondRes.get().second;
-
-  // Substitute into the assertion-control type, if one was named.
-  QualType ControlObjectType = S->getControlObjectType();
-  if (!ControlObjectType.isNull()) {
-    ControlObjectType = getDerived().TransformType(ControlObjectType);
-    if (ControlObjectType.isNull())
-      return StmtError();
-  }
 
   return getDerived().RebuildContractStmt(
       S->getContractKind(), S->getKeywordLoc(), Cond,

@@ -1289,9 +1289,6 @@ bool Sema::isUsageAcrossContract(const ValueDecl *VD) {
 ContractConstification Sema::getContractConstification(const ValueDecl *VD) {
   //WalkUpContractScopesTest();
   auto &S = *this;
-  if (!S.LangOpts.ContractConstification)
-    return CC_None;
-
   assert(VD);
   const ContractScopeRecord *CSR = S.getCurrentContractEntry();
 
@@ -1307,6 +1304,10 @@ ContractConstification Sema::getContractConstification(const ValueDecl *VD) {
   if (CSR == nullptr)
     return CC_None;
 
+  // D4324: constification is a per-assertion policy governed by the contract's
+  // control object rather than a build-wide flag.
+  if (!CSR->Constify)
+    return CC_None;
 
   // Make sure that there's a contract scope interviening between the current
   // context and the declaration of the variable. If there isn't, we don't need
@@ -1779,17 +1780,41 @@ void Sema::WalkUpContractScopesTest() const {
 }
 
 
-Sema::ContractScopeRAII::ContractScopeRAII(Sema &S, ContractKind CK, ContractScopeOffset ScopeOffset, SourceLocation Loc)
+Sema::ContractScopeRAII::ContractScopeRAII(Sema &S, ContractKind CK,
+                                           ContractScopeOffset ScopeOffset,
+                                           SourceLocation Loc, bool Constify)
     : S(S) {
-  S.PushContractScope(CK, ScopeOffset, Loc);
+  S.PushContractScope(CK, ScopeOffset, Loc, Constify);
 }
 
 Sema::ContractScopeRAII::~ContractScopeRAII() {
   S.PopContractScope();
 }
 
+bool Sema::shouldConstifyContractPredicate(QualType ControlObjectType) {
+  // No control object named: keep the build's legacy behavior. A dependent
+  // type is resolved once instantiated; until then fall back to the default.
+  if (ControlObjectType.isNull() || ControlObjectType->isDependentType())
+    return LangOpts.ContractConstification;
 
-void Sema::PushContractScope(ContractKind Kind, ContractScopeOffset ScopeOffset, SourceLocation Loc) {
+  const CXXRecordDecl *RD = ControlObjectType->getAsCXXRecordDecl();
+  if (!RD || !(RD = RD->getDefinition()))
+    return LangOpts.ContractConstification;
+
+  // Read the control object's static `constify` member (already validated to
+  // exist by CheckContractControlType). A missing/unevaluatable value defaults
+  // to no constification, matching D4324's default_control.
+  for (NamedDecl *ND : RD->lookup(&Context.Idents.get("constify"))) {
+    if (auto *VD = dyn_cast<VarDecl>(ND)) {
+      if (const APValue *V = VD->evaluateValue(); V && V->isInt())
+        return V->getInt().getBoolValue();
+    }
+  }
+  return false;
+}
+
+void Sema::PushContractScope(ContractKind Kind, ContractScopeOffset ScopeOffset,
+                             SourceLocation Loc, bool Constify) {
 //  assert(!FunctionScopes.empty());
 
   ContractScopeRecord Record{
@@ -1806,7 +1831,8 @@ void Sema::PushContractScope(ContractKind Kind, ContractScopeOffset ScopeOffset,
          .AddedConstToCXXThis = false,
          .WasInContractContext = ExprEvalContexts.back().InContractAssertion,
          .HadNoFunctionScope = FunctionScopes.empty(),
-         .FunctionScopeStartAtPush = FunctionScopesStart};
+         .FunctionScopeStartAtPush = FunctionScopesStart,
+         .Constify = Constify};
 
     // Setup the constification context when building declref expressions.
     ExprEvalContexts.back().InContractAssertion = true;
