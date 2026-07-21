@@ -168,10 +168,58 @@ ExprResult Sema::ActOnContractAssertCondition(Expr *Cond)  {
   return Cond;
 }
 
+bool Sema::CheckContractControlType(QualType ControlObjectType,
+                                    SourceLocation Loc) {
+  // No control object named, or still dependent: nothing to check now. A
+  // dependent type is re-checked once instantiated.
+  if (ControlObjectType.isNull() || ControlObjectType->isDependentType())
+    return true;
+
+  const CXXRecordDecl *RD = ControlObjectType->getAsCXXRecordDecl();
+  if (!RD) {
+    Diag(Loc, diag::err_contract_control_not_class) << ControlObjectType;
+    return false;
+  }
+
+  if (RequireCompleteType(Loc, ControlObjectType,
+                          diag::err_contract_control_incomplete))
+    return false;
+
+  RD = RD->getDefinition();
+  assert(RD && "complete class type without a definition");
+
+  // The control object carries no state; it only steers code generation.
+  if (!RD->isEmpty()) {
+    Diag(Loc, diag::err_contract_control_not_empty) << ControlObjectType;
+    return false;
+  }
+
+  auto HasMember = [&](DeclarationName Name) {
+    return !RD->lookup(Name).empty();
+  };
+
+  bool Ok = true;
+  for (StringRef Member : {"is_ignored", "constify", "assumable"}) {
+    if (!HasMember(&Context.Idents.get(Member))) {
+      Diag(Loc, diag::err_contract_control_missing_member)
+          << ControlObjectType << Member;
+      Ok = false;
+    }
+  }
+  if (!HasMember(Context.DeclarationNames.getCXXOperatorName(OO_Call))) {
+    Diag(Loc, diag::err_contract_control_missing_member)
+        << ControlObjectType << "operator()";
+    Ok = false;
+  }
+  return Ok;
+}
+
 StmtResult Sema::BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
                                    Expr *Cond, DeclStmt *RND,
                                    QualType ControlObjectType,
                                    ArrayRef<const Attr *> Attrs) {
+  if (!CheckContractControlType(ControlObjectType, KeywordLoc))
+    return StmtError();
   return ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND,
                               ControlObjectType, Attrs);
 }

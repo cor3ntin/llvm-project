@@ -3273,6 +3273,14 @@ public:
                                QualType ControlObjectType,
                                ArrayRef<const Attr *> Attrs);
 
+  /// Check that a named assertion-control object type models the interface the
+  /// compiler reads for D4324 contracts: an empty class exposing is_ignored,
+  /// constify, assumable, and a call operator. A null or dependent type is
+  /// accepted (dependent types are re-checked on instantiation). Returns true
+  /// if the type is acceptable.
+  bool CheckContractControlType(QualType ControlObjectType,
+                                SourceLocation Loc);
+
   ContractSpecifierDecl *
   BuildContractSpecifierDecl(ArrayRef<ContractStmt *> Contracts,
                              DeclContext *DC, SourceLocation Loc,
