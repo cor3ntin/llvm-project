@@ -5,8 +5,10 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/TextNodeDumper.h"
 
+#ifndef _WIN32
 #include <sys/types.h>
 #include <sys/wait.h>
+#endif
 
 namespace clang {
 
@@ -92,6 +94,9 @@ void EricWFDump(std::string_view Message, const DeclContext *D,
 
 namespace ericwf_impl {
 ForkResult ForkInternal() {
+  // fork()/wait() are POSIX-only, so this fork-based debugging aid is not
+  // available on Windows.
+#ifndef _WIN32
   if constexpr (EricWFDebugEnabled) {
     pid_t c_pid = fork();
     if (c_pid == -1) {
@@ -115,6 +120,9 @@ ForkResult ForkInternal() {
   } else {
     std::terminate();
   }
+#else
+  std::terminate();
+#endif
 }
 } // namespace ericwf_impl
 

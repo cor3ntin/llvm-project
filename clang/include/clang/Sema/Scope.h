@@ -43,7 +43,7 @@ class Scope {
 public:
   /// ScopeFlags - These are bitfields that are or'd together when creating a
   /// scope, which defines the sorts of things the scope contains.
-  enum ScopeFlags : unsigned long {
+  enum ScopeFlags : unsigned long long {
     // A bitfield value representing no scopes.
     NoScope = 0,
 
@@ -187,7 +187,7 @@ private:
 
   /// Flags - This contains a set of ScopeFlags, which indicates how the scope
   /// interrelates with other control flow statements.
-  unsigned long Flags;
+  unsigned long long Flags;
 
   /// Depth - This is the depth of this scope.  The translation-unit scope has
   /// depth 0.
@@ -271,18 +271,18 @@ private:
   /// directly precedes it, if any.
   LabelDecl *PrecedingLabel;
 
-  void setFlags(Scope *Parent, unsigned long F);
+  void setFlags(Scope *Parent, unsigned long long F);
 
 public:
-  Scope(Scope *Parent, unsigned long ScopeFlags, DiagnosticsEngine &Diag)
+  Scope(Scope *Parent, unsigned long long ScopeFlags, DiagnosticsEngine &Diag)
       : ErrorTrap(Diag) {
     Init(Parent, ScopeFlags);
   }
 
   /// getFlags - Return the flags for this scope.
-  unsigned long getFlags() const { return Flags; }
+  unsigned long long getFlags() const { return Flags; }
 
-  void setFlags(unsigned long F) { setFlags(getParent(), F); }
+  void setFlags(unsigned long long F) { setFlags(getParent(), F); }
 
   /// Get the label that precedes this scope.
   LabelDecl *getPrecedingLabel() const { return PrecedingLabel; }
@@ -681,11 +681,11 @@ public:
   void applyNRVO();
 
   /// Init - This is used by the parser to implement scope caching.
-  void Init(Scope *parent, unsigned long flags);
+  void Init(Scope *parent, unsigned long long flags);
 
   /// Sets up the specified scope flags and adjusts the scope state
   /// variables accordingly.
-  void AddFlags(unsigned long Flags);
+  void AddFlags(unsigned long long Flags);
 
   void dumpImpl(raw_ostream &OS) const;
   void dump() const;

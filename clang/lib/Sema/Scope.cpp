@@ -17,7 +17,7 @@
 
 using namespace clang;
 
-void Scope::setFlags(Scope *parent, unsigned long flags) {
+void Scope::setFlags(Scope *parent, unsigned long long flags) {
   AnyParent = parent;
   Flags = flags;
 
@@ -93,7 +93,7 @@ void Scope::setFlags(Scope *parent, unsigned long flags) {
   }
 }
 
-void Scope::Init(Scope *parent, unsigned long flags) {
+void Scope::Init(Scope *parent, unsigned long long flags) {
   setFlags(parent, flags);
 
   DeclsInScope.clear();
@@ -114,7 +114,7 @@ bool Scope::containedInPrototypeScope() const {
   return false;
 }
 
-void Scope::AddFlags(unsigned long FlagsToSet) {
+void Scope::AddFlags(unsigned long long FlagsToSet) {
   assert((FlagsToSet & ~(BreakScope | ContinueScope | ContractAssertScope)) == 0 &&
          "Unsupported scope flags");
   if (FlagsToSet & BreakScope) {
@@ -199,13 +199,13 @@ void Scope::applyNRVO() {
 LLVM_DUMP_METHOD void Scope::dump() const { dumpImpl(llvm::errs()); }
 
 void Scope::dumpImpl(raw_ostream &OS) const {
-  unsigned long Flags = getFlags();
+  unsigned long long Flags = getFlags();
   bool HasFlags = Flags != 0;
 
   if (HasFlags)
     OS << "Flags: ";
 
-  std::pair<unsigned long, const char *> FlagInfo[] = {
+  std::pair<unsigned long long, const char *> FlagInfo[] = {
       {FnScope, "FnScope"},
       {BreakScope, "BreakScope"},
       {ContinueScope, "ContinueScope"},
