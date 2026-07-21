@@ -170,13 +170,15 @@ ExprResult Sema::ActOnContractAssertCondition(Expr *Cond)  {
 
 StmtResult Sema::BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
                                    Expr *Cond, DeclStmt *RND,
+                                   QualType ControlObjectType,
                                    ArrayRef<const Attr *> Attrs) {
   return ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND,
-                              /*ControlObjectType=*/QualType(), Attrs);
+                              ControlObjectType, Attrs);
 }
 
 StmtResult Sema::ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,
                                      Expr *Cond, ResultNameDecl *RND,
+                                     QualType ControlObjectType,
                                      ParsedAttributes &ContractAttrs) {
 
   DeclStmt *RNDStmt = nullptr;
@@ -191,7 +193,7 @@ StmtResult Sema::ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,
   }
 
   StmtResult Res =
-      BuildContractStmt(CK, KeywordLoc, Cond, RNDStmt,
+      BuildContractStmt(CK, KeywordLoc, Cond, RNDStmt, ControlObjectType,
                         SemaContractHelper::buildAttributesWithDummyNode(
                             *this, ContractAttrs, KeywordLoc));
 

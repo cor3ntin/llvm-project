@@ -80,17 +80,35 @@ bool Parser::LateParseFunctionContractSpecifier(CachedTokens &Toks) {
   Token StartTok = Tok;
   SourceRange ContractRange = SourceRange(ConsumeToken());
 
+  Toks.push_back(StartTok); // contract keyword
+
+  // Cache an optional control-object type argument (pre<T>(...)) so it can be
+  // replayed and parsed once the enclosing class is complete. The angle-bracket
+  // tokens are cached verbatim; the replay parse handles '>>' splitting.
+  if (Tok.is(tok::less)) {
+    unsigned AngleDepth = 0;
+    do {
+      if (Tok.isOneOf(tok::eof, tok::semi, tok::l_brace)) {
+        Diag(Tok, diag::err_expected) << tok::greater;
+        return false;
+      }
+      if (Tok.is(tok::less))
+        ++AngleDepth;
+      else if (Tok.is(tok::greater))
+        --AngleDepth;
+      else if (Tok.is(tok::greatergreater))
+        AngleDepth -= (AngleDepth >= 2 ? 2 : 1);
+      Toks.push_back(Tok);
+      ConsumeAnyToken();
+    } while (AngleDepth > 0);
+  }
+
   // Check for a '('.
   if (!Tok.is(tok::l_paren)) {
-    // If this is a bare 'noexcept', we're done.
-
     Diag(Tok, diag::err_expected_lparen_after) << CKStr;
     return false;
   }
 
-  // Cache the tokens for the exception-specification.
-
-  Toks.push_back(StartTok);             // 'throw' or 'noexcept'
   Toks.push_back(Tok);                  // '('
   ContractRange.setEnd(ConsumeParen()); // '('
 
@@ -210,6 +228,19 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
   SourceLocation KeywordLoc = Tok.getLocation();
   ConsumeToken();
 
+  // D4324: an optional assertion-control object type may follow the keyword,
+  // e.g. pre<review>(cond). Since the contract keyword is already committed,
+  // a '<' here is unambiguously the control-type argument, not a comparison.
+  QualType ControlObjectType;
+  if (Tok.is(tok::less)) {
+    ConsumeToken(); // '<'
+    TypeResult TR = ParseTypeName(nullptr, DeclaratorContext::TemplateArg);
+    if (!TR.isInvalid())
+      ControlObjectType = Actions.GetTypeFromParser(TR.get());
+    if (ExpectAndConsume(tok::greater))
+      SkipUntil(tok::l_paren, StopAtSemi | StopBeforeMatch);
+  }
+
   ParsedAttributes CXX11Attrs(AttrFactory);
   MaybeParseCXX11Attributes(CXX11Attrs);
 
@@ -277,8 +308,8 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
     SetInvalidOnExit.release();
   }
 
-  StmtResult Res =
-      Actions.ActOnContractAssert(CK, KeywordLoc, Cond.get(), RND, CXX11Attrs);
+  StmtResult Res = Actions.ActOnContractAssert(
+      CK, KeywordLoc, Cond.get(), RND, ControlObjectType, CXX11Attrs);
   if (Res.isInvalid())
     IsInvalid = true;
   return Res;

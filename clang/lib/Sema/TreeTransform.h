@@ -1620,8 +1620,10 @@ public:
   //
   StmtResult RebuildContractStmt(ContractKind K, SourceLocation KeywordLoc,
                                  Expr *Cond, DeclStmt *ResultName,
+                                 QualType ControlObjectType,
                                  ArrayRef<const Attr *> Attrs) {
-    return getSema().BuildContractStmt(K, KeywordLoc, Cond, ResultName, Attrs);
+    return getSema().BuildContractStmt(K, KeywordLoc, Cond, ResultName,
+                                       ControlObjectType, Attrs);
   }
 
   DeclResult RebuildContractSpecifierDecl(ArrayRef<ContractStmt *> Stmts,
@@ -9107,9 +9109,17 @@ StmtResult TreeTransform<Derived>::TransformContractStmt(ContractStmt *S) {
 
   Cond = CondRes.get().second;
 
+  // Substitute into the assertion-control type, if one was named.
+  QualType ControlObjectType = S->getControlObjectType();
+  if (!ControlObjectType.isNull()) {
+    ControlObjectType = getDerived().TransformType(ControlObjectType);
+    if (ControlObjectType.isNull())
+      return StmtError();
+  }
+
   return getDerived().RebuildContractStmt(
       S->getContractKind(), S->getKeywordLoc(), Cond,
-      cast_or_null<DeclStmt>(NewResultName.get()), NewAttrs);
+      cast_or_null<DeclStmt>(NewResultName.get()), ControlObjectType, NewAttrs);
 }
 
 // Objective-C Statements.
