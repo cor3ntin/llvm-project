@@ -1794,13 +1794,6 @@ def fcontract_group_evaluation_semantic_EQ : CommaJoined<["-"], "fcontract-group
   HelpText<"Clang extension. Enable or disable contracts by group. The argument is a comma-separated "
            "sequence of one or more group names, each prefixed by '+' or '-'.">;
 
-defm contract_exceptions : BoolFOption<"contract-exceptions",
-  LangOpts<"ContractExceptions">, DefaultTrue,
-  PosFlag<SetTrue, [], [ClangOption],
-          "Enable contract violation on exception">,
-  NegFlag<SetFalse, [], [ClangOption, CC1Option],
-    "Disable contract violations on exception">>;
-
 defm contract_constification : BoolFOption<"contract-constification",
   LangOpts<"ContractConstification">, DefaultTrue,
   PosFlag<SetTrue, [], [ClangOption],

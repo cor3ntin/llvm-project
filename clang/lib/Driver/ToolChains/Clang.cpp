@@ -7942,9 +7942,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(Twine("-fcontract-group-evaluation-semantic=") +
                                            llvm::join(ContractGroups, ",")));
 
-      Args.addOptOutFlag(CmdArgs, options::OPT_fcontract_exceptions,
-                         options::OPT_fno_contract_exceptions);
-
       Args.addOptOutFlag(CmdArgs, options::OPT_fcontract_constification,
                          options::OPT_fno_contract_constification);
       Args.addOptOutFlag(CmdArgs, options::OPT_fcontract_lambda_capture_restrictions,
