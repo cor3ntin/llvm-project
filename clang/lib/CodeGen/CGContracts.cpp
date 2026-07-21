@@ -400,167 +400,78 @@ static CXXTryStmt *BuildTryCatch(const ContractStmt &S, CodeGenFunction &CGF) {
   return CXXTryStmt::Create(Ctx, Loc, TryBody, Catch);
 }
 
-void CodeGenFunction::EmitContractWithControlObject(const ContractStmt &S) {
+void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
   assert(CurContract() == nullptr);
-  assert(S.hasExplicitControlType());
 
-  // The D4324 three-step algorithm for a named control object T:
+  // D4324: every contract - whether it names an explicit control object or uses
+  // the built-in defaults - lowers to the same three-step algorithm:
   //
-  //   1. If T::is_ignored(cfg): stop. (An assume for assumable control objects
-  //      is emitted here in a later step.)
-  //   2. Evaluate the predicate.
-  //   3. If it is false, r = T{}(comment, loc, cfg); if r is
-  //      violation_response::terminate, trap; otherwise continue.
+  //   1. If is_ignored(cfg): stop. (An assume for assumable control objects is
+  //      emitted here in a later step.)
+  //   2. Evaluate the predicate. Exceptions propagate; there is no try/catch.
+  //   3. If it is false, react. For an explicit control object T the reaction is
+  //      r = T{}(comment, loc, cfg), trapping iff r is violation_response::
+  //      terminate. For the default path the reaction is keyed by the build
+  //      semantic: observe reports and continues, enforce reports and does not
+  //      return, quick_enforce traps.
 
-  // Step 1.
-  if (S.controlIsIgnored())
+  const bool HasControl = S.hasExplicitControlType();
+  const ContractEvaluationSemantic Semantic = S.getSemantic(getContext());
+
+  // Step 1. For the default path the built-in default_control is ignored exactly
+  // when the semantic is 'ignore'.
+  const bool IsIgnored =
+      HasControl ? S.controlIsIgnored() : (Semantic == Ignore);
+  if (IsIgnored)
     return;
 
   // Step 2.
   llvm::BasicBlock *Violation = createBasicBlock("contract.violation");
   llvm::BasicBlock *End = createBasicBlock("contract.end");
-  llvm::Value *Pred = EvaluateExprAsBool(S.getCond());
-  Builder.CreateCondBr(Pred, End, Violation);
+  Builder.CreateCondBr(EvaluateExprAsBool(S.getCond()), End, Violation);
 
   // Step 3.
   EmitBlock(Violation);
-  const Expr *ViolationCall = S.getViolationCall();
-  assert(ViolationCall &&
-         "explicit control type without a synthesized violation call");
-  llvm::Value *Response = EmitScalarExpr(ViolationCall);
+  if (HasControl) {
+    // r = T{}(comment, loc, cfg); trap iff r == violation_response::terminate.
+    // The terminate value is read from the call's (enumeration) return type
+    // rather than hard-coded.
+    const Expr *ViolationCall = S.getViolationCall();
+    assert(ViolationCall &&
+           "explicit control type without a synthesized violation call");
+    llvm::Value *Response = EmitScalarExpr(ViolationCall);
 
-  // The response is compared against violation_response::terminate, whose value
-  // is read from the call's (enumeration) return type rather than hard-coded.
-  const EnumType *ET = ViolationCall->getType()->getAs<EnumType>();
-  assert(ET && "control operator() must return an enumeration");
-  llvm::Value *TerminateVal = nullptr;
-  for (const EnumConstantDecl *ECD : ET->getDecl()->enumerators()) {
-    if (ECD->getName() == "terminate") {
-      TerminateVal = llvm::ConstantInt::get(Response->getType(),
-                                            ECD->getInitVal().getZExtValue());
-      break;
+    const EnumType *ET = ViolationCall->getType()->getAs<EnumType>();
+    assert(ET && "control operator() must return an enumeration");
+    llvm::Value *TerminateVal = nullptr;
+    for (const EnumConstantDecl *ECD : ET->getDecl()->enumerators()) {
+      if (ECD->getName() == "terminate") {
+        TerminateVal = llvm::ConstantInt::get(Response->getType(),
+                                              ECD->getInitVal().getZExtValue());
+        break;
+      }
     }
-  }
-  assert(TerminateVal && "violation_response has no terminate enumerator");
+    assert(TerminateVal && "violation_response has no terminate enumerator");
 
-  llvm::BasicBlock *Trap = createBasicBlock("contract.trap");
-  Builder.CreateCondBr(Builder.CreateICmpEQ(Response, TerminateVal), Trap, End);
-
-  EmitBlock(Trap);
-  CreateTrap(*this);
-
-  EmitBlock(End);
-}
-
-void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
-  assert(CurContract() == nullptr);
-
-  // D4324: contracts that name an explicit control object use the three-step
-  // algorithm driven by that object rather than the built-in dispatch below.
-  if (S.hasExplicitControlType())
-    return EmitContractWithControlObject(S);
-
-  // FIXME(EricWF): We recursively call EmitContractStmt to build the catch
-  // block that reports contract violations that have thrown. In order to do
-  // this without building additional AST nodes, use this Stmt as the body
-  // of the catch block, detecting when we're inside the catch block to only
-  // emit the violation.
-
-  ContractEvaluationSemantic Semantic = S.getSemantic(getContext());
-
-  // FIXME(EricWF): I think there's a lot more to do that simply this.
-  if (Semantic == Ignore)
-    return;
-
-  const auto Style = [&]() {
-    switch (Semantic) {
-    case Enforce: {
-      if (!getLangOpts().Exceptions)
-        return Shared;
-    }
-      LLVM_FALLTHROUGH;
-    case Observe:
-      return Inline;
-    case QuickEnforce:
-      return Shared;
-    case ContractEvaluationSemantic::Ignore:
-    
-      llvm_unreachable("unhandled semantic");
-    }
-  }();
-
-  auto Violation = [&]() {
-    switch (Style) {
-    case Inline:
-      return createBasicBlock("contract.violation");
-    case Shared:
-      assert(Semantic == Enforce || Semantic == QuickEnforce);
-      return Semantic == Enforce ? GetSharedContractViolationEnforceBlock()
-                                  : GetSharedContractViolationTrapBlock();
-    }
-  }();
-
-  llvm::BasicBlock *End = createBasicBlock("contract.end");
-
-  llvm::Constant *ViolationInfo = nullptr;
-  if (Semantic != ContractEvaluationSemantic::QuickEnforce) {
-    ViolationInfo = CGM.GetAddrOfUnnamedGlobalConstantDecl(
-                           getContext().BuildViolationObject(
-                               &S, dyn_cast_or_null<FunctionDecl>(CurFuncDecl)), "contract.loc")
-                        .getPointer();
-  }
-
-  CurrentContractRAII CurContractRAII(*this,
-                                      {.Contract = &S,
-                                       .Style = Style,
-                                       .Checkpoint = EmittingContract,
-                                       .Semantic = Semantic,
-                                       .Violation = Violation,
-                                       .End = End,
-                                       .ViolationInfoGV = ViolationInfo});
-
-  llvm::Value *BranchOn;
-  if (getLangOpts().Exceptions && getLangOpts().ContractExceptions && StmtCanThrow(S.getCond())) {
-
-    CurContract()->EHPredicateStore = CreateTempAlloca(
-        Builder.getInt1Ty(), CharUnits::One(), "contract.pred.value");
-    // Set the initial value to true. If the contract throws, we'll see the true
-    // value after the catch block is done handling the exception.
-    Builder.CreateStore(Builder.getTrue(), CurContract()->EHPredicateStore);
-
-    assert(Builder.GetInsertBlock());
-    EnsureInsertPoint();
-
-    auto *Try = BuildTryCatch(S, *this);
-    EnterCXXTryStmt(*Try);
-    CurContract()->Checkpoint = EmittingTryBody;
-    EmitStmt(Try->getTryBlock());
-    CurContract()->Checkpoint = EmittingCatchBody;
-    ExitCXXTryStmt(*Try);
-    CurContract()->Checkpoint = EmittingContract;
-
-    BranchOn = Builder.CreateLoad(CurContract()->EHPredicateStore);
+    llvm::BasicBlock *Trap = createBasicBlock("contract.trap");
+    Builder.CreateCondBr(Builder.CreateICmpEQ(Response, TerminateVal), Trap,
+                         End);
+    EmitBlock(Trap);
+    CreateTrap(*this);
+  } else if (Semantic == QuickEnforce) {
+    CreateTrap(*this);
   } else {
-    BranchOn = EmitScalarExpr(S.getCond());
-  }
-
-  if (Style == Shared && Semantic == Enforce) {
-    //assert(!getLangOpts().Exceptions);
-    EnsureInsertPoint();
-    ContractData->GetSharedEnforceBlock(*this).IncomingPHI->addIncoming(
-        ViolationInfo, Builder.GetInsertBlock());
-  }
-
-  Builder.CreateCondBr(BranchOn, End, Violation);
-
-  // If we're creating a trap, the violation block will be created once for the
-  // function. Otherwise, we need to create a call to the violation handler.
-  if (Style == Inline) {
-    EmitBlock(CurContract()->Violation);
-    Builder.SetInsertPoint(CurContract()->Violation);
+    assert((Semantic == Observe || Semantic == Enforce) &&
+           "ignore handled above; quick_enforce handled above");
+    llvm::Constant *ViolationInfo =
+        CGM.GetAddrOfUnnamedGlobalConstantDecl(
+               getContext().BuildViolationObject(
+                   &S, dyn_cast_or_null<FunctionDecl>(CurFuncDecl)),
+               "contract.loc")
+            .getPointer();
     EmitHandleContractViolationCall(CreateConstantInt(*this, Semantic),
                                     CreateConstantInt(*this, PredicateFailed),
-                                    CurContract()->ViolationInfoGV,
+                                    ViolationInfo,
                                     /*IsNoReturn=*/Semantic == Enforce);
     if (Semantic != Enforce)
       Builder.CreateBr(End);

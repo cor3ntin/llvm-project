@@ -4613,7 +4613,6 @@ private:
   void EmitContractStmtAsTryBody(const ContractStmt &);
   void EmitContractStmtAsCatchBody(const ContractStmt &S);
   void EmitContractStmtAsFullStmt(const ContractStmt &S);
-  void EmitContractWithControlObject(const ContractStmt &S);
 
 public:
   void EmitHandleContractViolationCall(llvm::Constant *Semantic,
