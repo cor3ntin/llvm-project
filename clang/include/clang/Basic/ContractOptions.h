@@ -98,12 +98,13 @@ enum class ContractEvaluationSemantic {
   QuickEnforce = 3,
 };
 
-/// The result of checking a contract. The second two values match
-/// std::contracts::detection_mode.
+/// The result of checking a contract. PredicateFailed matches
+/// std::contracts::detection_mode::predicate_false. D4324 predicates propagate
+/// exceptions rather than converting them into violations, so there is no
+/// exception detection mode.
 enum class ContractDetectionMode {
   Unspecified = 0,
   PredicateFailed = 1,
-  ExceptionRaised = 2
 };
 
 /// The code generation style for the contract. Inline
