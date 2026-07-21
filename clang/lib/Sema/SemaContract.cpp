@@ -214,14 +214,182 @@ bool Sema::CheckContractControlType(QualType ControlObjectType,
   return Ok;
 }
 
+namespace {
+
+// D4324: map the build-selected evaluation semantic to the matching
+// std::contracts::evaluation_config enumerator value. The two enumerations use
+// different orderings, so translate explicitly.
+uint64_t mapSemanticToConfigValue(ContractEvaluationSemantic Sem) {
+  switch (Sem) {
+  case ContractEvaluationSemantic::Ignore:
+    return 0; // evaluation_config::ignore
+  case ContractEvaluationSemantic::Observe:
+    return 1; // evaluation_config::observe
+  case ContractEvaluationSemantic::Enforce:
+    return 2; // evaluation_config::enforce
+  case ContractEvaluationSemantic::QuickEnforce:
+    return 3; // evaluation_config::quick_enforce
+  }
+  llvm_unreachable("unknown contract evaluation semantic");
+}
+
+// D4324: build a prvalue of the control object's evaluation_config enum type
+// holding the value that corresponds to the build-selected semantic.
+ExprResult buildConfigArg(Sema &S, QualType ConfigTy, uint64_t Value,
+                          SourceLocation Loc) {
+  const EnumType *ET = ConfigTy->getAs<EnumType>();
+  if (!ET)
+    return ExprError();
+  for (EnumConstantDecl *ECD : ET->getDecl()->enumerators()) {
+    if (ECD->getInitVal() == Value)
+      return S.BuildDeclRefExpr(ECD, ConfigTy, VK_PRValue, Loc);
+  }
+  return ExprError();
+}
+
+// D4324: synthesize the runtime dispatch for a contract that names a
+// non-dependent control object T. Builds the violation-handler call
+// `T{}(comment, loc, cfg)` (evaluated when the predicate is false) and
+// const-evaluates `T::is_ignored(cfg)` and `T::assumable` for the build config.
+// Returns false if T does not model the assertion_control interface well enough
+// to form the call; diagnostics for that case come from the expression builders.
+bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
+  ASTContext &Ctx = S.Context;
+  QualType T = CS->getControlObjectType();
+  SourceLocation Loc = CS->getKeywordLoc();
+
+  const CXXRecordDecl *RD = T->getAsCXXRecordDecl();
+  assert(RD && "control type validated as a class by CheckContractControlType");
+  RD = RD->getDefinition();
+  assert(RD && "control type validated as complete by CheckContractControlType");
+
+  // Read the argument types off operator()(const char*, source_location, cfg).
+  const CXXMethodDecl *CallOp = nullptr;
+  for (NamedDecl *ND :
+       RD->lookup(Ctx.DeclarationNames.getCXXOperatorName(OO_Call))) {
+    if (auto *M = dyn_cast<CXXMethodDecl>(ND->getUnderlyingDecl())) {
+      CallOp = M;
+      break;
+    }
+  }
+  if (!CallOp || CallOp->getNumParams() != 3)
+    return false;
+
+  QualType SourceLocTy = CallOp->getParamDecl(1)->getType();
+  QualType ConfigTy = CallOp->getParamDecl(2)->getType();
+
+  const uint64_t CfgVal = mapSemanticToConfigValue(CS->getSemantic(Ctx));
+
+  // The synthesized call is real, runtime-evaluated code: build it in a
+  // potentially-evaluated context so operator() is marked used and emitted.
+  EnterExpressionEvaluationContext Eval(
+      S, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
+
+  // Step 1 datum: const-evaluate T::is_ignored(cfg).
+  {
+    ExprResult Cfg = buildConfigArg(S, ConfigTy, CfgVal, Loc);
+    if (Cfg.isInvalid())
+      return false;
+    LookupResult R(S, DeclarationName(&Ctx.Idents.get("is_ignored")), Loc,
+                   Sema::LookupOrdinaryName);
+    S.LookupQualifiedName(R, const_cast<CXXRecordDecl *>(RD));
+    if (!R.isSingleResult())
+      return false;
+    CXXScopeSpec SS;
+    ExprResult Fn = S.BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
+    if (Fn.isInvalid())
+      return false;
+    Expr *IgnoredArgs[] = {Cfg.get()};
+    ExprResult Call = S.BuildCallExpr(nullptr, Fn.get(), Loc, IgnoredArgs, Loc);
+    if (Call.isInvalid())
+      return false;
+    bool Ignored = false;
+    if (!Call.get()->EvaluateAsBooleanCondition(Ignored, Ctx))
+      return false;
+    CS->setControlIsIgnored(Ignored);
+  }
+
+  // Step 1 datum: read T::assumable (static constexpr bool).
+  for (NamedDecl *ND : RD->lookup(&Ctx.Idents.get("assumable"))) {
+    if (auto *VD = dyn_cast<VarDecl>(ND->getUnderlyingDecl())) {
+      if (const APValue *V = VD->evaluateValue(); V && V->isInt())
+        CS->setControlAssumable(V->getInt().getBoolValue());
+    }
+  }
+
+  // Step 3: the violation-handler call T{}(comment, loc, cfg).
+  std::string Text = CS->getMessage(Ctx);
+  llvm::APInt Length(32, Text.size() + 1);
+  QualType StrTy = Ctx.getConstantArrayType(
+      Ctx.adjustStringLiteralBaseType(Ctx.CharTy.withConst()), Length, nullptr,
+      ArraySizeModifier::Normal, /*IndexTypeQuals=*/0);
+  Expr *Comment = StringLiteral::Create(Ctx, Text, StringLiteralKind::Ordinary,
+                                        /*Pascal=*/false, StrTy, Loc);
+
+  // The source_location argument is built as `std::source_location::current()`;
+  // that is the value the paper passes, and (being consteval) it folds to a
+  // constant the aggregate emitter can lower. Building a bare SourceLocExpr of
+  // the struct type would instead yield the __builtin_source_location() pointer.
+  ExprResult LocArg;
+  {
+    const CXXRecordDecl *SLRD = SourceLocTy->getAsCXXRecordDecl();
+    if (!SLRD || !(SLRD = SLRD->getDefinition()))
+      return false;
+    LookupResult CurR(S, DeclarationName(&Ctx.Idents.get("current")), Loc,
+                      Sema::LookupOrdinaryName);
+    S.LookupQualifiedName(CurR, const_cast<CXXRecordDecl *>(SLRD));
+    if (CurR.empty())
+      return false;
+    CXXScopeSpec SS;
+    ExprResult Fn = S.BuildDeclarationNameExpr(SS, CurR, /*NeedsADL=*/false);
+    if (Fn.isInvalid())
+      return false;
+    LocArg = S.BuildCallExpr(nullptr, Fn.get(), Loc, {}, Loc);
+    if (LocArg.isInvalid())
+      return false;
+  }
+
+  ExprResult Cfg = buildConfigArg(S, ConfigTy, CfgVal, Loc);
+  if (Cfg.isInvalid())
+    return false;
+
+  TypeSourceInfo *TSI = Ctx.getTrivialTypeSourceInfo(T, Loc);
+  ExprResult Obj = S.BuildCXXTypeConstructExpr(TSI, Loc, {}, Loc,
+                                               /*ListInitialization=*/true);
+  if (Obj.isInvalid())
+    return false;
+
+  Expr *CallArgs[] = {Comment, LocArg.get(), Cfg.get()};
+  ExprResult Violation =
+      S.BuildCallToObjectOfClassType(nullptr, Obj.get(), Loc, CallArgs, Loc);
+  if (Violation.isInvalid())
+    return false;
+
+  CS->setViolationCall(S.MaybeCreateExprWithCleanups(Violation.get()));
+  return true;
+}
+
+} // namespace
+
 StmtResult Sema::BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
                                    Expr *Cond, DeclStmt *RND,
                                    QualType ControlObjectType,
                                    ArrayRef<const Attr *> Attrs) {
   if (!CheckContractControlType(ControlObjectType, KeywordLoc))
     return StmtError();
-  return ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND,
-                              ControlObjectType, Attrs);
+  ContractStmt *CS = ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND,
+                                          ControlObjectType, Attrs);
+
+  // D4324: for a non-dependent explicit control object, synthesize the
+  // three-step dispatch now. Dependent control types (and contracts in a
+  // dependent context) are re-synthesized when TransformContractStmt rebuilds
+  // this statement during instantiation.
+  if (!ControlObjectType.isNull() && !ControlObjectType->isDependentType() &&
+      !CurContext->isDependentContext()) {
+    if (!synthesizeControlObjectDispatch(*this, CS))
+      return StmtError();
+  }
+  return CS;
 }
 
 StmtResult Sema::ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,

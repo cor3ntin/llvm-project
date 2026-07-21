@@ -516,10 +516,15 @@ void ASTStmtReader::VisitContractStmt(ContractStmt *S) {
   VisitStmt(S);
   Record.skipInts(1);
   unsigned NumAttrs = Record.readInt();
+  S->setControlIsIgnored(Record.readInt());
+  S->setControlAssumable(Record.readInt());
+  bool HasViolationCall = Record.readInt();
 
   S->KeywordLoc = Record.readSourceLocation();
   S->setControlObjectType(Record.readType());
   S->setCondition(Record.readExpr());
+  if (HasViolationCall)
+    S->setViolationCall(Record.readExpr());
   if (S->hasResultName())
     S->setResultName(cast<DeclStmt>(Record.readStmt()));
   AttrVec Attrs;

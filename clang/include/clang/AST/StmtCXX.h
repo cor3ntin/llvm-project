@@ -572,6 +572,18 @@ class ContractStmt final
   // the <contracts> header.
   QualType ControlObjectType;
 
+  // D4324: the synthesized `T{}(comment, loc, cfg)` call that is evaluated when
+  // the predicate is false for an explicit control object. Null for the default
+  // (null-type) path and for dependent control types, which are re-synthesized
+  // on instantiation. Stored as a plain member (not a child) since it is fully
+  // derived from ControlObjectType and does not participate in tree transforms.
+  Stmt *ViolationCall = nullptr;
+
+  // D4324: const-evaluated `T::is_ignored(cfg)` and `T::assumable` for the
+  // build-selected config. Only meaningful when hasExplicitControlType().
+  bool ControlIsIgnored = false;
+  bool ControlAssumable = false;
+
   ArrayRef<Stmt *> getSubStmts() const {
     return llvm::ArrayRef(getTrailingObjects<Stmt *>(),
                           numTrailingObjects(OverloadToken<Stmt *>{}));
@@ -652,6 +664,20 @@ public:
   QualType getControlObjectType() const { return ControlObjectType; }
   void setControlObjectType(QualType T) { ControlObjectType = T; }
   bool hasExplicitControlType() const { return !ControlObjectType.isNull(); }
+
+  /// The synthesized `T{}(comment, loc, cfg)` violation-handler call for an
+  /// explicit control object, or null when there is none (default path or a
+  /// not-yet-instantiated dependent control type).
+  Expr *getViolationCall() const { return static_cast<Expr *>(ViolationCall); }
+  void setViolationCall(Expr *E) { ViolationCall = E; }
+
+  /// Whether `T::is_ignored(cfg)` const-evaluated to true for the build config.
+  bool controlIsIgnored() const { return ControlIsIgnored; }
+  void setControlIsIgnored(bool V) { ControlIsIgnored = V; }
+
+  /// Whether the control object's `assumable` member is true.
+  bool controlAssumable() const { return ControlAssumable; }
+  void setControlAssumable(bool V) { ControlAssumable = V; }
 
 public:
   // Convert the contract semantic to a string for use in diagnostics.

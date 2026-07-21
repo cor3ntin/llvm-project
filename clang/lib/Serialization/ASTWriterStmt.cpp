@@ -495,10 +495,16 @@ void ASTStmtWriter::VisitContractStmt(ContractStmt *S) {
                              /*BitsWidth=*/2);
   CurrentPackingBits.addBit(S->ContractAssertBits.HasResultName);
   Record.push_back(S->getAttrs().size());
+  Record.push_back(S->controlIsIgnored());
+  Record.push_back(S->controlAssumable());
+  bool HasViolationCall = S->getViolationCall() != nullptr;
+  Record.push_back(HasViolationCall);
 
   Record.AddSourceLocation(S->getKeywordLoc());
   Record.AddTypeRef(S->getControlObjectType());
   Record.AddStmt(S->getCond());
+  if (HasViolationCall)
+    Record.AddStmt(S->getViolationCall());
   if (S->hasResultName())
     Record.AddStmt(S->getResultNameDeclStmt());
   Record.AddAttributes(S->getAttrs());

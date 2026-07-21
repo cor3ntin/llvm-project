@@ -400,8 +400,66 @@ static CXXTryStmt *BuildTryCatch(const ContractStmt &S, CodeGenFunction &CGF) {
   return CXXTryStmt::Create(Ctx, Loc, TryBody, Catch);
 }
 
+void CodeGenFunction::EmitContractWithControlObject(const ContractStmt &S) {
+  assert(CurContract() == nullptr);
+  assert(S.hasExplicitControlType());
+
+  // The D4324 three-step algorithm for a named control object T:
+  //
+  //   1. If T::is_ignored(cfg): stop. (An assume for assumable control objects
+  //      is emitted here in a later step.)
+  //   2. Evaluate the predicate.
+  //   3. If it is false, r = T{}(comment, loc, cfg); if r is
+  //      violation_response::terminate, trap; otherwise continue.
+
+  // Step 1.
+  if (S.controlIsIgnored())
+    return;
+
+  // Step 2.
+  llvm::BasicBlock *Violation = createBasicBlock("contract.violation");
+  llvm::BasicBlock *End = createBasicBlock("contract.end");
+  llvm::Value *Pred = EvaluateExprAsBool(S.getCond());
+  Builder.CreateCondBr(Pred, End, Violation);
+
+  // Step 3.
+  EmitBlock(Violation);
+  const Expr *ViolationCall = S.getViolationCall();
+  assert(ViolationCall &&
+         "explicit control type without a synthesized violation call");
+  llvm::Value *Response = EmitScalarExpr(ViolationCall);
+
+  // The response is compared against violation_response::terminate, whose value
+  // is read from the call's (enumeration) return type rather than hard-coded.
+  const EnumType *ET = ViolationCall->getType()->getAs<EnumType>();
+  assert(ET && "control operator() must return an enumeration");
+  llvm::Value *TerminateVal = nullptr;
+  for (const EnumConstantDecl *ECD : ET->getDecl()->enumerators()) {
+    if (ECD->getName() == "terminate") {
+      TerminateVal = llvm::ConstantInt::get(Response->getType(),
+                                            ECD->getInitVal().getZExtValue());
+      break;
+    }
+  }
+  assert(TerminateVal && "violation_response has no terminate enumerator");
+
+  llvm::BasicBlock *Trap = createBasicBlock("contract.trap");
+  Builder.CreateCondBr(Builder.CreateICmpEQ(Response, TerminateVal), Trap, End);
+
+  EmitBlock(Trap);
+  CreateTrap(*this);
+
+  EmitBlock(End);
+}
+
 void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
   assert(CurContract() == nullptr);
+
+  // D4324: contracts that name an explicit control object use the three-step
+  // algorithm driven by that object rather than the built-in dispatch below.
+  if (S.hasExplicitControlType())
+    return EmitContractWithControlObject(S);
+
   // FIXME(EricWF): We recursively call EmitContractStmt to build the catch
   // block that reports contract violations that have thrown. In order to do
   // this without building additional AST nodes, use this Stmt as the body
