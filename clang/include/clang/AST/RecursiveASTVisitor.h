@@ -2632,6 +2632,9 @@ DEF_TRAVERSE_STMT(ContractStmt, {
   if (S->hasResultName()) {
     TRY_TO(TraverseDecl(S->getResultName()));
   }
+  if (S->hasExplicitControl()) {
+    TRY_TO_TRAVERSE_OR_ENQUEUE_STMT(S->getControlExpr());
+  }
   TRY_TO_TRAVERSE_OR_ENQUEUE_STMT(S->getCond());
   ShouldVisitChildren = false;
 })

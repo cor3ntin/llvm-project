@@ -81,6 +81,7 @@ struct review {
     return violation_response::proceed;
   }
 };
+inline constexpr review review_v{};
 
 // Guaranteed-enforced and optimizable.
 struct mandatory {
@@ -92,6 +93,7 @@ struct mandatory {
     return violation_response::terminate;
   }
 };
+inline constexpr mandatory mandatory_v{};
 
 } // namespace std::contracts
 

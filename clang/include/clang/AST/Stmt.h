@@ -927,7 +927,10 @@ protected:
     LLVM_PREFERRED_TYPE(ContractKind)
     unsigned ContractKind : 2;
 
-    enum { NumContractAssertBits = 3 };
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned HasControlExpr : 1;
+
+    enum { NumContractAssertBits = 4 };
 
     LLVM_PREFERRED_TYPE(unsigned)
     unsigned NumAttrs : 32 - NumStmtBits - NumContractAssertBits;

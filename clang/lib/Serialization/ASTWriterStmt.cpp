@@ -494,6 +494,9 @@ void ASTStmtWriter::VisitContractStmt(ContractStmt *S) {
   CurrentPackingBits.addBits(S->ContractAssertBits.ContractKind,
                              /*BitsWidth=*/2);
   CurrentPackingBits.addBit(S->ContractAssertBits.HasResultName);
+  // The reader needs this bit to size the node before creating it, so it has to
+  // travel in the packed word rather than as a separate field.
+  CurrentPackingBits.addBit(S->ContractAssertBits.HasControlExpr);
   Record.push_back(S->getAttrs().size());
   Record.push_back(S->controlIsIgnored());
   Record.push_back(S->controlAssumable());
@@ -501,8 +504,9 @@ void ASTStmtWriter::VisitContractStmt(ContractStmt *S) {
   Record.push_back(HasViolationCall);
 
   Record.AddSourceLocation(S->getKeywordLoc());
-  Record.AddTypeRef(S->getControlObjectType());
   Record.AddStmt(S->getCond());
+  if (S->hasExplicitControl())
+    Record.AddStmt(S->getControlExpr());
   if (HasViolationCall)
     Record.AddStmt(S->getViolationCall());
   if (S->hasResultName())

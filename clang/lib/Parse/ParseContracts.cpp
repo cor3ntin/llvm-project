@@ -82,22 +82,55 @@ bool Parser::LateParseFunctionContractSpecifier(CachedTokens &Toks) {
 
   Toks.push_back(StartTok); // contract keyword
 
-  // Cache an optional control-object type argument (pre<T>(...)) so it can be
-  // replayed and parsed once the enclosing class is complete. The angle-bracket
-  // tokens are cached verbatim; the replay parse handles '>>' splitting.
+  // Cache an optional control-object argument (pre<obj>(...)) so it can be
+  // replayed and parsed once the enclosing class is complete. The argument is a
+  // constant expression, so it may contain '<' and '>' of its own - as
+  // comparisons, as template argument lists, or nested inside parentheses,
+  // brackets or braces. Only angle brackets outside such a nested group
+  // delimit the argument. Tokens are cached verbatim; the replay parse splits
+  // any '>>' that closes several levels at once.
   if (Tok.is(tok::less)) {
     unsigned AngleDepth = 0;
     do {
-      if (Tok.isOneOf(tok::eof, tok::semi, tok::l_brace)) {
+      if (Tok.isOneOf(tok::eof, tok::semi)) {
         Diag(Tok, diag::err_expected) << tok::greater;
         return false;
       }
-      if (Tok.is(tok::less))
+
+      switch (Tok.getKind()) {
+      case tok::less:
         ++AngleDepth;
-      else if (Tok.is(tok::greater))
+        break;
+      case tok::greater:
+      case tok::greaterequal:
         --AngleDepth;
-      else if (Tok.is(tok::greatergreater))
-        AngleDepth -= (AngleDepth >= 2 ? 2 : 1);
+        break;
+      case tok::greatergreater:
+      case tok::greatergreaterequal:
+        AngleDepth -= std::min(AngleDepth, 2u);
+        break;
+      case tok::greatergreatergreater:
+        AngleDepth -= std::min(AngleDepth, 3u);
+        break;
+      case tok::l_paren:
+      case tok::l_square:
+      case tok::l_brace: {
+        tok::TokenKind Close = Tok.is(tok::l_paren)    ? tok::r_paren
+                               : Tok.is(tok::l_square) ? tok::r_square
+                                                       : tok::r_brace;
+        Toks.push_back(Tok);
+        ConsumeAnyToken();
+        if (!ConsumeAndStoreUntil(Close, Toks, /*StopAtSemi=*/true,
+                                  /*ConsumeFinalToken=*/true)) {
+          Diag(Tok, diag::err_expected) << Close;
+          return false;
+        }
+        continue;
+      }
+      default:
+        break;
+      }
+
       Toks.push_back(Tok);
       ConsumeAnyToken();
     } while (AngleDepth > 0);
@@ -228,16 +261,32 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
   SourceLocation KeywordLoc = Tok.getLocation();
   ConsumeToken();
 
-  // D4324: an optional assertion-control object type may follow the keyword,
-  // e.g. pre<review>(cond). Since the contract keyword is already committed,
-  // a '<' here is unambiguously the control-type argument, not a comparison.
-  QualType ControlObjectType;
+  // D4324: an optional assertion-control object may follow the keyword, e.g.
+  // pre<review_v>(cond). Since the contract keyword is already committed, a '<'
+  // here is unambiguously the control-object argument, not a comparison. An
+  // empty '<>' means the same thing as the unadorned form.
+  Expr *ControlExpr = nullptr;
   if (Tok.is(tok::less)) {
-    ConsumeToken(); // '<'
-    TypeResult TR = ParseTypeName(nullptr, DeclaratorContext::TemplateArg);
-    if (!TR.isInvalid())
-      ControlObjectType = Actions.GetTypeFromParser(TR.get());
-    if (ExpectAndConsume(tok::greater))
+    SourceLocation LessLoc = ConsumeToken();
+    if (Tok.isNot(tok::greater)) {
+      // The argument is a constant expression, so '>' terminates it rather
+      // than acting as a comparison operator.
+      GreaterThanIsOperatorScope G(GreaterThanIsOperator, false);
+      EnterExpressionEvaluationContext ConstantEvaluated(
+          Actions, Sema::ExpressionEvaluationContext::ConstantEvaluated,
+          /*LambdaContextDecl=*/nullptr,
+          Sema::ExpressionEvaluationContextRecord::EK_TemplateArgument);
+      ExprResult E = ParseConstantExpressionInExprEvalContext(
+          TypoCorrectionTypeBehavior::AllowNonTypes);
+      if (E.isInvalid())
+        SkipUntil(tok::greater, tok::l_paren, StopAtSemi | StopBeforeMatch);
+      else
+        ControlExpr = E.get();
+    }
+    SourceLocation GreaterLoc;
+    if (ParseGreaterThanInTemplateList(LessLoc, GreaterLoc,
+                                       /*ConsumeLastToken=*/true,
+                                       /*ObjCGenericList=*/false))
       SkipUntil(tok::l_paren, StopAtSemi | StopBeforeMatch);
   }
 
@@ -290,7 +339,7 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
       IsInvalid = true;
   }
 
-  bool Constify = Actions.shouldConstifyContractPredicate(ControlObjectType);
+  bool Constify = Actions.shouldConstifyContractPredicate(ControlExpr);
   ExprResult Cond = [&]() {
     Sema::ContractScopeRAII ContractScope(Actions, CK, ScopeOffset, KeywordLoc,
                                           Constify);
@@ -310,8 +359,8 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
     SetInvalidOnExit.release();
   }
 
-  StmtResult Res = Actions.ActOnContractAssert(
-      CK, KeywordLoc, Cond.get(), RND, ControlObjectType, CXX11Attrs);
+  StmtResult Res = Actions.ActOnContractAssert(CK, KeywordLoc, Cond.get(), RND,
+                                               ControlExpr, CXX11Attrs);
   if (Res.isInvalid())
     IsInvalid = true;
   return Res;

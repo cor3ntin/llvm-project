@@ -1,38 +1,49 @@
 // RUN: %clang_cc1 -std=c++26 -fcontracts -fsyntax-only -verify %s
 
-// Checks that a named assertion-control object type must model the interface
-// the compiler reads (D4324): an empty class with is_ignored, constify,
-// assumable, and a call operator.
+// Checks that a named assertion-control object must model the interface the
+// compiler reads (D4324): a class exposing is_ignored, constify, assumable, and
+// a call operator. Unlike the earlier type-based form, the class need not be
+// empty - naming an object is what makes per-assertion state possible.
 
 #include "Inputs/assertion_control.h"
 using namespace std::contracts;
 
 // The worked control objects are accepted.
-int ok1(int x) pre<default_control>(x > 0) { return x; }
-int ok2(int x) pre<review>(x > 0) { return x; }
-void ok3(int x) { contract_assert<mandatory>(x > 0); }
+int ok1(int x) pre<default_v>(x > 0) { return x; }
+int ok2(int x) pre<review_v>(x > 0) { return x; }
+void ok3(int x) { contract_assert<mandatory_v>(x > 0); }
 
-// Not a class type.
-int bad1(int x) pre<int>(x > 0) { return x; }
-// expected-error@-1 {{assertion-control object type 'int' must be a class type}}
+// Not of class type.
+int bad1(int x) pre<0>(x > 0) { return x; }
+// expected-error@-1 {{assertion-control object must have class type, not 'int'}}
 
-// A class with state is rejected.
-struct NonEmpty {
-  int state;
+// A class with state is fine now: the control object is a value, so it may
+// carry per-assertion data.
+struct WithState {
+  const char *label;
   static constexpr bool is_ignored(evaluation_config) { return false; }
   static constexpr bool constify = false;
   static constexpr bool assumable = false;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const;
+                                evaluation_config) const {
+    return violation_response::proceed;
+  }
 };
-int bad2(int x) pre<NonEmpty>(x > 0) { return x; }
-// expected-error@-1 {{assertion-control object type 'NonEmpty' must be an empty class}}
+inline constexpr WithState labeled_v{"a label"};
+int ok4(int x) pre<labeled_v>(x > 0) { return x; }
+
+// An incomplete class type is rejected.
+struct Incomplete; // expected-note {{forward declaration of 'Incomplete'}}
+extern const Incomplete incomplete_v;
+int bad2(int x) pre<incomplete_v>(x > 0) { return x; }
+// expected-error@-1 {{assertion-control object has incomplete type 'const Incomplete'}}
 
 // A class missing the required members is rejected, one diagnostic per member.
 struct Missing {};
-int bad3(int x) pre<Missing>(x > 0) { return x; }
+inline constexpr Missing missing_v{};
+int bad3(int x) pre<missing_v>(x > 0) { return x; }
 // expected-error@-1 4 {{is missing required member}}
 
-// A dependent control type defers checking to instantiation: no error here.
-template <class C> int tpl(int x) pre<C>(x > 0) { return x; }
-template int tpl<review>(int); // fine
+// A dependent control object defers checking to instantiation: no error here.
+template <auto C> int tpl(int x) pre<C>(x > 0) { return x; }
+template int tpl<review_v>(int); // fine

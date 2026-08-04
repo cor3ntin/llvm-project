@@ -15,15 +15,19 @@
 using namespace std::contracts;
 
 int p_default(int x) pre(x > 0) { return x; }
-int p_review(int x) pre<review>(x > 0) { return x; }         // constify == true
-int p_mandatory(int x) pre<mandatory>(x > 0) { return x; }   // constify == false
+int p_review(int x) pre<review_v>(x > 0) { return x; }       // constify == true
+int p_mandatory(int x) pre<mandatory_v>(x > 0) { return x; } // constify == false
 
 void a_default(int x) { contract_assert(x > 0); }
-void a_review(int x) { contract_assert<review>(x > 0); }
-void a_mandatory(int x) { contract_assert<mandatory>(x > 0); }
+void a_review(int x) { contract_assert<review_v>(x > 0); }
+void a_mandatory(int x) { contract_assert<mandatory_v>(x > 0); }
+
+// A temporary control object picks up its own type's policy just like a named
+// one does.
+int p_temp(int x) pre<review{}>(x > 0) { return x; }
 
 // Also exercises the instantiation path (TransformContractStmt computes the
-// constify policy from the substituted control type).
-template <class C> int tpl(int x) pre<C>(x > 0) { return x; }
-template int tpl<review>(int);
-template int tpl<mandatory>(int);
+// constify policy from the substituted control object).
+template <auto C> int tpl(int x) pre<C>(x > 0) { return x; }
+template int tpl<review_v>(int);
+template int tpl<mandatory_v>(int);

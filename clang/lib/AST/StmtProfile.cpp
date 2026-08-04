@@ -2493,7 +2493,8 @@ void StmtProfiler::VisitCoyieldExpr(const CoyieldExpr *S) {
 
 void StmtProfiler::VisitContractStmt(const ContractStmt *S) {
   VisitStmt(S);
-  VisitType(S->getControlObjectType());
+  // The control object, if any, is a child and so is profiled by VisitStmt.
+  ID.AddBoolean(S->hasExplicitControl());
 }
 
 void StmtProfiler::VisitOpaqueValueExpr(const OpaqueValueExpr *E) {

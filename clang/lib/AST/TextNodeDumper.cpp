@@ -3401,8 +3401,8 @@ void TextNodeDumper::VisitContractStmt(const ContractStmt *S) {
       break;
     }
   }
-  if (S->hasExplicitControlType())
-    OS << " control " << S->getControlObjectType().getAsString();
+  if (S->hasExplicitControl())
+    OS << " control";
 }
 
 void TextNodeDumper::VisitAtomicExpr(const AtomicExpr *AE) {

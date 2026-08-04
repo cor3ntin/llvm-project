@@ -3259,8 +3259,7 @@ public:
 public:
   StmtResult ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,
                                  Expr *Cond, ResultNameDecl *ResultNameDecl,
-                                 QualType ControlObjectType,
-                                 ParsedAttributes &Attrs);
+                                 Expr *ControlExpr, ParsedAttributes &Attrs);
 
   ResultNameDecl *ActOnResultNameDeclarator(ContractKind CK, Scope *S,
                                             QualType T, SourceLocation IDLoc,
@@ -3270,16 +3269,15 @@ public:
 
   StmtResult BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
                                Expr *Cond, DeclStmt *ResultName,
-                               QualType ControlObjectType,
+                               Expr *ControlExpr,
                                ArrayRef<const Attr *> Attrs);
 
-  /// Check that a named assertion-control object type models the interface the
-  /// compiler reads for D4324 contracts: an empty class exposing is_ignored,
-  /// constify, assumable, and a call operator. A null or dependent type is
-  /// accepted (dependent types are re-checked on instantiation). Returns true
-  /// if the type is acceptable.
-  bool CheckContractControlType(QualType ControlObjectType,
-                                SourceLocation Loc);
+  /// Check that a named assertion-control object models the interface the
+  /// compiler reads for D4324 contracts: a class exposing is_ignored, constify,
+  /// assumable, and a call operator. A null or dependent control object is
+  /// accepted (dependent ones are re-checked on instantiation). Returns true if
+  /// the control object is acceptable.
+  bool CheckContractControlObject(Expr *ControlExpr, SourceLocation Loc);
 
   ContractSpecifierDecl *
   BuildContractSpecifierDecl(ArrayRef<ContractStmt *> Contracts,
@@ -7192,10 +7190,10 @@ public:
                          SourceLocation Loc, bool Constify);
   ContractScopeRecord PopContractScope();
 
-  /// Whether predicates governed by the given assertion-control object type are
-  /// constified. A null type (no control object named) follows the build's
-  /// legacy default; otherwise the type's `constify` member decides.
-  bool shouldConstifyContractPredicate(QualType ControlObjectType);
+  /// Whether predicates governed by the given assertion-control object are
+  /// constified. A null control object (none named) follows the build's legacy
+  /// default; otherwise the object type's `constify` member decides.
+  bool shouldConstifyContractPredicate(Expr *ControlExpr);
 
   const ContractScopeRecord *getContractScopeForContext(const DeclContext *DC) const;
 

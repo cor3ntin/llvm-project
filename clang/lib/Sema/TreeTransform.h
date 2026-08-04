@@ -1620,10 +1620,10 @@ public:
   //
   StmtResult RebuildContractStmt(ContractKind K, SourceLocation KeywordLoc,
                                  Expr *Cond, DeclStmt *ResultName,
-                                 QualType ControlObjectType,
+                                 Expr *ControlExpr,
                                  ArrayRef<const Attr *> Attrs) {
     return getSema().BuildContractStmt(K, KeywordLoc, Cond, ResultName,
-                                       ControlObjectType, Attrs);
+                                       ControlExpr, Attrs);
   }
 
   DeclResult RebuildContractSpecifierDecl(ArrayRef<ContractStmt *> Stmts,
@@ -9093,15 +9093,20 @@ StmtResult TreeTransform<Derived>::TransformContractStmt(ContractStmt *S) {
 
   assert(getSema().getFunctionLevelDeclContext(true)->isFunctionOrMethod());
 
-  // Substitute into the assertion-control type first, so its constify policy is
-  // known before the (constified-or-not) predicate is transformed.
-  QualType ControlObjectType = S->getControlObjectType();
-  if (!ControlObjectType.isNull()) {
-    ControlObjectType = getDerived().TransformType(ControlObjectType);
-    if (ControlObjectType.isNull())
+  // Substitute into the assertion-control object first, so its constify policy
+  // is known before the (constified-or-not) predicate is transformed.
+  Expr *ControlExpr = nullptr;
+  if (Expr *OldControlExpr = S->getControlExpr()) {
+    EnterExpressionEvaluationContext ConstantEvaluated(
+        SemaRef, Sema::ExpressionEvaluationContext::ConstantEvaluated,
+        /*LambdaContextDecl=*/nullptr,
+        Sema::ExpressionEvaluationContextRecord::EK_TemplateArgument);
+    ExprResult NewControlExpr = getDerived().TransformExpr(OldControlExpr);
+    if (NewControlExpr.isInvalid())
       return StmtError();
+    ControlExpr = NewControlExpr.get();
   }
-  bool Constify = getSema().shouldConstifyContractPredicate(ControlObjectType);
+  bool Constify = getSema().shouldConstifyContractPredicate(ControlExpr);
 
   Sema::ContractScopeRAII ContractScope(getSema(), S->getContractKind(),
                                         CSO_FunctionContext, S->getKeywordLoc(),
@@ -9123,7 +9128,7 @@ StmtResult TreeTransform<Derived>::TransformContractStmt(ContractStmt *S) {
 
   return getDerived().RebuildContractStmt(
       S->getContractKind(), S->getKeywordLoc(), Cond,
-      cast_or_null<DeclStmt>(NewResultName.get()), ControlObjectType, NewAttrs);
+      cast_or_null<DeclStmt>(NewResultName.get()), ControlExpr, NewAttrs);
 }
 
 // Objective-C Statements.

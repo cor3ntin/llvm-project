@@ -113,7 +113,7 @@ void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
   //      semantic: observe reports and continues, enforce reports and does not
   //      return, quick_enforce traps.
 
-  const bool HasControl = S.hasExplicitControlType();
+  const bool HasControl = S.hasExplicitControl();
   const ContractEvaluationSemantic Semantic = S.getSemantic(getContext());
 
   // Step 1. For the default path the built-in default_control is ignored exactly

@@ -132,25 +132,28 @@ CoroutineBodyStmt::CoroutineBodyStmt(CoroutineBodyStmt::CtorArgs const &Args)
 }
 
 ContractStmt *ContractStmt::CreateEmpty(const ASTContext &C, ContractKind Kind,
-                                        bool HasResultName, unsigned NumAttrs) {
-  void *Mem = C.Allocate(
-      totalSizeToAlloc<Stmt *, const Attr *>(1 + HasResultName, NumAttrs),
-      alignof(ContractStmt));
-  return new (Mem) ContractStmt(EmptyShell(), Kind, HasResultName);
+                                        bool HasResultName, bool HasControlExpr,
+                                        unsigned NumAttrs) {
+  void *Mem = C.Allocate(totalSizeToAlloc<Stmt *, const Attr *>(
+                             1 + HasResultName + HasControlExpr, NumAttrs),
+                         alignof(ContractStmt));
+  return new (Mem)
+      ContractStmt(EmptyShell(), Kind, HasResultName, HasControlExpr, NumAttrs);
 }
 
 ContractStmt *ContractStmt::Create(const ASTContext &C, ContractKind Kind,
                                    SourceLocation KeywordLoc, Expr *Condition,
-                                   DeclStmt *ResultNameDecl,
-                                   QualType ControlObjectType,
+                                   DeclStmt *ResultNameDecl, Expr *ControlExpr,
                                    ArrayRef<const Attr *> Attrs) {
   assert((ResultNameDecl == nullptr || Kind == ContractKind::Post) &&
          "Only a postcondition can have a result name declaration");
-  void *Mem = C.Allocate(totalSizeToAlloc<Stmt *, const Attr *>(
-                             1 + (ResultNameDecl != nullptr), Attrs.size()),
-                         alignof(ContractStmt));
+  void *Mem = C.Allocate(
+      totalSizeToAlloc<Stmt *, const Attr *>(1 + (ResultNameDecl != nullptr) +
+                                                 (ControlExpr != nullptr),
+                                             Attrs.size()),
+      alignof(ContractStmt));
   return new (Mem) ContractStmt(Kind, KeywordLoc, Condition, ResultNameDecl,
-                                ControlObjectType, Attrs);
+                                ControlExpr, Attrs);
 }
 
 ResultNameDecl *ContractStmt::getResultName() const {

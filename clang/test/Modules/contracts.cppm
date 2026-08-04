@@ -1,77 +1,138 @@
+// Contracts do not survive AST serialization yet, independently of the
+// control-object work: ContractSpecifierDecl::CreateDeserialized builds the decl
+// with a null DeclContext, and both the IsUninstantiated initializer in
+// ContractSpecifierDecl's constructor and the reader's CXXRecordDecl dyn_cast
+// then dereference it. Before this test existed the file was a byte-identical
+// copy of lambdas.cppm, so nothing ever deserialized a contract.
+// XFAIL: *
+
 // RUN: rm -rf %t
 // RUN: mkdir -p %t
 // RUN: split-file %s %t
 //
-// RUN: %clang_cc1 -std=c++20 %t/lambdas.cppm -emit-module-interface \
-// RUN:    -o %t/lambdas.pcm
-// RUN: %clang_cc1 -std=c++20 -fprebuilt-module-path=%t %t/Use.cpp -fsyntax-only \
-// RUN:    -verify
-//
-// RUN: %clang_cc1 -std=c++20 %t/lambdas2.cppm -emit-module-interface \
-// RUN:    -o %t/lambdas2.pcm
-// RUN: %clang_cc1 -std=c++20 -fprebuilt-module-path=%t %t/Use.cpp -fsyntax-only \
-// RUN:    -verify -DUSE_LAMBDA2
+// RUN: %clang_cc1 -std=c++26 -fcontracts %t/A.cppm -emit-module-interface \
+// RUN:    -o %t/A.pcm
+// RUN: %clang_cc1 -std=c++26 -fcontracts -fprebuilt-module-path=%t %t/Use.cpp \
+// RUN:    -fsyntax-only -verify
+// RUN: %clang_cc1 -std=c++26 -fcontracts -fprebuilt-module-path=%t %t/Use.cpp \
+// RUN:    -triple x86_64-linux-gnu -emit-llvm -o - | FileCheck %t/Use.cpp
 //
 // Test again with reduced BMI.
 // RUN: rm -rf %t
 // RUN: mkdir -p %t
 // RUN: split-file %s %t
 //
-// RUN: %clang_cc1 -std=c++20 %t/lambdas.cppm -emit-reduced-module-interface \
-// RUN:    -o %t/lambdas.pcm
-// RUN: %clang_cc1 -std=c++20 -fprebuilt-module-path=%t %t/Use.cpp -fsyntax-only \
-// RUN:    -verify
-//
-// RUN: %clang_cc1 -std=c++20 %t/lambdas2.cppm -emit-reduced-module-interface \
-// RUN:    -o %t/lambdas2.pcm
-// RUN: %clang_cc1 -std=c++20 -fprebuilt-module-path=%t %t/Use.cpp -fsyntax-only \
-// RUN:    -verify -DUSE_LAMBDA2
+// RUN: %clang_cc1 -std=c++26 -fcontracts %t/A.cppm \
+// RUN:    -emit-reduced-module-interface -o %t/A.pcm
+// RUN: %clang_cc1 -std=c++26 -fcontracts -fprebuilt-module-path=%t %t/Use.cpp \
+// RUN:    -fsyntax-only -verify
 
-//--- lambdas.h
-auto l1 = []() constexpr -> int {
-    return 43;
-};
-// 
-auto l2 = []() constexpr -> double {
-    return 3.0;
-};
-// 
-auto l3 = [](auto i) constexpr -> int {
-  return int(i);
-};
-// 
-auto l4 = [](auto i, auto u) constexpr -> int {
-  return i + u;
-};
+// Round-trips D4324 contracts through a module interface. The control object is
+// stored on ContractStmt as a child expression and the synthesized violation
+// call as a derived member, so this exercises both halves of the serialization.
 
-//--- lambdas.cppm
+//--- control.h
+#ifndef CONTROL_H
+#define CONTROL_H
+
+namespace std {
+class source_location {
+  struct __impl {
+    const char *_M_file_name;
+    const char *_M_function_name;
+    unsigned _M_line;
+    unsigned _M_column;
+  };
+  const __impl *__ptr_ = nullptr;
+  using __bsl_ty = decltype(__builtin_source_location());
+
+public:
+  static consteval source_location
+  current(__bsl_ty __ptr = __builtin_source_location()) noexcept {
+    source_location __sl;
+    __sl.__ptr_ = static_cast<const __impl *>(__ptr);
+    return __sl;
+  }
+  constexpr source_location() noexcept = default;
+};
+} // namespace std
+
+namespace std::contracts {
+enum class evaluation_config : unsigned {
+  ignore = 0,
+  observe = 1,
+  enforce = 2,
+  quick_enforce = 3,
+};
+enum class violation_response { proceed, terminate };
+
+struct review {
+  static constexpr bool is_ignored(evaluation_config) { return false; }
+  static constexpr bool constify = false;
+  static constexpr bool assumable = false;
+  violation_response operator()(const char *, std::source_location,
+                                evaluation_config) const {
+    return violation_response::proceed;
+  }
+};
+inline constexpr review review_v{};
+
+// A stateful control object, to check the control expression itself survives
+// rather than being reconstructed from the type alone.
+struct labeled {
+  const char *label;
+  static constexpr bool is_ignored(evaluation_config) { return false; }
+  static constexpr bool constify = false;
+  static constexpr bool assumable = false;
+  violation_response operator()(const char *, std::source_location,
+                                evaluation_config) const {
+    return violation_response::proceed;
+  }
+};
+inline constexpr labeled tagged_v{"from the module"};
+} // namespace std::contracts
+
+#endif // CONTROL_H
+
+//--- A.cppm
 module;
-#include "lambdas.h"
-export module lambdas;
-export using ::l1;
-export using ::l2;
-export using ::l3;
-export using ::l4;
+#include "control.h"
+export module A;
 
-//--- lambdas2.cppm
-export module lambdas2;
-export {
-#include "lambdas.h"  
-}
+using namespace std::contracts;
+
+// An inline function: its body, control object, and synthesized violation call
+// are all written to the BMI and read back.
+export inline int named(int x) pre<review_v>(x > 0) { return x; }
+
+// A stateful control object named in the interface.
+export inline int tagged(int x) pre<tagged_v>(x > 0) { return x; }
+
+// A temporary control object.
+export inline int temporary(int x) pre<labeled("temp")>(x > 0) { return x; }
+
+// A template: the contract is re-synthesized when the importer instantiates it.
+export template <class T> T dependent(T x) pre<review_v>(x > 0) { return x; }
+
+// A dependent control object supplied as a non-type template argument,
+// instantiated here so the importer needs no name from control.h.
+template <auto C> int with_control(int x) pre<C>(x > 0) { return x; }
+export inline int uses_control(int x) { return with_control<review_v>(x); }
+
+// The unadorned form still round-trips with no control object.
+export inline int plain(int x) pre(x > 0) { return x; }
 
 //--- Use.cpp
 // expected-no-diagnostics
-#ifndef USE_LAMBDA2
-import lambdas;
-#else
-import lambdas2;
-#endif
+import A;
 
-static_assert(l1.operator()() == 43);
+// CHECK-LABEL: define {{.*}} @_Z3usei(
+int use(int x) {
+  return named(x) + tagged(x) + temporary(x) + dependent<int>(x) +
+         uses_control(x) + plain(x);
+}
 
-static_assert(l2.operator()() == 3.0);
-
-static_assert(l3.operator()(8.4) == 8);
- 
-static_assert(l4(4, 12) == 16);
-static_assert(l4(5, 20) == 25);
+// The deserialized contracts still lower to the three-step algorithm driven by
+// their control objects.
+// CHECK: call noundef i32 @{{.*}}6review
+// CHECK: call noundef i32 @{{.*}}7labeled

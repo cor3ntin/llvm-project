@@ -553,7 +553,8 @@ class ContractStmt final
   friend class SemaContractHelper;
 
   unsigned numTrailingObjects(OverloadToken<Stmt *>) const {
-    return ContractAssertBits.HasResultName + 1;
+    return ContractAssertBits.HasResultName + ContractAssertBits.HasControlExpr +
+           1;
   }
 
   Stmt **getStmtPtr() { return getTrailingObjects<Stmt *>(); }
@@ -566,21 +567,16 @@ class ContractStmt final
 
   SourceLocation KeywordLoc;
 
-  // The D4324 assertion-control object type named by pre<T>/post<T>/
-  // contract_assert<T>. A null type means no control object was named, in which
-  // case code generation applies the built-in defaults and does not depend on
-  // the <contracts> header.
-  QualType ControlObjectType;
-
-  // D4324: the synthesized `T{}(comment, loc, cfg)` call that is evaluated when
+  // D4324: the synthesized `obj(comment, loc, cfg)` call that is evaluated when
   // the predicate is false for an explicit control object. Null for the default
-  // (null-type) path and for dependent control types, which are re-synthesized
-  // on instantiation. Stored as a plain member (not a child) since it is fully
-  // derived from ControlObjectType and does not participate in tree transforms.
+  // path and for dependent control objects, which are re-synthesized on
+  // instantiation. Stored as a plain member (not a child) since it is fully
+  // derived from the control object and does not participate in tree
+  // transforms.
   Stmt *ViolationCall = nullptr;
 
   // D4324: const-evaluated `T::is_ignored(cfg)` and `T::assumable` for the
-  // build-selected config. Only meaningful when hasExplicitControlType().
+  // build-selected config. Only meaningful when hasExplicitControl().
   bool ControlIsIgnored = false;
   bool ControlAssumable = false;
 
@@ -594,14 +590,36 @@ class ContractStmt final
                                  numTrailingObjects(OverloadToken<Stmt *>{}));
   }
 
-  void setResultName(DeclStmt *D) {
+  // The trailing Stmt * slots are laid out as
+  //   [result name] [control object] [predicate]
+  // where the first two are present only when hasResultName() and
+  // hasExplicitControl() respectively.
+  unsigned getResultNameIndex() const {
     assert(hasResultName() && "no result name decl");
-    getSubStmts().front() = D;
+    return 0;
+  }
+
+  unsigned getControlExprIndex() const {
+    assert(hasExplicitControl() && "no control object");
+    return ContractAssertBits.HasResultName;
+  }
+
+  unsigned getCondIndex() const {
+    return ContractAssertBits.HasResultName + ContractAssertBits.HasControlExpr;
+  }
+
+  void setResultName(DeclStmt *D) {
+    getSubStmts()[getResultNameIndex()] = D;
+  }
+
+  void setControlExpr(Expr *E) {
+    assert(E && "no control object");
+    getSubStmts()[getControlExprIndex()] = E;
   }
 
   void setCondition(Expr *E) {
     assert(E && "no condition");
-    getSubStmts().back() = E;
+    getSubStmts()[getCondIndex()] = E;
   }
 
   void copyAttrs(ArrayRef<const Attr *> Attrs) {
@@ -611,25 +629,28 @@ class ContractStmt final
   }
 
   ContractStmt(ContractKind CK, SourceLocation KeywordLoc, Expr *Condition,
-               DeclStmt *RN, QualType ControlObjectType,
+               DeclStmt *RN, Expr *ControlExpr,
                ArrayRef<const Attr *> Attrs = {})
-      : Stmt(ContractStmtClass), KeywordLoc(KeywordLoc),
-        ControlObjectType(ControlObjectType) {
+      : Stmt(ContractStmtClass), KeywordLoc(KeywordLoc) {
     ContractAssertBits.ContractKind = static_cast<unsigned>(CK);
     ContractAssertBits.HasResultName = RN != nullptr;
+    ContractAssertBits.HasControlExpr = ControlExpr != nullptr;
     ContractAssertBits.NumAttrs = Attrs.size();
     if (RN)
       setResultName(RN);
+    if (ControlExpr)
+      setControlExpr(ControlExpr);
     setCondition(Condition);
     if (!Attrs.empty())
       copyAttrs(Attrs);
   }
 
   ContractStmt(EmptyShell Empty, ContractKind Kind, bool HasResultName,
-               unsigned NumAttrs = 0)
+               bool HasControlExpr = false, unsigned NumAttrs = 0)
       : Stmt(ContractStmtClass, Empty) {
     ContractAssertBits.ContractKind = static_cast<unsigned>(Kind);
     ContractAssertBits.HasResultName = HasResultName;
+    ContractAssertBits.HasControlExpr = HasControlExpr;
     ContractAssertBits.NumAttrs = NumAttrs;
     if (NumAttrs != 0)
       std::fill_n(getAttrPtr(), NumAttrs, nullptr);
@@ -638,36 +659,45 @@ class ContractStmt final
 public:
   static ContractStmt *Create(const ASTContext &C, ContractKind Kind,
                               SourceLocation KeywordLoc, Expr *Condition,
-                              DeclStmt *ResultNameDecl,
-                              QualType ControlObjectType,
+                              DeclStmt *ResultNameDecl, Expr *ControlExpr,
                               ArrayRef<const Attr *> Attrs = {});
 
   static ContractStmt *CreateEmpty(const ASTContext &C, ContractKind Kind,
-                                   bool HasResultName, unsigned NumAttrs);
+                                   bool HasResultName, bool HasControlExpr,
+                                   unsigned NumAttrs);
 
   bool hasResultName() const { return ContractAssertBits.HasResultName; }
 
   DeclStmt *getResultNameDeclStmt() const {
-    return hasResultName() ? static_cast<DeclStmt *>(getSubStmts().front())
-                           : nullptr;
+    return hasResultName()
+               ? static_cast<DeclStmt *>(getSubStmts()[getResultNameIndex()])
+               : nullptr;
   }
 
   ResultNameDecl *getResultName() const;
 
-  Expr *getCond() { return static_cast<Expr *>(getSubStmts().back()); }
+  Expr *getCond() { return static_cast<Expr *>(getSubStmts()[getCondIndex()]); }
   const Expr *getCond() const {
     return const_cast<ContractStmt *>(this)->getCond();
   }
 
-  /// The assertion-control object type named by pre<T>/post<T>/
-  /// contract_assert<T>, or a null type when no control object was named.
-  QualType getControlObjectType() const { return ControlObjectType; }
-  void setControlObjectType(QualType T) { ControlObjectType = T; }
-  bool hasExplicitControlType() const { return !ControlObjectType.isNull(); }
+  /// Whether this contract names an assertion-control object, as in
+  /// pre<obj>/post<obj>/contract_assert<obj>. When it does not, code generation
+  /// applies the built-in defaults and does not depend on the <contracts>
+  /// header.
+  bool hasExplicitControl() const { return ContractAssertBits.HasControlExpr; }
 
-  /// The synthesized `T{}(comment, loc, cfg)` violation-handler call for an
+  /// The assertion-control object named by pre<obj>/post<obj>/
+  /// contract_assert<obj>, or null when no control object was named.
+  Expr *getControlExpr() const {
+    return hasExplicitControl()
+               ? static_cast<Expr *>(getSubStmts()[getControlExprIndex()])
+               : nullptr;
+  }
+
+  /// The synthesized `obj(comment, loc, cfg)` violation-handler call for an
   /// explicit control object, or null when there is none (default path or a
-  /// not-yet-instantiated dependent control type).
+  /// not-yet-instantiated dependent control object).
   Expr *getViolationCall() const { return static_cast<Expr *>(ViolationCall); }
   void setViolationCall(Expr *E) { ViolationCall = E; }
 
@@ -724,12 +754,12 @@ public:
   SourceLocation getKeywordLoc() const { return KeywordLoc; }
   SourceLocation getBeginLoc() const LLVM_READONLY { return KeywordLoc; }
   SourceLocation getExpressionLoc() const LLVM_READONLY {
-    return getSubStmts().back()->getBeginLoc();
+    return getCond()->getBeginLoc();
   }
   SourceLocation getEndLoc() const LLVM_READONLY {
     assert(!KeywordLoc.isInvalid() &&
            "Trying to get end location on an invalid node");
-    return getSubStmts().back()->getEndLoc();
+    return getCond()->getEndLoc();
   }
 
   child_range children() { return getSubStmts(); }

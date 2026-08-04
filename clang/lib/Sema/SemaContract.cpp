@@ -68,7 +68,8 @@ public:
     // diagnostics. (Pray they don't call getEndLoc()), which will attempt to
     // read past the end of the buffer.
 
-    ContractStmt Dummy(Stmt::EmptyShell(), ContractKind::Pre, false, 0);
+    ContractStmt Dummy(Stmt::EmptyShell(), ContractKind::Pre,
+                       /*HasResultName=*/false);
     Dummy.KeywordLoc = Loc;
     SmallVector<const Attr *> Result;
     S.ProcessStmtAttributes(&Dummy, Attrs, Result);
@@ -168,31 +169,60 @@ ExprResult Sema::ActOnContractAssertCondition(Expr *Cond)  {
   return Cond;
 }
 
-bool Sema::CheckContractControlType(QualType ControlObjectType,
-                                    SourceLocation Loc) {
+/// D4324: the class describing a named assertion-control object, or null when
+/// the object is absent, dependent, or not of class type. The control object's
+/// static properties (is_ignored, constify, assumable) and its call operator are
+/// all looked up on this class.
+static const CXXRecordDecl *getControlObjectRecord(const Expr *ControlExpr) {
+  if (!ControlExpr || ControlExpr->isTypeDependent() ||
+      ControlExpr->isValueDependent())
+    return nullptr;
+  const CXXRecordDecl *RD =
+      ControlExpr->getType().getNonReferenceType()->getAsCXXRecordDecl();
+  return RD ? RD->getDefinition() : nullptr;
+}
+
+/// D4324: read a constexpr bool data member off a control object's class,
+/// returning nullopt when it is missing or has no usable constant value. A
+/// static data member of a class template specialization is only instantiated on
+/// use, so its initializer has to be requested before it can be folded.
+static std::optional<bool> readControlBoolMember(Sema &S,
+                                                 const CXXRecordDecl *RD,
+                                                 StringRef Name,
+                                                 SourceLocation Loc) {
+  for (NamedDecl *ND : RD->lookup(&S.Context.Idents.get(Name))) {
+    auto *VD = dyn_cast<VarDecl>(ND->getUnderlyingDecl());
+    if (!VD)
+      continue;
+    if (!VD->getAnyInitializer() &&
+        VD->getTemplateSpecializationKind() == TSK_ImplicitInstantiation)
+      S.InstantiateVariableDefinition(Loc, VD);
+    if (!VD->getAnyInitializer())
+      continue;
+    if (const APValue *V = VD->evaluateValue(); V && V->isInt())
+      return V->getInt().getBoolValue();
+  }
+  return std::nullopt;
+}
+
+bool Sema::CheckContractControlObject(Expr *ControlExpr, SourceLocation Loc) {
   // No control object named, or still dependent: nothing to check now. A
-  // dependent type is re-checked once instantiated.
-  if (ControlObjectType.isNull() || ControlObjectType->isDependentType())
+  // dependent control object is re-checked once instantiated.
+  if (!ControlExpr || ControlExpr->isTypeDependent() ||
+      ControlExpr->isValueDependent())
     return true;
 
-  const CXXRecordDecl *RD = ControlObjectType->getAsCXXRecordDecl();
-  if (!RD) {
-    Diag(Loc, diag::err_contract_control_not_class) << ControlObjectType;
+  QualType T = ControlExpr->getType().getNonReferenceType();
+  if (!T->getAsCXXRecordDecl()) {
+    Diag(Loc, diag::err_contract_control_not_class) << T;
     return false;
   }
 
-  if (RequireCompleteType(Loc, ControlObjectType,
-                          diag::err_contract_control_incomplete))
+  if (RequireCompleteType(Loc, T, diag::err_contract_control_incomplete))
     return false;
 
-  RD = RD->getDefinition();
+  const CXXRecordDecl *RD = getControlObjectRecord(ControlExpr);
   assert(RD && "complete class type without a definition");
-
-  // The control object carries no state; it only steers code generation.
-  if (!RD->isEmpty()) {
-    Diag(Loc, diag::err_contract_control_not_empty) << ControlObjectType;
-    return false;
-  }
 
   auto HasMember = [&](DeclarationName Name) {
     return !RD->lookup(Name).empty();
@@ -201,14 +231,12 @@ bool Sema::CheckContractControlType(QualType ControlObjectType,
   bool Ok = true;
   for (StringRef Member : {"is_ignored", "constify", "assumable"}) {
     if (!HasMember(&Context.Idents.get(Member))) {
-      Diag(Loc, diag::err_contract_control_missing_member)
-          << ControlObjectType << Member;
+      Diag(Loc, diag::err_contract_control_missing_member) << T << Member;
       Ok = false;
     }
   }
   if (!HasMember(Context.DeclarationNames.getCXXOperatorName(OO_Call))) {
-    Diag(Loc, diag::err_contract_control_missing_member)
-        << ControlObjectType << "operator()";
+    Diag(Loc, diag::err_contract_control_missing_member) << T << "operator()";
     Ok = false;
   }
   return Ok;
@@ -248,20 +276,19 @@ ExprResult buildConfigArg(Sema &S, QualType ConfigTy, uint64_t Value,
 }
 
 // D4324: synthesize the runtime dispatch for a contract that names a
-// non-dependent control object T. Builds the violation-handler call
-// `T{}(comment, loc, cfg)` (evaluated when the predicate is false) and
-// const-evaluates `T::is_ignored(cfg)` and `T::assumable` for the build config.
-// Returns false if T does not model the assertion_control interface well enough
-// to form the call; diagnostics for that case come from the expression builders.
+// non-dependent control object. Builds the violation-handler call
+// `obj(comment, loc, cfg)` (evaluated when the predicate is false) and
+// const-evaluates `T::is_ignored(cfg)` and `T::assumable` for the build config,
+// where T is the control object's type. Returns false if T does not model the
+// assertion_control interface well enough to form the call; diagnostics for that
+// case come from the expression builders.
 bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
   ASTContext &Ctx = S.Context;
-  QualType T = CS->getControlObjectType();
+  Expr *ControlExpr = CS->getControlExpr();
   SourceLocation Loc = CS->getKeywordLoc();
 
-  const CXXRecordDecl *RD = T->getAsCXXRecordDecl();
-  assert(RD && "control type validated as a class by CheckContractControlType");
-  RD = RD->getDefinition();
-  assert(RD && "control type validated as complete by CheckContractControlType");
+  const CXXRecordDecl *RD = getControlObjectRecord(ControlExpr);
+  assert(RD && "control object validated by CheckContractControlObject");
 
   // Read the argument types off operator()(const char*, source_location, cfg).
   const CXXMethodDecl *CallOp = nullptr;
@@ -310,14 +337,11 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
   }
 
   // Step 1 datum: read T::assumable (static constexpr bool).
-  for (NamedDecl *ND : RD->lookup(&Ctx.Idents.get("assumable"))) {
-    if (auto *VD = dyn_cast<VarDecl>(ND->getUnderlyingDecl())) {
-      if (const APValue *V = VD->evaluateValue(); V && V->isInt())
-        CS->setControlAssumable(V->getInt().getBoolValue());
-    }
-  }
+  if (std::optional<bool> Assumable =
+          readControlBoolMember(S, RD, "assumable", Loc))
+    CS->setControlAssumable(*Assumable);
 
-  // Step 3: the violation-handler call T{}(comment, loc, cfg).
+  // Step 3: the violation-handler call obj(comment, loc, cfg).
   std::string Text = CS->getMessage(Ctx);
   llvm::APInt Length(32, Text.size() + 1);
   QualType StrTy = Ctx.getConstantArrayType(
@@ -353,15 +377,14 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
   if (Cfg.isInvalid())
     return false;
 
-  TypeSourceInfo *TSI = Ctx.getTrivialTypeSourceInfo(T, Loc);
-  ExprResult Obj = S.BuildCXXTypeConstructExpr(TSI, Loc, {}, Loc,
-                                               /*ListInitialization=*/true);
-  if (Obj.isInvalid())
-    return false;
-
+  // The callee is the control object as written. That node is also the
+  // statement's control-object child, so it is reachable by two paths; this is
+  // safe because instantiation re-synthesizes the call from the transformed
+  // object rather than transforming it twice, and code generation only ever
+  // emits the call.
   Expr *CallArgs[] = {Comment, LocArg.get(), Cfg.get()};
   ExprResult Violation =
-      S.BuildCallToObjectOfClassType(nullptr, Obj.get(), Loc, CallArgs, Loc);
+      S.BuildCallToObjectOfClassType(nullptr, ControlExpr, Loc, CallArgs, Loc);
   if (Violation.isInvalid())
     return false;
 
@@ -372,20 +395,19 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
 } // namespace
 
 StmtResult Sema::BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
-                                   Expr *Cond, DeclStmt *RND,
-                                   QualType ControlObjectType,
+                                   Expr *Cond, DeclStmt *RND, Expr *ControlExpr,
                                    ArrayRef<const Attr *> Attrs) {
-  if (!CheckContractControlType(ControlObjectType, KeywordLoc))
+  if (!CheckContractControlObject(ControlExpr, KeywordLoc))
     return StmtError();
   ContractStmt *CS = ContractStmt::Create(Context, CK, KeywordLoc, Cond, RND,
-                                          ControlObjectType, Attrs);
+                                          ControlExpr, Attrs);
 
   // D4324: for a non-dependent explicit control object, synthesize the
-  // three-step dispatch now. Dependent control types (and contracts in a
+  // three-step dispatch now. Dependent control objects (and contracts in a
   // dependent context) are re-synthesized when TransformContractStmt rebuilds
   // this statement during instantiation.
-  if (!ControlObjectType.isNull() && !ControlObjectType->isDependentType() &&
-      !CurContext->isDependentContext()) {
+  if (ControlExpr && !ControlExpr->isTypeDependent() &&
+      !ControlExpr->isValueDependent() && !CurContext->isDependentContext()) {
     if (!synthesizeControlObjectDispatch(*this, CS))
       return StmtError();
   }
@@ -394,7 +416,7 @@ StmtResult Sema::BuildContractStmt(ContractKind CK, SourceLocation KeywordLoc,
 
 StmtResult Sema::ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,
                                      Expr *Cond, ResultNameDecl *RND,
-                                     QualType ControlObjectType,
+                                     Expr *ControlExpr,
                                      ParsedAttributes &ContractAttrs) {
 
   DeclStmt *RNDStmt = nullptr;
@@ -409,7 +431,7 @@ StmtResult Sema::ActOnContractAssert(ContractKind CK, SourceLocation KeywordLoc,
   }
 
   StmtResult Res =
-      BuildContractStmt(CK, KeywordLoc, Cond, RNDStmt, ControlObjectType,
+      BuildContractStmt(CK, KeywordLoc, Cond, RNDStmt, ControlExpr,
                         SemaContractHelper::buildAttributesWithDummyNode(
                             *this, ContractAttrs, KeywordLoc));
 
@@ -1959,26 +1981,26 @@ Sema::ContractScopeRAII::~ContractScopeRAII() {
   S.PopContractScope();
 }
 
-bool Sema::shouldConstifyContractPredicate(QualType ControlObjectType) {
+bool Sema::shouldConstifyContractPredicate(Expr *ControlExpr) {
   // No control object named: keep the build's legacy behavior. A dependent
-  // type is resolved once instantiated; until then fall back to the default.
-  if (ControlObjectType.isNull() || ControlObjectType->isDependentType())
+  // control object is resolved once instantiated; until then fall back to the
+  // default.
+  if (!ControlExpr || ControlExpr->isTypeDependent() ||
+      ControlExpr->isValueDependent())
     return LangOpts.ContractConstification;
 
-  const CXXRecordDecl *RD = ControlObjectType->getAsCXXRecordDecl();
-  if (!RD || !(RD = RD->getDefinition()))
+  // This runs before CheckContractControlObject, so the object may yet turn out
+  // to be ill-formed; fall back rather than assuming a usable class.
+  const CXXRecordDecl *RD = getControlObjectRecord(ControlExpr);
+  if (!RD)
     return LangOpts.ContractConstification;
 
-  // Read the control object's static `constify` member (already validated to
-  // exist by CheckContractControlType). A missing/unevaluatable value defaults
-  // to no constification, matching D4324's default_control.
-  for (NamedDecl *ND : RD->lookup(&Context.Idents.get("constify"))) {
-    if (auto *VD = dyn_cast<VarDecl>(ND)) {
-      if (const APValue *V = VD->evaluateValue(); V && V->isInt())
-        return V->getInt().getBoolValue();
-    }
-  }
-  return false;
+  // Read the control object's static `constify` member. A missing or
+  // unevaluatable value defaults to no constification, matching D4324's
+  // default_control.
+  return readControlBoolMember(*this, RD, "constify",
+                               ControlExpr->getExprLoc())
+      .value_or(false);
 }
 
 void Sema::PushContractScope(ContractKind Kind, ContractScopeOffset ScopeOffset,

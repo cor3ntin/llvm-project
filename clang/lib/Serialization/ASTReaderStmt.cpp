@@ -521,8 +521,9 @@ void ASTStmtReader::VisitContractStmt(ContractStmt *S) {
   bool HasViolationCall = Record.readInt();
 
   S->KeywordLoc = Record.readSourceLocation();
-  S->setControlObjectType(Record.readType());
   S->setCondition(Record.readExpr());
+  if (S->hasExplicitControl())
+    S->setControlExpr(Record.readExpr());
   if (HasViolationCall)
     S->setViolationCall(Record.readExpr());
   if (S->hasResultName())
@@ -4587,10 +4588,12 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
       BitsUnpacker ContractBits(Record[ASTStmtReader::NumStmtFields]);
       ContractKind CK = static_cast<ContractKind>(ContractBits.getNextBits(2));
       bool HasResultName = ContractBits.getNextBit();
+      bool HasControlExpr = ContractBits.getNextBit();
 
       unsigned NumAttrs = Record[ASTStmtReader::NumStmtFields + 1];
 
-      S = ContractStmt::CreateEmpty(Context, CK, HasResultName, NumAttrs);
+      S = ContractStmt::CreateEmpty(Context, CK, HasResultName, HasControlExpr,
+                                    NumAttrs);
       break;
     }
 

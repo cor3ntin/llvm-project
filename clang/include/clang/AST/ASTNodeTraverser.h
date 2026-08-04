@@ -773,6 +773,8 @@ public:
   void VisitContractStmt(const ContractStmt *S) {
     if (S->hasResultName())
       Visit(S->getResultName());
+    if (S->hasExplicitControl())
+      Visit(S->getControlExpr());
     Visit(S->getCond());
   }
 

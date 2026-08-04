@@ -20,16 +20,17 @@ struct assume_ignored {
     return violation_response::terminate;
   }
 };
+inline constexpr assume_ignored assume_ignored_v{};
 } // namespace
 
 // CHECK-LABEL: define {{.*}} @_Z8f_assumei(
 // CHECK: call void @llvm.assume(
-int f_assume(int x) pre<assume_ignored>(x > 0) { return x; }
+int f_assume(int x) pre<assume_ignored_v>(x > 0) { return x; }
 
 // default_control is ignored under 'ignore' but is not assumable: no assume and
 // no runtime check (the implicit-check-not above catches any stray llvm.assume).
 // CHECK-LABEL: define {{.*}} @_Z9f_defaulti(
-int f_default(int x) pre<default_control>(x > 0) { return x; }
+int f_default(int x) pre<default_v>(x > 0) { return x; }
 
 // A plain contract in ignore mode is likewise fully elided.
 // CHECK-LABEL: define {{.*}} @_Z7f_plaini(

@@ -13134,14 +13134,12 @@ def err_deduced_auto_result_name_without_body : Error<
 def err_result_name_not_allowed : Error<
   "result name %0 not allowed outside of post condition specifier">;
 
-// Diagnose an assertion-control object type that does not model the
+// Diagnose an assertion-control object that does not model the
 // assertion-control interface the compiler reads (D4324).
 def err_contract_control_not_class : Error<
-  "assertion-control object type %0 must be a class type">;
+  "assertion-control object must have class type, not %0">;
 def err_contract_control_incomplete : Error<
-  "assertion-control object type %0 is incomplete">;
-def err_contract_control_not_empty : Error<
-  "assertion-control object type %0 must be an empty class">;
+  "assertion-control object has incomplete type %0">;
 def err_contract_control_missing_member : Error<
   "assertion-control object type %0 is missing required member %1">;
 

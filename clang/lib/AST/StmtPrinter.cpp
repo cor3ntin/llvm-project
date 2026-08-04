@@ -2885,10 +2885,10 @@ void StmtPrinter::VisitContractStmt(ContractStmt *Node) {
   // Print the contract keyword...
   OS << Keyword;
 
-  // Then the named assertion-control object type, if any: pre<T>(...).
-  if (Node->hasExplicitControlType()) {
+  // Then the named assertion-control object, if any: pre<obj>(...).
+  if (Node->hasExplicitControl()) {
     OS << "<";
-    Node->getControlObjectType().print(OS, Policy);
+    PrintExpr(Node->getControlExpr());
     OS << ">";
   }
 
