@@ -1620,7 +1620,8 @@ void SemaHLSL::handleRootSignatureAttr(Decl *D, const ParsedAttr &AL) {
   IdentifierInfo *Ident = AL.getArgAsIdent(0)->getIdentifierInfo();
   if (auto *RS = D->getAttr<RootSignatureAttr>()) {
     if (RS->getSignatureIdent() != Ident) {
-      Diag(AL.getLoc(), diag::err_disallowed_duplicate_attribute) << RS;
+      Diag(AL.getLoc(), diag::err_disallowed_duplicate_attribute)
+          << RS << /*declaration*/ 0;
       return;
     }
 
