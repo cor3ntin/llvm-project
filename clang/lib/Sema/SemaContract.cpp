@@ -1263,6 +1263,19 @@ ContractConstification Sema::getContractConstification(const ValueDecl *VD) {
   if (!isUsageAcrossContract(VD))
     return CC_None;
 
+  // [expr.prim.id.unqual]/4 is reached before /7, so when naming the entity
+  // refers to a by-copy capture of an enclosing lambda the expression has the
+  // type of that closure member and contract constification does not apply. The
+  // member is only const if the lambda is non-mutable, which the usual capture
+  // machinery already handles. A by-reference capture keeps referring to the
+  // original entity, so /7 still constifies it.
+  if (auto *LSI = dyn_cast_or_null<sema::LambdaScopeInfo>(getCurFunction())) {
+    auto *NonConstVD = const_cast<ValueDecl *>(VD);
+    if (LSI->isCaptured(NonConstVD) &&
+        LSI->getCapture(NonConstVD).isCopyCapture())
+      return CC_None;
+  }
+
   // if the unqualified-id appears in the predicate of a contract assertion
   //  ([basic.contract]) and the entity is
   // ...
