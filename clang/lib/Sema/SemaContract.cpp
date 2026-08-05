@@ -1356,6 +1356,17 @@ QualType Sema::adjustCXXThisTypeForContracts(QualType QT) {
   if (!getCurrentContractEntry() || !LangOpts.ContractConstification)
     return QT;
 
+  // A lambda that captures *this by copy holds its own object, so 'this' in its
+  // body denotes that closure member rather than the object the contract is
+  // attached to, and the closure member's constness is decided by 'mutable'.
+  // This is why [expr.prim.id.unqual]/8 example 2 has '++this->z' be well formed
+  // inside a mutable [*this] lambda. A [this] or [&] capture keeps pointing at
+  // the original object, which is const within the predicate.
+  if (auto *LSI = dyn_cast_or_null<sema::LambdaScopeInfo>(getCurFunction());
+      LSI && LSI->isCXXThisCaptured() &&
+      LSI->getCXXThisCapture().isCopyCapture())
+    return QT;
+
   // 'this' is constified any time the `this` object that is captured by a lambda which exists fully
   // within a contract.
   //
