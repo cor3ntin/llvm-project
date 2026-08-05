@@ -6,8 +6,13 @@
 #include "my_assert.h"
 #include "contracts-runtime.h"
 
+// These globals record that a predicate's lambda actually ran. Naming a
+// variable declared outside the contract assertion yields a const lvalue
+// ([expr.prim.id.unqual]/7), so writing to one from inside a predicate needs a
+// const_cast. That is well defined here because the objects themselves are not
+// const; only the expression naming them is.
 const int *fz = nullptr;
-constexpr int f(int x) pre([x=x](int y) { static int z(0);  z = x; fz = &z; return y > x; }(1000)) {
+constexpr int f(int x) pre([x=x](int y) { static int z(0);  z = x; const_cast<const int *&>(fz) = &z; return y > x; }(1000)) {
   return x;
 }
 
@@ -15,7 +20,7 @@ template <class T>
 const T* gz = nullptr;
 
 template <class T>
-constexpr T g(T x) pre([x=x](T y) { static T z(0); z = x;  gz<T> = &z; return y > x; }(1000)) {
+constexpr T g(T x) pre([x=x](T y) { static T z(0); z = x;  const_cast<const T *&>(gz<T>) = &z; return y > x; }(1000)) {
   return x;
 }
 template int g(int);
@@ -24,7 +29,7 @@ template long g(long);
 struct A {
   constexpr A() : z(0) {}
 
-  int f(int x) pre([=,this](int y) { static A a; gz<A> = &a; a.z = z; return y > x; }(1000)) {
+  int f(int x) pre([=,this](int y) { static A a; const_cast<const A *&>(gz<A>) = &a; a.z = z; return y > x; }(1000)) {
     return x;
   }
 
@@ -35,7 +40,7 @@ struct A {
 struct B {
   constexpr B() : z(0) {}
 
-  int f(int x) pre([z=z]() { static B a; gz<B> = &a; a.z = z; return true; }()) {
+  int f(int x) pre([z=z]() { static B a; const_cast<const B *&>(gz<B>) = &a; a.z = z; return true; }()) {
     return x;
   }
 

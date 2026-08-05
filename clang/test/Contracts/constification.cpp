@@ -13,14 +13,16 @@ constexpr int do_test() {
 constexpr int anchor = do_test(); // expected-error {{must be initialized}}
 // expected-note@-1 {{in call}}
 
-// not constified.
+// [expr.prim.id.unqual]/7.1 constifies "a variable declared outside of C of
+// object type T" regardless of storage duration, so a namespace-scope variable
+// is const inside a predicate just like a local one.
 int *y = nullptr;
 
 int foo() {
   int x = 42;
   contract_assert(
     ++x && // expected-error {{it is considered 'const'}}
-    (y = &x)); // expected-error {{discards qualifiers}}
+    (y = &x)); // expected-error {{cannot assign to variable 'y' because it is considered 'const'}}
 }
 
 template <class T, class U>

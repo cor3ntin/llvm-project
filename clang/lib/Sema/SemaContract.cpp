@@ -1184,8 +1184,12 @@ bool Sema::isUsageAcrossContract(const ValueDecl *VD) {
   if (isContractAssertionContext())
     return true;
 
+  // A variable that is not local to a function cannot have been declared inside
+  // the predicate, so an enclosing contract assertion always constifies it
+  // ([expr.prim.id.unqual]/7 says "declared outside of C", not "has automatic
+  // storage duration").
   if (isa<VarDecl>(VD) && !cast<VarDecl>(VD)->isLocalVarDeclOrParm())
-    return false;
+    return true;
 
   assert(VD);
   return getInterveningContractEntry(*this, VD) != nullptr;
@@ -1240,7 +1244,7 @@ ContractConstification Sema::getContractConstification(const ValueDecl *VD) {
   assert(VD);
   const ContractScopeRecord *CSR = S.getCurrentContractEntry();
 
-  if (!CSR || CSR->ContextAtPush->Encloses(VD->getDeclContext()))
+  if (!CSR)
     return CC_None;
 
 
@@ -1252,9 +1256,6 @@ ContractConstification Sema::getContractConstification(const ValueDecl *VD) {
   if (CSR == nullptr)
     return CC_None;
 
-  if (VD->getDeclContext()->Encloses(CSR->ContextAtPush)) {
-    assert(!VD->getDeclContext()->Equals(CSR->ContextAtPush));
-  }
 
   // Make sure that there's a contract scope interviening between the current
   // context and the declaration of the variable. If there isn't, we don't need
@@ -1287,20 +1288,25 @@ ContractConstification Sema::getContractConstification(const ValueDecl *VD) {
     return CC_None;
   }
 
-  // — a variable with automatic storage duration ...
-  if (auto Var = dyn_cast<VarDecl>(VD);
-      Var && Var->isLocalVarDeclOrParm() &&
-      (Var->getStorageDuration() == SD_Automatic ||
-       Var->getKind() == Decl::ParmVar)) {
-    // ... of object type T, or
+  // — a variable declared outside of C of object type T, or
+  // — a variable declared outside of C of type "reference to T"
+  //
+  // Storage duration is irrelevant: a namespace-scope or static variable is
+  // just as much "declared outside of C" as an automatic one.
+  if (auto *Var = dyn_cast<VarDecl>(VD)) {
     if (Var->getType()->isObjectType())
       return CC_ApplyConst;
 
-    // of type 'reference to T'
     if (Var->getType()->isReferenceType() &&
         Var->getType().getNonReferenceType()->isObjectType())
       return CC_ApplyConst;
   }
+
+  // — a template parameter declared outside of C of type "reference to T"
+  if (auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(VD);
+      NTTP && NTTP->getType()->isReferenceType() &&
+      NTTP->getType().getNonReferenceType()->isObjectType())
+    return CC_ApplyConst;
 
   return CC_None;
 }
