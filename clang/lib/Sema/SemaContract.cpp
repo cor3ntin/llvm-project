@@ -136,7 +136,9 @@ public:
     // FIXME: Is this still necessary?
 
     QualType Result = SemaRef.Context.getAutoType(
-        Replacement, TL.getTypePtr()->getKeyword(), Replacement.isNull(), false,
+        Replacement.isNull() ? DeducedKind::DeducedAsDependent
+                             : DeducedKind::Deduced,
+        Replacement, TL.getTypePtr()->getKeyword(),
         TL.getTypePtr()->getTypeConstraintConcept(),
         TL.getTypePtr()->getTypeConstraintArguments());
     auto NewTL = TLB.push<AutoTypeLoc>(Result);
@@ -229,8 +231,8 @@ ResultNameDecl *Sema::ActOnResultNameDeclarator(ContractKind CK, Scope *S,
   bool HasInventedPlaceholderTypes =
       RetType->isUndeducedAutoType() && !RetType->isDependentType();
   if (HasInventedPlaceholderTypes)
-    RetType = Context.getAutoType(QualType(), AutoTypeKeyword::Auto, true,
-                                  false, nullptr, {});
+    RetType = Context.getAutoType(DeducedKind::DeducedAsDependent, QualType(),
+                                  AutoTypeKeyword::Auto, nullptr, {});
   auto *New = ResultNameDecl::Create(Context, CurContext, IDLoc, II, RetType,
                                      nullptr, HasInventedPlaceholderTypes, FunctionScopeDepth);
 

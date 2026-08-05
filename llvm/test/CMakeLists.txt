@@ -31,6 +31,7 @@ llvm_canonicalize_cmake_booleans(
   LLVM_APPEND_VC_REV
   LLVM_HAS_LOGF128
   LLVM_ENABLE_ONDISK_CAS
+  LLVM_HAVE_OPENCSD
   )
 
 configure_lit_site_cfg(
@@ -66,13 +67,12 @@ set(LLVM_TEST_DEPENDS_COMMON
   count
   llvm-config
   not
+  split-file
   )
 
 set(LLVM_TEST_DEPENDS
   ${LLVM_TEST_DEPENDS_COMMON}
-  BugpointPasses
   LLVMWindowsDriver
-  bugpoint
   llc
   lli
   lli-child-target
@@ -104,6 +104,7 @@ set(LLVM_TEST_DEPENDS
   llvm-dwp
   llvm-exegesis
   llvm-extract
+  llvm-extract-bundle-entry
   llvm-gsymutil
   llvm-ir2vec
   llvm-isel-fuzzer
@@ -139,7 +140,6 @@ set(LLVM_TEST_DEPENDS
   llvm-reduce
   llvm-remarkutil
   llvm-rtdyld
-  llvm-sim
   llvm-size
   llvm-split
   llvm-stress
@@ -156,7 +156,6 @@ set(LLVM_TEST_DEPENDS
   opt
   sancov
   sanstats
-  split-file
   verify-uselistorder
   yaml-bench
   yaml2obj
@@ -185,6 +184,11 @@ endif()
 
 if (TARGET llvm-mt)
   list(APPEND LLVM_TEST_DEPENDS llvm-mt)
+endif ()
+
+# Only built when the AMDGPU target is enabled.
+if (TARGET llvm-calc-occupancy)
+  list(APPEND LLVM_TEST_DEPENDS llvm-calc-occupancy)
 endif ()
 
 if(LLVM_INCLUDE_EXAMPLES)
@@ -249,6 +253,10 @@ if (LLVM_INCLUDE_SPIRV_TOOLS_TESTS)
   list(APPEND LLVM_TEST_DEPENDS spirv-val)
   list(APPEND LLVM_TEST_DEPENDS spirv-as)
   list(APPEND LLVM_TEST_DEPENDS spirv-link)
+endif()
+
+if(LLVM_IR2VEC_TEST_PYTHON_BINDINGS)
+  list(APPEND LLVM_TEST_DEPENDS ir2vec)
 endif()
 
 add_custom_target(llvm-test-depends DEPENDS ${LLVM_TEST_DEPENDS} UnitTests)

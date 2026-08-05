@@ -203,7 +203,7 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
          "Missing return type resolver for function contract sequence");
   assert((ScopeOffset == CSO_FunctionContext || CK != ContractKind::Assert) &&
          "Incorrect scope offset for contract assert");
-  auto SetInvalidOnExit = llvm::make_scope_exit([&]() { IsInvalid = true; });
+  auto SetInvalidOnExit = llvm::scope_exit([&]() { IsInvalid = true; });
 
   const char *CKStr = getContractKeywordStr(CK);
 
