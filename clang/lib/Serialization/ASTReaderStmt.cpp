@@ -650,6 +650,12 @@ void ASTStmtReader::VisitDeclRefExpr(DeclRefExpr *E) {
   E->DeclRefExprBits.HasTemplateKWAndArgsInfo =
       CurrentUnpackingBits->getNextBit();
   E->DeclRefExprBits.CapturedByCopyInLambdaWithExplicitObjectParameter = false;
+  // DeclRefExpr::CreateEmpty leaves the bitfield uninitialized, so every bit the
+  // record does not carry has to be reset here or it reads back as garbage.
+  // These two are not serialized, so a contract-constified reference loses that
+  // marking across a PCH or module boundary.
+  E->DeclRefExprBits.IsConstified = false;
+  E->DeclRefExprBits.IsInContractContext = false;
   unsigned NumTemplateArgs = 0;
   if (E->hasTemplateKWAndArgsInfo())
     NumTemplateArgs = Record.readInt();
