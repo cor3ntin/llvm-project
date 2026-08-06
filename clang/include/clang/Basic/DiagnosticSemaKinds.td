@@ -13142,6 +13142,9 @@ def err_contract_control_incomplete : Error<
   "assertion-control object has incomplete type %0">;
 def err_contract_control_missing_member : Error<
   "assertion-control object type %0 is missing required member %1">;
+def err_contract_control_no_static_info : Error<
+  "cannot find 'std::__create_assertion_static_info'; include <contracts> to "
+  "name an assertion-control object">;
 
 // Diagnose clang::contract_group attribute strings
 def err_contract_group_attribute_invalid_group : Error<

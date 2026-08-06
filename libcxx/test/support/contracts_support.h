@@ -68,6 +68,11 @@ constexpr std::string_view enum_to_string(Semantic S) {
     return "observe";
   case enforce:
     return "enforce";
+  case Semantic::quick_enforce:
+    return "quick_enforce";
+  // 'ignore' shares its value with '__unknown'. A violation is never reported
+  // with the ignore semantic - an ignored assertion is not evaluated - so a zero
+  // here means the semantic was never set.
   case Semantic::__unknown:
     return "<unknown>";
   }
@@ -576,6 +581,15 @@ ValueT& get_or_insert(std::string Key, Args&& ...args) {
 template <TStr Str, class ValueT = int>
 auto& KV = get_or_insert<ValueT>(Str.str());
 
+// The same counter reached through a pointer, for use inside a contract
+// predicate. A predicate cannot mutate KV directly: an id-expression naming a
+// variable of reference type declared outside the assertion has type const T
+// there ([expr.prim.id.unqual]/7), so `++KV<"x">` is ill-formed. Going through a
+// pointer is well-formed - it is the pointer that is const, not the pointee -
+// which is the `pre(++(*p))` case in that subclause's example.
+template <TStr Str, class ValueT = int>
+auto* const KVP = &get_or_insert<ValueT>(Str.str());
+
 struct NamedCounter {
   constexpr NamedCounter(const char* name, int* counter, SLOC(loc)) : Name(get_global_string(name ? name : "")), Counter(counter), LastLoc(loc) {}
   constexpr NamedCounter(const char* name, SLOC(loc)) :  Name(get_global_string( name ? name : "")),
@@ -696,8 +710,12 @@ inline bool count(bool value) {
 
 
 
+// The tuple is only read. It has to bind to a const reference because callers
+// pass counter groups from inside contract predicates, where naming a variable
+// declared outside the assertion yields a const lvalue
+// ([expr.prim.id.unqual]/7).
 template <class... Args, class T>
-inline bool eq(std::tuple<Args...>& list, std::initializer_list<T> il) {
+inline bool eq(const std::tuple<Args...>& list, std::initializer_list<T> il) {
   auto initlist_to_tuple = [](auto il) {
     constexpr int N = sizeof...(Args);
     assert(il.size() == N);

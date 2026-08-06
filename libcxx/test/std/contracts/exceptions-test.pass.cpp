@@ -1,5 +1,14 @@
 // ADDITIONAL_COMPILE_FLAGS: -std=c++26 -Xclang -fcontracts -fcontract-evaluation-semantic=enforce -fcontract-group-evaluation-semantic=observe=observe,enforce=enforce
 
+// This test expects an exception thrown from a predicate to be turned into a
+// contract violation, with detection_mode::evaluation_exception and
+// std::current_exception() set while the handler runs. Under D4324 a predicate's
+// exception propagates instead, and deciding whether to catch it becomes the
+// control object's business: its operator() is handed an assertion_context and
+// calls check() itself, so it can wrap that call in a try block. Until that
+// inversion of control is implemented, the throw here escapes and terminates.
+// XFAIL: *
+
 
 #include <contracts>
 #include "nttp_string.h"

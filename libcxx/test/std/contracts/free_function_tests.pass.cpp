@@ -2,15 +2,14 @@
 
 #include "nttp_string.h"
 #include "contracts_support.h"
-#include "test_register.h"
 #include "contracts_handler.h"
 
 #include "check_assertion.h"
 using namespace std::contracts;
 
-void my_handler(const contract_violation& violation) {
-
-}
+// test_register.h is deliberately not included: it defines its own main() for
+// REGISTER_TEST-based tests, and this one drives itself.
+void my_handler(const contract_violation&) {}
 
 int main() {
   ContractHandlerInstaller install_handler_guard(my_handler) ;

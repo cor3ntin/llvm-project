@@ -7193,7 +7193,14 @@ public:
   /// Whether predicates governed by the given assertion-control object are
   /// constified. A null control object (none named) follows the build's legacy
   /// default; otherwise the object type's `constify` member decides.
-  bool shouldConstifyContractPredicate(Expr *ControlExpr);
+  bool shouldConstifyContractPredicate(Expr *ControlExpr, ContractKind CK);
+
+  /// Set once we have reported that <contracts> was not included. Every
+  /// contract naming a control object looks up
+  /// std::__create_assertion_static_info, and repeating the same complaint for
+  /// each of them - twice each, once for constify and once for the dispatch -
+  /// buries the one that matters.
+  bool DiagnosedMissingAssertionStaticInfo = false;
 
   const ContractScopeRecord *getContractScopeForContext(const DeclContext *DC) const;
 

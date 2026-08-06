@@ -8,8 +8,8 @@
 
 namespace fn_template_test {
 template <class T>
-void f(T v) pre(++KV<"Pre">&& v != 1024) post(++KV<"Post">) pre(++KV<std::is_same_v<T, int> ? "Int" : "NotInt">) {
-  contract_assert(++KV<"CS">);
+void f(T v) pre(++*KVP<"Pre">&& v != 1024) post(++*KVP<"Post">) pre(++*KVP<std::is_same_v<T, int> ? "Int" : "NotInt">) {
+  contract_assert(++*KVP<"CS">);
 }
 
 REGISTER_TEST(fn_template_test) {
@@ -28,36 +28,36 @@ REGISTER_TEST(fn_template_test) {
 namespace basic_member_test {
 
 struct S {
-  S() pre(++KV<"Pre">) post(++KV<"Post">) { contract_assert(++KV<"CS">); }
+  S() pre(++*KVP<"Pre">) post(++*KVP<"Post">) { contract_assert(++*KVP<"CS">); }
 
-  void f() pre(++KV<"Pre">) post(++KV<"Post">) { contract_assert(++KV<"CS">); }
+  void f() pre(++*KVP<"Pre">) post(++*KVP<"Post">) { contract_assert(++*KVP<"CS">); }
 
   template <class T>
-  T tf(T v) pre(++KV<"Pre">) post(++KV<"Post">) pre(++KV<std::is_same_v<T, int> ? "Int" : "NotInt">) {
-    contract_assert(++KV<"CS">);
+  T tf(T v) pre(++*KVP<"Pre">) post(++*KVP<"Post">) pre(++*KVP<std::is_same_v<T, int> ? "Int" : "NotInt">) {
+    contract_assert(++*KVP<"CS">);
     return v;
   }
 
-  ~S() pre(++KV<"Pre">) post(++KV<"Post">) { contract_assert(++KV<"CS">); }
+  ~S() pre(++*KVP<"Pre">) post(++*KVP<"Post">) { contract_assert(++*KVP<"CS">); }
 };
 
 template <class T>
 struct C {
-  C() pre(++KV<"Pre">) post(++KV<"Post">) { contract_assert(++KV<"CS">); }
+  C() pre(++*KVP<"Pre">) post(++*KVP<"Post">) { contract_assert(++*KVP<"CS">); }
 
-  void f() pre(++KV<"Pre">) post(++KV<"Post">) pre(++KV<std::is_same_v<T, int> ? "Int" : "NotInt">) {
-    contract_assert(++KV<"CS">);
+  void f() pre(++*KVP<"Pre">) post(++*KVP<"Post">) pre(++*KVP<std::is_same_v<T, int> ? "Int" : "NotInt">) {
+    contract_assert(++*KVP<"CS">);
   }
 
   template <class U>
-  U tf(U v) pre(++KV<"Pre">) post(++KV<"Post">) pre(++KV<std::is_same_v<T, int> ? "Int" : "NotInt">)
-      pre(++KV<std::is_same_v<U, int> ? "Int" : "NotInt">) {
-    contract_assert(++KV<"CS">);
+  U tf(U v) pre(++*KVP<"Pre">) post(++*KVP<"Post">) pre(++*KVP<std::is_same_v<T, int> ? "Int" : "NotInt">)
+      pre(++*KVP<std::is_same_v<U, int> ? "Int" : "NotInt">) {
+    contract_assert(++*KVP<"CS">);
     return v;
   }
 
-  ~C() pre(++KV<"Pre">) post(++KV<"Post">) pre(++KV<std::is_same_v<T, int> ? "Int" : "NotInt">) {
-    contract_assert(++KV<"CS">);
+  ~C() pre(++*KVP<"Pre">) post(++*KVP<"Post">) pre(++*KVP<std::is_same_v<T, int> ? "Int" : "NotInt">) {
+    contract_assert(++*KVP<"CS">);
   }
 };
 
@@ -179,13 +179,16 @@ REGISTER_TEST(lifetime_test) {
 
 namespace order_test {
 auto& OrdC = KV<"OrderCounter">;
+// Predicates bump the counter through a pointer; naming OrdC there would make it
+// const. See the comment on KVP in contracts_support.h.
+auto* const OrdCP = &KV<"OrderCounter">;
 
-void foo() pre(OrdC++ == 0) pre(OrdC++ == 1) post(OrdC++ == 4) pre(OrdC++ == 2) post(OrdC++ == 5) {
-  contract_assert(OrdC++ == 3);
+void foo() pre((*OrdCP)++ == 0) pre((*OrdCP)++ == 1) post((*OrdCP)++ == 4) pre((*OrdCP)++ == 2) post((*OrdCP)++ == 5) {
+  contract_assert((*OrdCP)++ == 3);
 }
 template <class T>
-void ft(T) pre(OrdC++ == 0) pre(OrdC++ == 1) post(OrdC++ == 4) pre(OrdC++ == 2) post(OrdC++ == 5) {
-  contract_assert(OrdC++ == 3);
+void ft(T) pre((*OrdCP)++ == 0) pre((*OrdCP)++ == 1) post((*OrdCP)++ == 4) pre((*OrdCP)++ == 2) post((*OrdCP)++ == 5) {
+  contract_assert((*OrdCP)++ == 3);
 }
 
 REGISTER_TEST(order_test) {

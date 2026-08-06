@@ -18,11 +18,11 @@ using namespace std::contracts;
 
 struct probe {
   const char *message = nullptr;
-  static constexpr bool is_ignored(evaluation_config) { return false; }
-  static constexpr bool constify = false;
+  static consteval bool is_ignored(assertion_static_info) { return false; }
+  static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const {
+                                evaluation_semantic) const {
     return violation_response::proceed;
   }
 };
@@ -52,11 +52,11 @@ template int dep<review_v>(int);
 // value-dependent until instantiation.
 struct sized {
   unsigned width;
-  static constexpr bool is_ignored(evaluation_config) { return false; }
-  static constexpr bool constify = false;
+  static consteval bool is_ignored(assertion_static_info) { return false; }
+  static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const {
+                                evaluation_semantic) const {
     return violation_response::proceed;
   }
 };

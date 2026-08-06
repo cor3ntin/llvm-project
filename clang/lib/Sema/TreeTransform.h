@@ -9106,7 +9106,8 @@ StmtResult TreeTransform<Derived>::TransformContractStmt(ContractStmt *S) {
       return StmtError();
     ControlExpr = NewControlExpr.get();
   }
-  bool Constify = getSema().shouldConstifyContractPredicate(ControlExpr);
+  bool Constify = getSema().shouldConstifyContractPredicate(
+      ControlExpr, S->getContractKind());
 
   Sema::ContractScopeRAII ContractScope(getSema(), S->getContractKind(),
                                         CSO_FunctionContext, S->getKeywordLoc(),

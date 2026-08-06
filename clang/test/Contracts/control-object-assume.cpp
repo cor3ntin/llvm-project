@@ -12,11 +12,11 @@ using namespace std::contracts;
 namespace {
 // Always ignored, and assumable: the predicate becomes an optimizer assumption.
 struct assume_ignored {
-  static constexpr bool is_ignored(evaluation_config) { return true; }
-  static constexpr bool constify = false;
+  static consteval bool is_ignored(assertion_static_info) { return true; }
+  static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = true;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const {
+                                evaluation_semantic) const {
     return violation_response::terminate;
   }
 };

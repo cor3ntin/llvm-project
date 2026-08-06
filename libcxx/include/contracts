@@ -16,10 +16,91 @@ namespace std::contracts {
 
 enum class assertion_kind : unsigned char { __unknown = 0, pre = 1, post = 2, assert = 3, manual = 4, cassert = 5 };
 using _AssertKind = assertion_kind;
-enum class evaluation_semantic : unsigned char { __unknown = 0, enforce = 1, observe = 2 };
+// The values match clang's ContractEvaluationSemantic one for one, so the
+// compiler can pass a semantic through without a translation table. `ignore`
+// deliberately shares its value with `__unknown`: the enumerator was missing
+// when only `enforce` and `observe` could reach the violation handler, and the
+// runtime ABI already fixes those two values.
+enum class evaluation_semantic : unsigned char {
+  __unknown     = 0,
+  ignore        = 0,
+  enforce       = 1,
+  observe       = 2,
+  quick_enforce = 3
+};
 using _EvaluationSemantic = evaluation_semantic;
+
+// D4324: which side of a call a contract's check happens on. A contract_assert
+// is a statement inside a function body rather than something on a boundary a
+// caller can see, so it has no side.
+enum class assertion_check_side : unsigned char { not_applicable = 0, definition = 1, client = 2 };
+
+class assertion_static_info;
 enum class detection_mode : unsigned char { unspecified = 0, predicate_false = 1, evaluation_exception = 2, };
 using _DetectionMode = detection_mode;
+
+} // namespace std::contracts
+
+namespace std {
+
+// D4324: the compiler synthesizes a call to this when it needs to hand a
+// contract's static properties to a contract control object's is_ignored() or
+// constify(). It is reserved for that purpose and is not meant to be called
+// directly; naming it here is what lets assertion_static_info keep its members
+// private. If a translation unit names a control object without including
+// <contracts>, the lookup fails and the compiler says so.
+consteval contracts::assertion_static_info
+__create_assertion_static_info(contracts::evaluation_semantic __semantic,
+                               contracts::assertion_check_side __side,
+                               bool __is_virtual,
+                               bool __overrides_virtual) noexcept;
+
+} // namespace std
+
+namespace std::contracts {
+
+// D4324: the compile-time-known properties of where a contract occurs,
+// independent of any one runtime evaluation of it. is_virtual() and
+// overrides_virtual() are groundwork for virtual-function semantics; the
+// compiler fills both with false for now whatever the enclosing function is.
+class assertion_static_info {
+  evaluation_semantic __semantic_    = evaluation_semantic::__unknown;
+  assertion_check_side __side_       = assertion_check_side::not_applicable;
+  bool __is_virtual_                 = false;
+  bool __overrides_virtual_          = false;
+
+  friend consteval assertion_static_info std::__create_assertion_static_info(
+      evaluation_semantic, assertion_check_side, bool, bool) noexcept;
+
+public:
+  constexpr assertion_static_info() noexcept = default;
+
+  constexpr evaluation_semantic semantic() const noexcept { return __semantic_; }
+  constexpr assertion_check_side side() const noexcept { return __side_; }
+  constexpr bool is_virtual() const noexcept { return __is_virtual_; }
+  constexpr bool overrides_virtual() const noexcept { return __overrides_virtual_; }
+};
+
+} // namespace std::contracts
+
+namespace std {
+
+consteval contracts::assertion_static_info
+__create_assertion_static_info(contracts::evaluation_semantic __semantic,
+                               contracts::assertion_check_side __side,
+                               bool __is_virtual,
+                               bool __overrides_virtual) noexcept {
+  contracts::assertion_static_info __info;
+  __info.__semantic_          = __semantic;
+  __info.__side_              = __side;
+  __info.__is_virtual_        = __is_virtual;
+  __info.__overrides_virtual_ = __overrides_virtual;
+  return __info;
+}
+
+} // namespace std
+
+namespace std::contracts {
 
 struct _ContractViolationImpl;
 

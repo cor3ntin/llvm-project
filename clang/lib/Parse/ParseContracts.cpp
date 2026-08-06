@@ -339,7 +339,7 @@ StmtResult Parser::ParseFunctionContractSpecifierImpl(
       IsInvalid = true;
   }
 
-  bool Constify = Actions.shouldConstifyContractPredicate(ControlExpr);
+  bool Constify = Actions.shouldConstifyContractPredicate(ControlExpr, CK);
   ExprResult Cond = [&]() {
     Sema::ContractScopeRAII ContractScope(Actions, CK, ScopeOffset, KeywordLoc,
                                           Constify);

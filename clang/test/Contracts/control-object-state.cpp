@@ -18,11 +18,11 @@ using namespace std::contracts;
 
 struct labeled {
   const char *label;
-  static constexpr bool is_ignored(evaluation_config) { return false; }
-  static constexpr bool constify = false;
+  static consteval bool is_ignored(assertion_static_info) { return false; }
+  static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const {
+                                evaluation_semantic) const {
     return violation_response::proceed;
   }
 };

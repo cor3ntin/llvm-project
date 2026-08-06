@@ -224,8 +224,13 @@ bool Sema::CheckContractControlObject(Expr *ControlExpr, SourceLocation Loc) {
   const CXXRecordDecl *RD = getControlObjectRecord(ControlExpr);
   assert(RD && "complete class type without a definition");
 
+  // Look through base classes: a control object is free to inherit the
+  // interface rather than declare it directly, and the dispatch that later
+  // calls these members looks them up the same way.
   auto HasMember = [&](DeclarationName Name) {
-    return !RD->lookup(Name).empty();
+    LookupResult R(*this, Name, Loc, LookupOrdinaryName);
+    LookupQualifiedName(R, const_cast<CXXRecordDecl *>(RD));
+    return !R.empty();
   };
 
   bool Ok = true;
@@ -244,35 +249,88 @@ bool Sema::CheckContractControlObject(Expr *ControlExpr, SourceLocation Loc) {
 
 namespace {
 
-// D4324: map the build-selected evaluation semantic to the matching
-// std::contracts::evaluation_config enumerator value. The two enumerations use
-// different orderings, so translate explicitly.
-uint64_t mapSemanticToConfigValue(ContractEvaluationSemantic Sem) {
-  switch (Sem) {
-  case ContractEvaluationSemantic::Ignore:
-    return 0; // evaluation_config::ignore
-  case ContractEvaluationSemantic::Observe:
-    return 1; // evaluation_config::observe
-  case ContractEvaluationSemantic::Enforce:
-    return 2; // evaluation_config::enforce
-  case ContractEvaluationSemantic::QuickEnforce:
-    return 3; // evaluation_config::quick_enforce
-  }
-  llvm_unreachable("unknown contract evaluation semantic");
-}
-
-// D4324: build a prvalue of the control object's evaluation_config enum type
-// holding the value that corresponds to the build-selected semantic.
-ExprResult buildConfigArg(Sema &S, QualType ConfigTy, uint64_t Value,
-                          SourceLocation Loc) {
-  const EnumType *ET = ConfigTy->getAs<EnumType>();
+// D4324: build a prvalue of the given enumeration type holding Value. The
+// enumeration types the control-object interface uses are read off the library's
+// own declarations rather than looked up by name, so this searches for the
+// enumerator by value.
+ExprResult buildEnumeratorArg(Sema &S, QualType EnumTy, uint64_t Value,
+                              SourceLocation Loc) {
+  const EnumType *ET = EnumTy->getAs<EnumType>();
   if (!ET)
     return ExprError();
   for (EnumConstantDecl *ECD : ET->getDecl()->enumerators()) {
     if (ECD->getInitVal() == Value)
-      return S.BuildDeclRefExpr(ECD, ConfigTy, VK_PRValue, Loc);
+      return S.BuildDeclRefExpr(ECD, EnumTy, VK_PRValue, Loc);
   }
   return ExprError();
+}
+
+// D4324: which side of a call this contract's check happens on. A
+// contract_assert is a statement in a function body rather than something on a
+// boundary a caller can see, so it has no side; pre/post are currently always
+// checked on the definition side.
+uint64_t mapContractKindToCheckSide(ContractKind CK) {
+  switch (CK) {
+  case ContractKind::Assert:
+    return 0; // assertion_check_side::not_applicable
+  case ContractKind::Pre:
+  case ContractKind::Post:
+    return 1; // assertion_check_side::definition
+  }
+  llvm_unreachable("unknown contract kind");
+}
+
+// D4324: build the consteval call to std::__create_assertion_static_info that
+// describes this contract, for handing to the control object's is_ignored() and
+// constify(). Returns ExprError after diagnosing when <contracts> has not been
+// included, since that is where the function is declared.
+//
+// The semantic and the check side come from the contract; is_virtual and
+// overrides_virtual are always false for now, matching the reference
+// implementation - they are groundwork for virtual-function semantics.
+ExprResult buildAssertionStaticInfo(Sema &S, ContractKind CK,
+                                    ContractEvaluationSemantic Semantic,
+                                    SourceLocation Loc) {
+  NamespaceDecl *Std = S.getStdNamespace();
+  const IdentifierInfo &II =
+      S.Context.Idents.get("__create_assertion_static_info");
+
+  LookupResult R(S, DeclarationName(&II), Loc, Sema::LookupOrdinaryName);
+  if (Std)
+    S.LookupQualifiedName(R, Std);
+  if (!Std || R.empty()) {
+    if (!S.DiagnosedMissingAssertionStaticInfo) {
+      S.DiagnosedMissingAssertionStaticInfo = true;
+      S.Diag(Loc, diag::err_contract_control_no_static_info);
+    }
+    return ExprError();
+  }
+
+  CXXScopeSpec SS;
+  ExprResult Fn = S.BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
+  if (Fn.isInvalid())
+    return ExprError();
+
+  // The two enumeration argument types are read off the function rather than
+  // looked up by name, so the library keeps control of what they are.
+  const auto *FD = R.getAsSingle<FunctionDecl>();
+  if (!FD || FD->getNumParams() != 4)
+    return ExprError();
+
+  ExprResult SemanticArg = buildEnumeratorArg(
+      S, FD->getParamDecl(0)->getType(), static_cast<uint64_t>(Semantic), Loc);
+  if (SemanticArg.isInvalid())
+    return ExprError();
+
+  ExprResult SideArg = buildEnumeratorArg(S, FD->getParamDecl(1)->getType(),
+                                      mapContractKindToCheckSide(CK), Loc);
+  if (SideArg.isInvalid())
+    return ExprError();
+
+  Expr *Args[] = {SemanticArg.get(), SideArg.get(),
+                  S.ActOnCXXBoolLiteral(Loc, tok::kw_false).get(),
+                  S.ActOnCXXBoolLiteral(Loc, tok::kw_false).get()};
+  return S.BuildCallExpr(nullptr, Fn.get(), Loc, Args, Loc);
 }
 
 // D4324: synthesize the runtime dispatch for a contract that names a
@@ -303,19 +361,22 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
     return false;
 
   QualType SourceLocTy = CallOp->getParamDecl(1)->getType();
-  QualType ConfigTy = CallOp->getParamDecl(2)->getType();
+  QualType SemanticTy = CallOp->getParamDecl(2)->getType();
 
-  const uint64_t CfgVal = mapSemanticToConfigValue(CS->getSemantic(Ctx));
+  // ContractEvaluationSemantic and std::contracts::evaluation_semantic share
+  // their values, so the semantic needs no translation.
+  const uint64_t SemanticVal = static_cast<uint64_t>(CS->getSemantic(Ctx));
 
   // The synthesized call is real, runtime-evaluated code: build it in a
   // potentially-evaluated context so operator() is marked used and emitted.
   EnterExpressionEvaluationContext Eval(
       S, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
 
-  // Step 1 datum: const-evaluate T::is_ignored(cfg).
+  // Step 1 datum: const-evaluate T::is_ignored(static_info).
   {
-    ExprResult Cfg = buildConfigArg(S, ConfigTy, CfgVal, Loc);
-    if (Cfg.isInvalid())
+    ExprResult Info = buildAssertionStaticInfo(S, CS->getContractKind(),
+                                               CS->getSemantic(Ctx), Loc);
+    if (Info.isInvalid())
       return false;
     LookupResult R(S, DeclarationName(&Ctx.Idents.get("is_ignored")), Loc,
                    Sema::LookupOrdinaryName);
@@ -326,7 +387,7 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
     ExprResult Fn = S.BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
     if (Fn.isInvalid())
       return false;
-    Expr *IgnoredArgs[] = {Cfg.get()};
+    Expr *IgnoredArgs[] = {Info.get()};
     ExprResult Call = S.BuildCallExpr(nullptr, Fn.get(), Loc, IgnoredArgs, Loc);
     if (Call.isInvalid())
       return false;
@@ -373,8 +434,9 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
       return false;
   }
 
-  ExprResult Cfg = buildConfigArg(S, ConfigTy, CfgVal, Loc);
-  if (Cfg.isInvalid())
+  ExprResult SemanticArg =
+      buildEnumeratorArg(S, SemanticTy, SemanticVal, Loc);
+  if (SemanticArg.isInvalid())
     return false;
 
   // The callee is the control object as written. That node is also the
@@ -382,7 +444,7 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
   // safe because instantiation re-synthesizes the call from the transformed
   // object rather than transforming it twice, and code generation only ever
   // emits the call.
-  Expr *CallArgs[] = {Comment, LocArg.get(), Cfg.get()};
+  Expr *CallArgs[] = {Comment, LocArg.get(), SemanticArg.get()};
   ExprResult Violation =
       S.BuildCallToObjectOfClassType(nullptr, ControlExpr, Loc, CallArgs, Loc);
   if (Violation.isInvalid())
@@ -1981,13 +2043,19 @@ Sema::ContractScopeRAII::~ContractScopeRAII() {
   S.PopContractScope();
 }
 
-bool Sema::shouldConstifyContractPredicate(Expr *ControlExpr) {
-  // No control object named: keep the build's legacy behavior. A dependent
-  // control object is resolved once instantiated; until then fall back to the
-  // default.
-  if (!ControlExpr || ControlExpr->isTypeDependent() ||
-      ControlExpr->isValueDependent())
+bool Sema::shouldConstifyContractPredicate(Expr *ControlExpr, ContractKind CK) {
+  // No control object named: keep the build's legacy behavior.
+  if (!ControlExpr)
     return LangOpts.ContractConstification;
+
+  // A dependent control object has not told us its policy yet, so leave the
+  // template pattern unconstified. TransformContractStmt asks again once the
+  // object is known and constifies the instantiated predicate then. Guessing
+  // "constify" here instead would reject a mutating predicate outright, before
+  // knowing whether any instantiation even asks for constification, and no
+  // instantiation could undo it - constification only ever adds const.
+  if (ControlExpr->isTypeDependent() || ControlExpr->isValueDependent())
+    return false;
 
   // This runs before CheckContractControlObject, so the object may yet turn out
   // to be ill-formed; fall back rather than assuming a usable class.
@@ -1995,34 +2063,57 @@ bool Sema::shouldConstifyContractPredicate(Expr *ControlExpr) {
   if (!RD)
     return LangOpts.ContractConstification;
 
-  // Read the control object's static `constify` member. A missing or
-  // unevaluatable value defaults to no constification, matching D4324's
-  // default_control.
-  return readControlBoolMember(*this, RD, "constify",
-                               ControlExpr->getExprLoc())
-      .value_or(false);
+  // Const-evaluate the control object's `constify(static_info)`. This runs
+  // while the contract is still being parsed - the predicate has not been
+  // parsed yet, because whether it is constified is what we are deciding - so
+  // there is no ContractStmt to read a per-contract semantic off yet and the
+  // build-selected default is used.
+  SourceLocation Loc = ControlExpr->getExprLoc();
+  ExprResult Info = buildAssertionStaticInfo(
+      *this, CK, LangOpts.ContractOpts.DefaultSemantic, Loc);
+  if (Info.isInvalid())
+    return LangOpts.ContractConstification;
+
+  LookupResult R(*this, DeclarationName(&Context.Idents.get("constify")), Loc,
+                 LookupOrdinaryName);
+  LookupQualifiedName(R, const_cast<CXXRecordDecl *>(RD));
+  if (!R.isSingleResult())
+    return false;
+
+  CXXScopeSpec SS;
+  ExprResult Fn = BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
+  if (Fn.isInvalid())
+    return false;
+
+  Expr *Args[] = {Info.get()};
+  ExprResult Call = BuildCallExpr(nullptr, Fn.get(), Loc, Args, Loc);
+  bool Constify = false;
+  if (Call.isInvalid() ||
+      !Call.get()->EvaluateAsBooleanCondition(Constify, Context))
+    return false;
+  return Constify;
 }
 
 void Sema::PushContractScope(ContractKind Kind, ContractScopeOffset ScopeOffset,
                              SourceLocation Loc, bool Constify) {
 //  assert(!FunctionScopes.empty());
 
-  ContractScopeRecord Record{
-         .Index = static_cast<unsigned>(ContractScopeStack.size()),
-         .Kind = Kind,
-         .ScopeOffset = ScopeOffset,
-         .KeywordLoc = Loc,
-         .ContextAtPush = CurContext,
-         .PreviousCXXThisType = CXXThisTypeOverride,
-         .FunctionIndex = static_cast<unsigned>(
-             FunctionScopes.empty() ? 0ul : FunctionScopes.size() - 1),
-         .StartFunctionIndex = FunctionScopesStart,
-         .FunctionScopeAtPush = getCurFunction(),
-         .AddedConstToCXXThis = false,
-         .WasInContractContext = ExprEvalContexts.back().InContractAssertion,
-         .HadNoFunctionScope = FunctionScopes.empty(),
-         .FunctionScopeStartAtPush = FunctionScopesStart,
-         .Constify = Constify};
+  ContractScopeRecord Record{};
+  Record.Index = static_cast<unsigned>(ContractScopeStack.size());
+  Record.Kind = Kind;
+  Record.ScopeOffset = ScopeOffset;
+  Record.KeywordLoc = Loc;
+  Record.ContextAtPush = CurContext;
+  Record.PreviousCXXThisType = CXXThisTypeOverride;
+  Record.FunctionIndex = static_cast<unsigned>(
+      FunctionScopes.empty() ? 0ul : FunctionScopes.size() - 1);
+  Record.StartFunctionIndex = FunctionScopesStart;
+  Record.FunctionScopeAtPush = getCurFunction();
+  Record.AddedConstToCXXThis = false;
+  Record.WasInContractContext = ExprEvalContexts.back().InContractAssertion;
+  Record.HadNoFunctionScope = FunctionScopes.empty();
+  Record.FunctionScopeStartAtPush = FunctionScopesStart;
+  Record.Constify = Constify;
 
     // Setup the constification context when building declref expressions.
     ExprEvalContexts.back().InContractAssertion = true;

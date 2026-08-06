@@ -4361,6 +4361,10 @@ void CodeGenFunction::EmitFunctionEpilog(
 
   // Functions with no result always return void.
   if (!ReturnValue.isValid()) {
+    // This path returns before reaching the postcondition emission below, so
+    // postconditions on a function with no result have to be emitted here or
+    // they are silently dropped.
+    EmitPostContracts(nullptr);
     auto *I = Builder.CreateRetVoid();
     if (RetKeyInstructionsSourceAtom)
       addInstToSpecificSourceAtom(I, nullptr, RetKeyInstructionsSourceAtom);

@@ -5,13 +5,13 @@
 // three-step algorithm driven by that object, and never the built-in
 // __handle_contract_violation dispatch (enforced by --implicit-check-not above):
 //
-//   1. if T::is_ignored(cfg): stop;
+//   1. if T::is_ignored(info): stop;
 //   2. evaluate the predicate;
-//   3. if false, r = obj(comment, loc, cfg); if r == terminate, trap.
+//   3. if false, r = obj(comment, loc, semantic); if r == terminate, trap.
 //
-// The default build semantic is 'enforce', which maps to evaluation_config
-// value 2, so is_ignored is false for all three worked control objects and the
-// predicate is always checked.
+// The default build semantic is 'enforce', which is evaluation_semantic value 1,
+// so is_ignored is false for all three worked control objects and the predicate
+// is always checked.
 
 #include "Inputs/assertion_control.h"
 using namespace std::contracts;
@@ -22,7 +22,7 @@ using namespace std::contracts;
 // CHECK: %[[PRED:.*]] = icmp sgt i32 {{.*}}, 0
 // CHECK: br i1 %[[PRED]], label %contract.end, label %contract.violation
 // CHECK: contract.violation:
-// CHECK: %[[R:.*]] = call noundef i32 @{{.*}}6review{{.*}}, i32 noundef 2)
+// CHECK: %[[R:.*]] = call noundef i32 @{{.*}}6review{{.*}}, i8 noundef zeroext 1)
 // CHECK: %[[T:.*]] = icmp eq i32 %[[R]], 1
 // CHECK: br i1 %[[T]], label %contract.trap, label %contract.end
 // CHECK: contract.trap:
@@ -33,14 +33,14 @@ int f_review(int x) pre<review_v>(x > 0) { return x; }
 // mandatory terminates: same shape, calling the mandatory control operator.
 // CHECK-LABEL: define {{.*}} @_Z11f_mandatoryi(
 // CHECK: br i1 {{.*}}, label %contract.end, label %contract.violation
-// CHECK: %[[R2:.*]] = call noundef i32 @{{.*}}9mandatory{{.*}}, i32 noundef 2)
+// CHECK: %[[R2:.*]] = call noundef i32 @{{.*}}9mandatory{{.*}}, i8 noundef zeroext 1)
 // CHECK: icmp eq i32 %[[R2]], 1
 // CHECK: call void @llvm.trap()
 int f_mandatory(int x) pre<mandatory_v>(x > 0) { return x; }
 
 // contract_assert with an explicit control object flows through the same path.
 // CHECK-LABEL: define {{.*}} @_Z8f_asserti(
-// CHECK: call noundef i32 @{{.*}}15default_control{{.*}}, i32 noundef 2)
+// CHECK: call noundef i32 @{{.*}}15default_control{{.*}}, i8 noundef zeroext 1)
 // CHECK: call void @llvm.trap()
 int f_assert(int x) {
   contract_assert<default_v>(x != 0);
@@ -51,5 +51,5 @@ int f_assert(int x) {
 // from a named object, but lowers to the same three steps.
 // CHECK-LABEL: define {{.*}} @_Z6f_tempi(
 // CHECK: br i1 {{.*}}, label %contract.end, label %contract.violation
-// CHECK: call noundef i32 @{{.*}}6review{{.*}}, i32 noundef 2)
+// CHECK: call noundef i32 @{{.*}}6review{{.*}}, i8 noundef zeroext 1)
 int f_temp(int x) pre<review{}>(x > 0) { return x; }

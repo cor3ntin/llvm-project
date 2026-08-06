@@ -58,20 +58,20 @@ public:
 } // namespace std
 
 namespace std::contracts {
-enum class evaluation_config : unsigned {
+enum class evaluation_semantic : unsigned {
   ignore = 0,
-  observe = 1,
-  enforce = 2,
+  enforce = 1,
+  observe = 2,
   quick_enforce = 3,
 };
 enum class violation_response { proceed, terminate };
 
 struct review {
-  static constexpr bool is_ignored(evaluation_config) { return false; }
-  static constexpr bool constify = false;
+  static consteval bool is_ignored(assertion_static_info) { return false; }
+  static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const {
+                                evaluation_semantic) const {
     return violation_response::proceed;
   }
 };
@@ -81,11 +81,11 @@ inline constexpr review review_v{};
 // rather than being reconstructed from the type alone.
 struct labeled {
   const char *label;
-  static constexpr bool is_ignored(evaluation_config) { return false; }
-  static constexpr bool constify = false;
+  static consteval bool is_ignored(assertion_static_info) { return false; }
+  static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
   violation_response operator()(const char *, std::source_location,
-                                evaluation_config) const {
+                                evaluation_semantic) const {
     return violation_response::proceed;
   }
 };
