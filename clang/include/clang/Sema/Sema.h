@@ -7202,6 +7202,12 @@ public:
   /// buries the one that matters.
   bool DiagnosedMissingAssertionStaticInfo = false;
 
+  /// Numbers the synthesized `bool(void **)` predicate checkers so their names
+  /// do not collide. They have internal linkage, so this only has to be unique
+  /// within a translation unit.
+  unsigned ContractCheckCount = 0;
+  unsigned &getContractCheckCount() { return ContractCheckCount; }
+
   const ContractScopeRecord *getContractScopeForContext(const DeclContext *DC) const;
 
   ArrayRef<ContractScopeRecord> getContractScopes() const;

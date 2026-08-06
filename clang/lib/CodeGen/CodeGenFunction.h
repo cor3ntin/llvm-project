@@ -4591,6 +4591,11 @@ public:
 private:
   void EmitContractStmtAsFullStmt(const ContractStmt &S);
 
+  /// D4324: generate the body of the synthesized `bool(void **)` that
+  /// evaluates a contract's predicate on demand for assertion_context::check().
+  void GenerateContractCheckFunction(const ContractStmt &S, llvm::Function *Fn,
+                                     const FunctionDecl *FD);
+
 public:
   void EmitHandleContractViolationCall(llvm::Constant *Semantic,
                                        llvm::Constant *DetectionMode,

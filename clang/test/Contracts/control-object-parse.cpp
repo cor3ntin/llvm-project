@@ -10,7 +10,7 @@
 #include "Inputs/assertion_control.h"
 using namespace std::contracts;
 
-int f(int x) pre<review_v>(x > 0) post<mandatory_v>(r: r > 0) {
+int f(const int x) pre<review_v>(x > 0) post<mandatory_v>(x > 0) {
   // CHECK: ContractStmt {{.*}} pre {{.*}}control
   // CHECK-NEXT: DeclRefExpr {{.*}} 'review_v'
   // CHECK: ContractStmt {{.*}} post {{.*}}control
@@ -37,9 +37,8 @@ template <class T> struct ctl {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 inline constexpr ctl<int> ctl_int_v{};

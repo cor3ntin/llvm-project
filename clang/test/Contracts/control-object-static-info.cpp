@@ -18,9 +18,9 @@ struct follows_semantic {
   }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 inline constexpr follows_semantic follows_v{};
@@ -33,9 +33,9 @@ struct boundary_only {
   }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 inline constexpr boundary_only boundary_v{};

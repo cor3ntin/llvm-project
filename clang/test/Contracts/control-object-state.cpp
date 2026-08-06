@@ -21,9 +21,8 @@ struct labeled {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 
@@ -33,24 +32,24 @@ inline constexpr labeled second{"second diagnostic"};
 // Each function passes the address of its own control object, so the two calls
 // really do observe two distinct instances.
 // CHECK-LABEL: define {{.*}} @_Z1fi(
-// CHECK: call noundef i32 @{{.*}}7labeled{{.*}}(ptr {{[^,]*}}@first,
+// CHECK: call void @{{.*}}7labeled{{.*}}(ptr {{[^,]*}}@first,
 int f(int x) pre<first>(x > 0) { return x; }
 
 // CHECK-LABEL: define {{.*}} @_Z1gi(
-// CHECK: call noundef i32 @{{.*}}7labeled{{.*}}(ptr {{[^,]*}}@second,
+// CHECK: call void @{{.*}}7labeled{{.*}}(ptr {{[^,]*}}@second,
 int g(int x) pre<second>(x > 0) { return x; }
 
 // A prvalue temporary, built via aggregate paren-init, named directly in
 // pre<...> instead of through a separate named constexpr object.
 // CHECK-LABEL: define {{.*}} @_Z1ji(
-// CHECK: call noundef i32 @{{.*}}7labeled{{.*}}(ptr
+// CHECK: call void @{{.*}}7labeled{{.*}}(ptr
 int j(int x) pre<labeled("temp diagnostic")>(x > 0) { return x; }
 
 // The braced form of the same thing.
 // CHECK-LABEL: define {{.*}} @_Z1ki(
-// CHECK: call noundef i32 @{{.*}}7labeled{{.*}}(ptr
+// CHECK: call void @{{.*}}7labeled{{.*}}(ptr
 int k(int x) pre<labeled{"braced diagnostic"}>(x > 0) { return x; }
 
 // A stateful control object also works on contract_assert and post.
 void h(int x) { contract_assert<second>(x > 0); }
-int p(int x) post<first>(r: r > 0) { return x; }
+int p(const int x) post<first>(x > 0) { return x; }

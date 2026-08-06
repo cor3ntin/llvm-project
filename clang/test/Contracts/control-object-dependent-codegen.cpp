@@ -14,9 +14,9 @@ template <bool Ignore, bool Assume> struct ctl {
   static consteval bool is_ignored(assertion_static_info) { return Ignore; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = Assume;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 
@@ -29,14 +29,15 @@ template <class T> struct Outer {
   };
 };
 
-// sizeof(int) != 1, so is_ignored() is false and the predicate is checked.
+// sizeof(int) != 1, so is_ignored() is false: the object is handed a context.
 // CHECK-LABEL: define {{.*}} @_ZN5OuterIiE6Nested1fEi
-// CHECK: br i1
+// CHECK: call void @{{.*}}__create_assertion_context
+// CHECK: call void @{{.*}}3ctl{{.*}}assertion_context
 int checked(int x) { return Outer<int>::Nested::f(x); }
 
-// sizeof(char) == 1, so is_ignored() is true: no predicate, no handler call.
+// sizeof(char) == 1, so is_ignored() is true: no context, no call at all.
 // CHECK-LABEL: define {{.*}} @_ZN5OuterIcE6Nested1fEi
-// CHECK-NOT: br i1
+// CHECK-NOT: __create_assertion_context
 // CHECK: ret
 
 int skipped(int x) { return Outer<char>::Nested::f(x); }

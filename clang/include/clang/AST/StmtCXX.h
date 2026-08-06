@@ -580,6 +580,19 @@ class ContractStmt final
   bool ControlIsIgnored = false;
   bool ControlAssumable = false;
 
+  // D4324 assertion_context::check(): the predicate has to be callable on
+  // demand, because the control object decides whether and how often to
+  // evaluate it. CheckFn is a synthesized `bool(void **)` that evaluates this
+  // predicate; Captures lists the entities the predicate reads out of the
+  // enclosing function, in the order their addresses appear in the void *
+  // array CheckFn is handed. A null entry stands for `this`.
+  //
+  // CheckFn is declared here but its body is generated in CodeGen, which seeds
+  // each captured declaration's address from the array and then emits the
+  // original predicate unchanged.
+  FunctionDecl *CheckFn = nullptr;
+  ArrayRef<const ValueDecl *> Captures;
+
   ArrayRef<Stmt *> getSubStmts() const {
     return llvm::ArrayRef(getTrailingObjects<Stmt *>(),
                           numTrailingObjects(OverloadToken<Stmt *>{}));
@@ -708,6 +721,16 @@ public:
   /// Whether the control object's `assumable` member is true.
   bool controlAssumable() const { return ControlAssumable; }
   void setControlAssumable(bool V) { ControlAssumable = V; }
+
+  /// The synthesized `bool(void **)` that evaluates this predicate on demand,
+  /// or null if the contract does not need one. See the member comment.
+  FunctionDecl *getCheckFn() const { return CheckFn; }
+  void setCheckFn(FunctionDecl *FD) { CheckFn = FD; }
+
+  /// The entities the predicate reads out of the enclosing function, in the
+  /// order their addresses are passed to getCheckFn(). A null entry is `this`.
+  ArrayRef<const ValueDecl *> getCaptures() const { return Captures; }
+  void setCaptures(ArrayRef<const ValueDecl *> C) { Captures = C; }
 
 public:
   // Convert the contract semantic to a string for use in diagnostics.

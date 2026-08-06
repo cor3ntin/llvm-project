@@ -15,9 +15,9 @@ struct assume_ignored {
   static consteval bool is_ignored(assertion_static_info) { return true; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = true;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 inline constexpr assume_ignored assume_ignored_v{};

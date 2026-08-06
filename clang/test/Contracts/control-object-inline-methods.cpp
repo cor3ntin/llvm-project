@@ -16,9 +16,8 @@ template <class T> struct ctl {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 
@@ -27,9 +26,8 @@ struct tagged {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 

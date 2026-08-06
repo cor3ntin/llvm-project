@@ -107,17 +107,95 @@ __create_assertion_static_info(contracts::evaluation_semantic __semantic,
 
 namespace std::contracts {
 
-enum class violation_response { proceed, terminate };
+enum class assertion_kind : unsigned char {
+  __unknown = 0,
+  pre = 1,
+  post = 2,
+  assert = 3,
+};
+
+class assertion_context;
+
+} // namespace std::contracts
+
+namespace std {
+
+// Mirrors <contracts>. The compiler synthesizes a call to this to describe one
+// evaluation of a contract to its control object. __check evaluates the
+// predicate and __args carries the addresses of what that predicate reads out
+// of the enclosing function.
+constexpr contracts::assertion_context
+__create_assertion_context(const char *__comment, source_location __loc,
+                           contracts::assertion_static_info __info,
+                           contracts::assertion_kind __kind,
+                           bool (*__check)(void **), void **__args) noexcept;
+
+} // namespace std
+
+namespace std::contracts {
+
+// D4324: one evaluation of one contract. check() is the point of the whole
+// design: the compiler no longer evaluates the predicate and reports failures,
+// it hands the control object this and lets the object decide whether to
+// evaluate at all, how many times, and what to do about the answer.
+class assertion_context {
+  const char *__comment_ = nullptr;
+  source_location __loc_{};
+  assertion_static_info __info_{};
+  assertion_kind __kind_ = assertion_kind::__unknown;
+  bool (*__check_)(void **) = nullptr;
+  void **__args_ = nullptr;
+
+  friend constexpr assertion_context std::__create_assertion_context(
+      const char *, source_location, assertion_static_info, assertion_kind,
+      bool (*)(void **), void **) noexcept;
+
+public:
+  constexpr const char *comment() const noexcept { return __comment_; }
+  constexpr source_location location() const noexcept { return __loc_; }
+  constexpr assertion_kind kind() const noexcept { return __kind_; }
+  constexpr const assertion_static_info &static_info() const noexcept {
+    return __info_;
+  }
+  constexpr evaluation_semantic semantic() const noexcept {
+    return __info_.semantic();
+  }
+
+  // Evaluate the predicate. May be called any number of times, including none.
+  bool check() const { return __check_(__args_); }
+};
+
+} // namespace std::contracts
+
+namespace std {
+
+constexpr contracts::assertion_context
+__create_assertion_context(const char *__comment, source_location __loc,
+                           contracts::assertion_static_info __info,
+                           contracts::assertion_kind __kind,
+                           bool (*__check)(void **), void **__args) noexcept {
+  contracts::assertion_context __ctx;
+  __ctx.__comment_ = __comment;
+  __ctx.__loc_ = __loc;
+  __ctx.__info_ = __info;
+  __ctx.__kind_ = __kind;
+  __ctx.__check_ = __check;
+  __ctx.__args_ = __args;
+  return __ctx;
+}
+
+} // namespace std
+
+namespace std::contracts {
 
 template <class T>
 concept assertion_control =
-    std::is_empty_v<T> &&
-    requires(T c, const char *comment, std::source_location loc,
-             assertion_static_info info, evaluation_semantic sem) {
+    std::is_empty_v<T> && requires(T c, const assertion_context &ctx,
+                                   assertion_static_info info) {
       { T::is_ignored(info) } -> std::same_as<bool>;
       { T::constify(info) } -> std::same_as<bool>;
       { T::assumable } -> std::convertible_to<bool>;
-      { c(comment, loc, sem) } -> std::same_as<violation_response>;
+      { c(ctx) } -> std::same_as<void>;
     };
 
 struct default_control {
@@ -126,9 +204,11 @@ struct default_control {
   }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (ctx.check())
+      return;
+    if (ctx.semantic() != evaluation_semantic::observe)
+      __builtin_trap();
   }
 };
 inline constexpr default_control default_v{};
@@ -138,9 +218,8 @@ struct review {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return true; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 inline constexpr review review_v{};
@@ -150,9 +229,9 @@ struct mandatory {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = true;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 inline constexpr mandatory mandatory_v{};

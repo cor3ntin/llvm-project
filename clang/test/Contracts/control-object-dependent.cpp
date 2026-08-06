@@ -16,9 +16,9 @@ struct base_ctl {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 
@@ -98,9 +98,9 @@ template <bool Constify> struct ctl {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return Constify; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::terminate;
+  void operator()(const assertion_context &ctx) const {
+    if (!ctx.check())
+      __builtin_trap();
   }
 };
 

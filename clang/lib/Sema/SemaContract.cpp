@@ -333,6 +333,157 @@ ExprResult buildAssertionStaticInfo(Sema &S, ContractKind CK,
   return S.BuildCallExpr(nullptr, Fn.get(), Loc, Args, Loc);
 }
 
+// D4324 assertion_context::check(): find what a predicate reads out of the
+// enclosing function. Those are the entities whose addresses have to travel to
+// the synthesized checker, since it runs as a free function rather than inline
+// in the function the contract is attached to. Anything with static storage,
+// and anything declared inside the predicate itself, needs no help.
+class ContractCaptureCollector
+    : public RecursiveASTVisitor<ContractCaptureCollector> {
+public:
+  SmallVector<const ValueDecl *, 4> Captures;
+  bool UsesThis = false;
+  bool UsesResultName = false;
+
+  bool VisitDeclRefExpr(DeclRefExpr *E) {
+    const auto *VD = dyn_cast<ValueDecl>(E->getDecl());
+    if (!VD)
+      return true;
+    // A postcondition's result name is not an object in the frame: CodeGen
+    // binds it to the return slot through an opaque value, so its address
+    // cannot be put in the array the way a parameter's can.
+    if (isa<ResultNameDecl>(VD)) {
+      UsesResultName = true;
+      return true;
+    }
+    // Only entities that live in the enclosing function's frame.
+    if (const auto *Var = dyn_cast<VarDecl>(VD)) {
+      if (!Var->hasLocalStorage())
+        return true;
+    } else if (!isa<BindingDecl>(VD)) {
+      return true;
+    }
+    if (Seen.insert(VD).second)
+      Captures.push_back(VD);
+    return true;
+  }
+
+  bool VisitCXXThisExpr(CXXThisExpr *) {
+    UsesThis = true;
+    return true;
+  }
+
+private:
+  llvm::SmallPtrSet<const ValueDecl *, 4> Seen;
+};
+
+// D4324: declare the `bool(void **)` that evaluates this contract's predicate
+// on demand. Only the declaration is built here; CodeGen generates the body,
+// where it can bind each captured declaration to the address the array carries
+// and then emit the predicate as written. The function is internal, so every
+// translation unit that needs one gets its own.
+FunctionDecl *buildContractCheckFn(Sema &S, ContractStmt *CS) {
+  ASTContext &Ctx = S.Context;
+  SourceLocation Loc = CS->getKeywordLoc();
+
+  ContractCaptureCollector Collector;
+  Collector.TraverseStmt(const_cast<Expr *>(CS->getCond()));
+  if (Collector.UsesResultName) {
+    S.Diag(Loc, diag::err_contract_control_result_name);
+    return nullptr;
+  }
+
+  SmallVector<const ValueDecl *, 4> Captures;
+  // `this` is recorded as a null entry, and goes first so CodeGen does not have
+  // to search for it.
+  if (Collector.UsesThis)
+    Captures.push_back(nullptr);
+  llvm::append_range(Captures, Collector.Captures);
+  auto *CaptureMem = new (Ctx) const ValueDecl *[Captures.size()];
+  llvm::copy(Captures, CaptureMem);
+  CS->setCaptures(ArrayRef<const ValueDecl *>(CaptureMem, Captures.size()));
+
+  QualType ArgsTy = Ctx.getPointerType(Ctx.VoidPtrTy);
+  FunctionProtoType::ExtProtoInfo EPI;
+  QualType FnTy = Ctx.getFunctionType(Ctx.BoolTy, {ArgsTy}, EPI);
+
+  std::string Name = ("__contract_check_" + Twine(S.getContractCheckCount()++))
+                         .str();
+  DeclContext *DC = Ctx.getTranslationUnitDecl();
+  FunctionDecl *FD = FunctionDecl::Create(
+      Ctx, DC, Loc, Loc, DeclarationName(&Ctx.Idents.get(Name)), FnTy,
+      Ctx.getTrivialTypeSourceInfo(FnTy, Loc), SC_Static,
+      /*UsesFPIntrin=*/false, /*isInlineSpecified=*/false,
+      /*hasWrittenPrototype=*/true);
+  FD->setImplicit();
+  // The body is generated in CodeGen, so Sema must not report this as an
+  // internal-linkage function that was used but never defined.
+  FD->setWillHaveBody(true);
+
+  ParmVarDecl *Args = ParmVarDecl::Create(
+      Ctx, FD, Loc, Loc, &Ctx.Idents.get("__args"), ArgsTy,
+      Ctx.getTrivialTypeSourceInfo(ArgsTy, Loc), SC_None, nullptr);
+  Args->setImplicit();
+  Args->setScopeInfo(0, 0);
+  FD->setParams(Args);
+
+  DC->addDecl(FD);
+  return FD;
+}
+
+// D4324: the addresses the checker needs, as a `void **`. Built as a compound
+// literal so it lowers to an ordinary local array; a contract whose predicate
+// reads nothing from the enclosing function passes a null pointer.
+ExprResult buildContractArgsArray(Sema &S, ContractStmt *CS, QualType ArgsTy,
+                                  SourceLocation Loc) {
+  ASTContext &Ctx = S.Context;
+  ArrayRef<const ValueDecl *> Captures = CS->getCaptures();
+  if (Captures.empty())
+    return S.ImpCastExprToType(
+        new (Ctx) IntegerLiteral(Ctx, llvm::APInt(Ctx.getIntWidth(Ctx.IntTy), 0),
+                                 Ctx.IntTy, Loc),
+        ArgsTy, CK_NullToPointer);
+
+  SmallVector<Expr *, 4> Elements;
+  for (const ValueDecl *Captured : Captures) {
+    ExprResult Addr;
+    if (!Captured) {
+      // A null entry is `this`, which is already the pointer we want.
+      const auto *MD = dyn_cast<CXXMethodDecl>(S.getCurFunctionDecl(true));
+      if (!MD)
+        return ExprError();
+      Addr = CXXThisExpr::Create(Ctx, Loc, MD->getThisType(),
+                                 /*IsImplicit=*/true);
+    } else {
+      ExprResult Ref = S.BuildDeclRefExpr(const_cast<ValueDecl *>(Captured),
+                                          Captured->getType(), VK_LValue, Loc);
+      if (Ref.isInvalid())
+        return ExprError();
+      Addr = S.CreateBuiltinUnaryOp(Loc, UO_AddrOf, Ref.get());
+    }
+    if (Addr.isInvalid())
+      return ExprError();
+    // A cast rather than a conversion: a constified predicate makes the
+    // captured entity const, and the checker only ever reads through it.
+    ExprResult Cast = S.BuildCStyleCastExpr(
+        Loc, Ctx.getTrivialTypeSourceInfo(Ctx.VoidPtrTy, Loc), Loc, Addr.get());
+    if (Cast.isInvalid())
+      return ExprError();
+    Elements.push_back(Cast.get());
+  }
+
+  QualType ArrayTy = Ctx.getConstantArrayType(
+      Ctx.VoidPtrTy, llvm::APInt(32, Elements.size()), nullptr,
+      ArraySizeModifier::Normal, /*IndexTypeQuals=*/0);
+  auto *Init =
+      new (Ctx) InitListExpr(Ctx, Loc, Elements, Loc, /*isExplicit=*/true);
+  Init->setType(ArrayTy);
+  Expr *Literal = new (Ctx) CompoundLiteralExpr(
+      Loc, Ctx.getTrivialTypeSourceInfo(ArrayTy, Loc), ArrayTy, VK_LValue, Init,
+      /*FileScope=*/false);
+  return S.ImpCastExprToType(Literal, ArgsTy, CK_ArrayToPointerDecay);
+}
+
 // D4324: synthesize the runtime dispatch for a contract that names a
 // non-dependent control object. Builds the violation-handler call
 // `obj(comment, loc, cfg)` (evaluated when the predicate is false) and
@@ -357,15 +508,8 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
       break;
     }
   }
-  if (!CallOp || CallOp->getNumParams() != 3)
+  if (!CallOp || CallOp->getNumParams() != 1)
     return false;
-
-  QualType SourceLocTy = CallOp->getParamDecl(1)->getType();
-  QualType SemanticTy = CallOp->getParamDecl(2)->getType();
-
-  // ContractEvaluationSemantic and std::contracts::evaluation_semantic share
-  // their values, so the semantic needs no translation.
-  const uint64_t SemanticVal = static_cast<uint64_t>(CS->getSemantic(Ctx));
 
   // The synthesized call is real, runtime-evaluated code: build it in a
   // potentially-evaluated context so operator() is marked used and emitted.
@@ -402,7 +546,41 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
           readControlBoolMember(S, RD, "assumable", Loc))
     CS->setControlAssumable(*Assumable);
 
-  // Step 3: the violation-handler call obj(comment, loc, cfg).
+  // An ignored contract never reaches the control object, so there is nothing
+  // left to build: no checker, no context, and no call. The predicate may still
+  // be emitted as an assumption, which needs none of that.
+  if (CS->controlIsIgnored())
+    return true;
+
+  // The predicate has to be callable on demand for assertion_context::check().
+  CS->setCheckFn(buildContractCheckFn(S, CS));
+  if (!CS->getCheckFn())
+    return false;
+
+  // Step 3: obj(ctx). The parameter types of the context factory tell us what
+  // to build, so the library keeps control of the types involved.
+  NamespaceDecl *Std = S.getStdNamespace();
+  const IdentifierInfo &CtxII =
+      Ctx.Idents.get("__create_assertion_context");
+  LookupResult CtxR(S, DeclarationName(&CtxII), Loc, Sema::LookupOrdinaryName);
+  if (Std)
+    S.LookupQualifiedName(CtxR, Std);
+  if (!Std || CtxR.empty()) {
+    if (!S.DiagnosedMissingAssertionStaticInfo) {
+      S.DiagnosedMissingAssertionStaticInfo = true;
+      S.Diag(Loc, diag::err_contract_control_no_static_info);
+    }
+    return false;
+  }
+  const auto *Factory = CtxR.getAsSingle<FunctionDecl>();
+  if (!Factory || Factory->getNumParams() != 6)
+    return false;
+
+  QualType SourceLocTy = Factory->getParamDecl(1)->getType();
+  QualType KindTy = Factory->getParamDecl(3)->getType();
+  QualType CheckFnTy = Factory->getParamDecl(4)->getType();
+  QualType ArgsTy = Factory->getParamDecl(5)->getType();
+
   std::string Text = CS->getMessage(Ctx);
   llvm::APInt Length(32, Text.size() + 1);
   QualType StrTy = Ctx.getConstantArrayType(
@@ -434,9 +612,50 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
       return false;
   }
 
-  ExprResult SemanticArg =
-      buildEnumeratorArg(S, SemanticTy, SemanticVal, Loc);
-  if (SemanticArg.isInvalid())
+  ExprResult InfoArg = buildAssertionStaticInfo(S, CS->getContractKind(),
+                                                CS->getSemantic(Ctx), Loc);
+  if (InfoArg.isInvalid())
+    return false;
+
+  // assertion_kind mirrors ContractKind: pre = 1, post = 2, assert = 3.
+  const uint64_t KindVal = CS->getContractKind() == ContractKind::Pre    ? 1
+                           : CS->getContractKind() == ContractKind::Post ? 2
+                                                                         : 3;
+  ExprResult KindArg = buildEnumeratorArg(S, KindTy, KindVal, Loc);
+  if (KindArg.isInvalid())
+    return false;
+
+  // The predicate, as a function the control object can call when it likes.
+  FunctionDecl *CheckFD = CS->getCheckFn();
+  if (!CheckFD)
+    return false;
+  // Deliberately not marked referenced. The checker is generated by CodeGen
+  // when it emits this contract, so its emission already follows the enclosing
+  // function's. Odr-using it here would instead assert it is needed as soon as
+  // the contract is parsed, for functions that are never emitted at all.
+  ExprResult CheckRef =
+      S.BuildDeclRefExpr(CheckFD, CheckFD->getType(), VK_LValue, Loc);
+  if (CheckRef.isInvalid())
+    return false;
+  ExprResult CheckArg =
+      S.ImpCastExprToType(CheckRef.get(), CheckFnTy, CK_FunctionToPointerDecay);
+  if (CheckArg.isInvalid())
+    return false;
+
+  ExprResult ArgsArg = buildContractArgsArray(S, CS, ArgsTy, Loc);
+  if (ArgsArg.isInvalid())
+    return false;
+
+  CXXScopeSpec FactorySS;
+  ExprResult FactoryFn =
+      S.BuildDeclarationNameExpr(FactorySS, CtxR, /*NeedsADL=*/false);
+  if (FactoryFn.isInvalid())
+    return false;
+  Expr *FactoryArgs[] = {Comment,        LocArg.get(),  InfoArg.get(),
+                         KindArg.get(),  CheckArg.get(), ArgsArg.get()};
+  ExprResult Context =
+      S.BuildCallExpr(nullptr, FactoryFn.get(), Loc, FactoryArgs, Loc);
+  if (Context.isInvalid())
     return false;
 
   // The callee is the control object as written. That node is also the
@@ -444,7 +663,7 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
   // safe because instantiation re-synthesizes the call from the transformed
   // object rather than transforming it twice, and code generation only ever
   // emits the call.
-  Expr *CallArgs[] = {Comment, LocArg.get(), SemanticArg.get()};
+  Expr *CallArgs[] = {Context.get()};
   ExprResult Violation =
       S.BuildCallToObjectOfClassType(nullptr, ControlExpr, Loc, CallArgs, Loc);
   if (Violation.isInvalid())

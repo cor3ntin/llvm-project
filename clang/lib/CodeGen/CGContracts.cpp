@@ -95,6 +95,64 @@ void CodeGenFunction::EmitHandleContractViolationCall(
   }
 }
 
+// D4324 assertion_context::check(): generate the body of the synthesized
+// `bool(void **)` that evaluates this contract's predicate.
+//
+// The predicate is emitted exactly as written. What makes that work outside the
+// function it belongs to is the prologue: each captured declaration is bound to
+// the address the array carries, so when the predicate names a parameter, the
+// ordinary lvalue emission finds it. That is where the reinterpret_cast to the
+// captured entity's real type happens - as a pointer bitcast on the way in -
+// rather than in a rewritten copy of the predicate.
+void CodeGenFunction::GenerateContractCheckFunction(const ContractStmt &S,
+                                                    llvm::Function *Fn,
+                                                    const FunctionDecl *FD) {
+  ASTContext &Ctx = getContext();
+  const ParmVarDecl *ArgsParm = FD->getParamDecl(0);
+
+  FunctionArgList Args;
+  Args.push_back(const_cast<ParmVarDecl *>(ArgsParm));
+
+  const CGFunctionInfo &FnInfo =
+      CGM.getTypes().arrangeFunctionDeclaration(FD);
+  StartFunction(GlobalDecl(FD), Ctx.BoolTy, Fn, FnInfo, Args,
+                S.getKeywordLoc(), S.getKeywordLoc());
+
+  // void **__args
+  Address ArgsAddr = GetAddrOfLocalVar(ArgsParm);
+  llvm::Value *ArgsPtr = Builder.CreateLoad(ArgsAddr, "contract.args");
+
+  unsigned Index = 0;
+  for (const ValueDecl *Captured : S.getCaptures()) {
+    llvm::Value *Slot = Builder.CreateConstInBoundsGEP1_32(
+        VoidPtrTy, ArgsPtr, Index++, "contract.arg.slot");
+    llvm::Value *Raw =
+        Builder.CreateLoad(Address(Slot, VoidPtrTy, getPointerAlign()),
+                           "contract.arg");
+
+    if (!Captured) {
+      // A null entry is `this`; the array holds the object pointer itself.
+      CXXThisValue = Raw;
+      continue;
+    }
+
+    QualType T = Captured->getType();
+    // A reference is captured by the address of what it binds to, so the
+    // pointer in the array already is the referent.
+    QualType Pointee = T.getNonReferenceType();
+    Address Bound(Raw, ConvertTypeForMem(Pointee),
+                  Ctx.getTypeAlignInChars(Pointee));
+    setAddrOfLocalVar(cast<VarDecl>(Captured), Bound);
+  }
+
+  // Store through the return slot rather than emitting a bare ret, so the
+  // epilogue FinishFunction builds stays the single exit.
+  llvm::Value *Result = EvaluateExprAsBool(S.getCond());
+  EmitStoreOfScalar(Result, MakeAddrLValue(ReturnValue, Ctx.BoolTy),
+                    /*isInit=*/true);
+  FinishFunction(S.getKeywordLoc());
+}
+
 // Emit the contract expression.
 void CodeGenFunction::EmitContractStmt(const ContractStmt &S) {
   EmitContractStmtAsFullStmt(S);
@@ -116,6 +174,18 @@ void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
   const bool HasControl = S.hasExplicitControl();
   const ContractEvaluationSemantic Semantic = S.getSemantic(getContext());
 
+  // D4324: the predicate also has to exist as a standalone function so the
+  // control object can call it through assertion_context::check(). It is
+  // generated on its own CodeGenFunction, since we are in the middle of
+  // emitting the function the contract is attached to.
+  if (const FunctionDecl *CheckFD = S.getCheckFn()) {
+    auto *CheckFn = cast<llvm::Function>(
+        CGM.GetAddrOfFunction(GlobalDecl(CheckFD))->stripPointerCasts());
+    if (CheckFn->empty()) {
+      CodeGenFunction(CGM).GenerateContractCheckFunction(S, CheckFn, CheckFD);
+    }
+  }
+
   // Step 1. For the default path the built-in default_control is ignored exactly
   // when the semantic is 'ignore'.
   const bool IsIgnored =
@@ -129,40 +199,26 @@ void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
     return;
   }
 
-  // Step 2.
+  // A named control object owns the whole evaluation: the predicate is not
+  // evaluated here at all, it is handed over as assertion_context::check() and
+  // the object decides whether to call it, how often, and what a false answer
+  // means. So there is nothing to branch on - just make the call.
+  if (HasControl) {
+    const Expr *ViolationCall = S.getViolationCall();
+    assert(ViolationCall &&
+           "explicit control object without a synthesized dispatch call");
+    EmitIgnoredExpr(ViolationCall);
+    return;
+  }
+
+  // Step 2. The default path still evaluates the predicate itself.
   llvm::BasicBlock *Violation = createBasicBlock("contract.violation");
   llvm::BasicBlock *End = createBasicBlock("contract.end");
   Builder.CreateCondBr(EvaluateExprAsBool(S.getCond()), End, Violation);
 
   // Step 3.
   EmitBlock(Violation);
-  if (HasControl) {
-    // r = T{}(comment, loc, cfg); trap iff r == violation_response::terminate.
-    // The terminate value is read from the call's (enumeration) return type
-    // rather than hard-coded.
-    const Expr *ViolationCall = S.getViolationCall();
-    assert(ViolationCall &&
-           "explicit control type without a synthesized violation call");
-    llvm::Value *Response = EmitScalarExpr(ViolationCall);
-
-    const EnumType *ET = ViolationCall->getType()->getAs<EnumType>();
-    assert(ET && "control operator() must return an enumeration");
-    llvm::Value *TerminateVal = nullptr;
-    for (const EnumConstantDecl *ECD : ET->getDecl()->enumerators()) {
-      if (ECD->getName() == "terminate") {
-        TerminateVal = llvm::ConstantInt::get(Response->getType(),
-                                              ECD->getInitVal().getZExtValue());
-        break;
-      }
-    }
-    assert(TerminateVal && "violation_response has no terminate enumerator");
-
-    llvm::BasicBlock *Trap = createBasicBlock("contract.trap");
-    Builder.CreateCondBr(Builder.CreateICmpEQ(Response, TerminateVal), Trap,
-                         End);
-    EmitBlock(Trap);
-    CreateTrap(*this);
-  } else if (Semantic == QuickEnforce) {
+  if (Semantic == QuickEnforce) {
     CreateTrap(*this);
   } else {
     assert((Semantic == Observe || Semantic == Enforce) &&

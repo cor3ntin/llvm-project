@@ -21,9 +21,8 @@ struct probe {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 
@@ -38,7 +37,7 @@ template <class T> struct V {
 };
 
 // CHECK-LABEL: define {{.*}} @_ZN1VIiE2atEi(
-// CHECK: call noundef i32 @{{.*}}5probe
+// CHECK: call void @{{.*}}5probe
 int use(V<int> &v) { return v.at(2); }
 
 // A dependent control object supplied as a non-type template argument.
@@ -55,9 +54,8 @@ struct sized {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
   static constexpr bool assumable = false;
-  violation_response operator()(const char *, std::source_location,
-                                evaluation_semantic) const {
-    return violation_response::proceed;
+  void operator()(const assertion_context &ctx) const {
+    (void)ctx.check();
   }
 };
 
