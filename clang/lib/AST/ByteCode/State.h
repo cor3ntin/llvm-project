@@ -178,6 +178,21 @@ public:
   // Whether we're allowed to evaluate contracts
   bool EvaluateContracts = true;
 
+  /// D4324: the contract assertions currently being evaluated, innermost last.
+  /// A contract that names a control object is evaluated by calling that object,
+  /// which reaches the predicate through assertion_context::check(). check()
+  /// cannot call through its type-erased function pointer here, so on this path
+  /// it uses __builtin_contract_check(), which evaluates the predicate of the
+  /// innermost entry.
+  /// The predicate has to be evaluated in the frame the contract belongs to,
+  /// not in the control object's, so the frame is captured alongside it. Frame
+  /// is an evaluator-private type, hence opaque here.
+  struct ContractEvaluation {
+    const ContractStmt *Stmt;
+    void *Frame;
+  };
+  llvm::SmallVector<ContractEvaluation, 2> ContractsBeingEvaluated;
+
   /// Whether we're checking that an expression is a potential constant
   /// expression. If so, do not fail on constructs that could become constant
   /// later on (such as a use of an undefined global).

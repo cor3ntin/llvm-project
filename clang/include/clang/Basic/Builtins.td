@@ -1201,6 +1201,16 @@ def IsConstantEvaluated : LangBuiltin<"CXX_LANG"> {
   let Prototype = "bool()";
 }
 
+// D4324: evaluate the predicate of the contract assertion currently being
+// evaluated. std::contracts::assertion_context::check() uses this on the
+// constant-evaluation path, where it cannot call through the type-erased
+// function pointer it uses at run time.
+def ContractCheck : LangBuiltin<"CXX_LANG"> {
+  let Spellings = ["__builtin_contract_check"];
+  let Attributes = [NoThrow, Constexpr];
+  let Prototype = "bool()";
+}
+
 def IsWithinLifetime : LangBuiltin<"CXX_LANG"> {
   let Spellings = ["__builtin_is_within_lifetime"];
   let Attributes = [NoThrow, CustomTypeChecking, Consteval];

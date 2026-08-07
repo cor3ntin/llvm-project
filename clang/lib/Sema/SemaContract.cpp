@@ -478,10 +478,12 @@ ExprResult buildContractArgsArray(Sema &S, ContractStmt *CS, QualType ArgsTy,
   auto *Init =
       new (Ctx) InitListExpr(Ctx, Loc, Elements, Loc, /*isExplicit=*/true);
   Init->setType(ArrayTy);
-  Expr *Literal = new (Ctx) CompoundLiteralExpr(
-      Loc, Ctx.getTrivialTypeSourceInfo(ArrayTy, Loc), ArrayTy, VK_LValue, Init,
-      /*FileScope=*/false);
-  return S.ImpCastExprToType(Literal, ArgsTy, CK_ArrayToPointerDecay);
+  // A materialized temporary rather than a compound literal: the constant
+  // evaluator asserts that a compound literal in C++ is file-scope, and this
+  // expression has to survive constant evaluation of the dispatch call.
+  Expr *Array = S.CreateMaterializeTemporaryExpr(ArrayTy, Init,
+                                                 /*BoundToLvalueReference=*/false);
+  return S.ImpCastExprToType(Array, ArgsTy, CK_ArrayToPointerDecay);
 }
 
 // D4324: synthesize the runtime dispatch for a contract that names a

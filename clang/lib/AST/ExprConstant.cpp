@@ -5946,6 +5946,22 @@ static bool EvaluateContract(const ContractStmt *S, EvalInfo &Info) {
   if (Sem == CES::Ignore)
     return true;
 
+  // D4324: when the contract names a control object, that object decides what
+  // evaluating this assertion means - here just as much as at run time. Call it
+  // and let it reach the predicate through assertion_context::check(); the
+  // built-in reaction below is only for contracts that name no object.
+  if (S->hasExplicitControl()) {
+    if (S->controlIsIgnored())
+      return true;
+    const Expr *Dispatch = S->getViolationCall();
+    if (!Dispatch)
+      return true;
+    Info.ContractsBeingEvaluated.push_back({S, Info.CurrentCall});
+    bool Ok = EvaluateIgnoredValue(Info, Dispatch);
+    Info.ContractsBeingEvaluated.pop_back();
+    return Ok;
+  }
+
   const Expr *E = S->getCond();
   bool Result;
   if (!EvaluateCond(Info,nullptr, E, Result))
@@ -17346,6 +17362,28 @@ bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
     }
 
     return Success(Info.InConstantContext, E);
+  }
+
+  case Builtin::BI__builtin_contract_check: {
+    // D4324: evaluate the predicate of the assertion whose control object is
+    // running. Reachable only from assertion_context::check(), so an empty
+    // stack means someone called it by hand.
+    if (Info.ContractsBeingEvaluated.empty()) {
+      Info.FFDiag(E, diag::note_invalid_subexpr_in_const_expr);
+      return false;
+    }
+    const auto &Cur = Info.ContractsBeingEvaluated.back();
+    const Expr *Pred = Cur.Stmt->getCond();
+    // Evaluate in the frame the contract is attached to; the predicate names
+    // that function's parameters, not the control object's.
+    CallStackFrame *Saved = Info.CurrentCall;
+    Info.CurrentCall = static_cast<CallStackFrame *>(Cur.Frame);
+    bool Result;
+    bool Ok = EvaluateCond(Info, /*CondDecl=*/nullptr, Pred, Result);
+    Info.CurrentCall = Saved;
+    if (!Ok)
+      return false;
+    return Success(Result, E);
   }
 
   case Builtin::BI__builtin_is_within_lifetime:

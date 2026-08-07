@@ -292,6 +292,47 @@ Each commit builds, runs its new test, and runs the full `clang/test/Contracts` 
 - End-to-end features exercised: preconditions, postconditions with a result name (`post<review>(r: r > 0)`), `contract_assert`, control types on late-parsed inline member functions, and template-dependent control types instantiated with `review` / `mandatory` / `default_control`.
 - Linux/gcc cross-check: the branch builds clean under gcc in WSL and the Contracts / Parser / Modules suite is green with the same nine pre-existing failures.
 
+## assertion_context and check(): the inversion of control
+
+The paper's central move is that the control object, not the compiler, drives
+evaluation. The compiler no longer evaluates the predicate and calls the object
+on failure; it calls `obj(ctx)` unconditionally and the object decides whether to
+call `ctx.check()` at all, how often, and what a false answer means. That is what
+makes run-time ignoring, repeated evaluation, and catching an exception thrown by
+a predicate expressible at all.
+
+Two consequences fall straight out. `violation_response` is gone - the object
+terminates itself rather than reporting back - and for a contract with a control
+object CodeGen emits just the call, with no branch on the predicate.
+
+The predicate therefore has to be callable from outside the function it belongs
+to. It is emitted as a synthesized `static bool __contract_check_N(void **)`, and
+the addresses of everything it reads out of the enclosing function travel in a
+`void *` array (`this` first, as a null entry in `ContractStmt::getCaptures()`).
+
+The part worth knowing is how the checker's body is produced. It is **not** a
+rewritten copy of the predicate with each parameter replaced by
+`*reinterpret_cast<T *>(args[i])`. CodeGen instead emits a prologue that loads
+each `args[i]` and binds it into `LocalDeclMap` (or `CXXThisValue`), then emits
+the original predicate expression unchanged; the cast to the captured entity's
+real type is the pointer bitcast on the way in. A separate rewriter would have had
+to reproduce constification, lambdas in predicates and the `this`-adjustment, and
+stay correct as those change. There is one predicate, emitted from the real AST.
+
+Smaller things that bite:
+
+- The checker needs `FunctionDecl::setWillHaveBody(true)`. Its body comes from
+  CodeGen, so without that Sema reports every contract as an internal-linkage
+  function that was used but never defined.
+- An ignored contract returns from the dispatch early, before any of this. It has
+  no checker and no context - but it may still emit `llvm.assume`, so bailing out
+  with a failure instead of a success silently drops the assumption.
+- **A postcondition that names its result is rejected** with
+  `err_contract_control_result_name`. The result name is a `ResultNameDecl`, not a
+  `VarDecl`; CodeGen binds it to the return slot through an opaque value, so there
+  is no address to put in the array. Diagnosing it beats a checker that quietly
+  reads the wrong storage, which is what the first version did.
+
 ## Gotchas and deviations from the original plan
 
 - **`source_location` is not a bare `SourceLocExpr`.** Building a `SourceLocExpr` of the struct type produces the `__builtin_source_location()` *pointer*, which the aggregate emitter cannot lower ("cannot compile this aggregate expression yet"). The fix is to build `std::source_location::current()` and let the consteval call fold to a constant. The relevant enumerator is `SourceLocIdentKind::SourceLocStruct`, not `SourceLocation`.
