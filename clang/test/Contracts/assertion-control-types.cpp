@@ -40,11 +40,9 @@ static_assert(assertion_static_info{}.side() ==
               assertion_check_side::not_applicable);
 static_assert(!assertion_static_info{}.is_virtual());
 
-// The three worked control objects model the concept; an unrelated type does not.
-static_assert(assertion_control<default_control>);
-static_assert(assertion_control<review>);
-static_assert(assertion_control<mandatory>);
-static_assert(!assertion_control<int>);
+// What a control object has to provide is checked by the compiler, not by a
+// concept - a concept cannot express that constify is optional. Those
+// diagnostics are covered by control-object-diagnostics.cpp.
 
 // default_control: no constify, non-optimizable, ignored only at 'ignore'.
 static_assert(default_control::constify(make_info(

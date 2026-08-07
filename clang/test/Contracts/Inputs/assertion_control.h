@@ -28,11 +28,6 @@ public:
   constexpr source_location() noexcept = default;
 };
 
-template <class T> inline constexpr bool is_empty_v = __is_empty(T);
-template <class A, class B> concept same_as = __is_same(A, B);
-template <class From, class To>
-concept convertible_to = __is_convertible(From, To);
-
 } // namespace std
 
 namespace std::contracts {
@@ -197,15 +192,6 @@ __create_assertion_context(const char *__comment, source_location __loc,
 } // namespace std
 
 namespace std::contracts {
-
-template <class T>
-concept assertion_control =
-    std::is_empty_v<T> && requires(T c, const assertion_context &ctx,
-                                   assertion_static_info info) {
-      { T::is_ignored(info) } -> std::same_as<bool>;
-      { T::constify(info) } -> std::same_as<bool>;
-      { c(ctx) } -> std::same_as<void>;
-    };
 
 struct default_control {
   static consteval bool is_ignored(assertion_static_info info) {
