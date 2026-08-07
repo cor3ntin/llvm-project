@@ -74,25 +74,29 @@ enum class ContractAssertionKind {
 /// Contract evaluation mode. Determines whether to check contracts, and
 // whether contract failures cause compile errors.
 //
-// These values match up one for one with std::contracts::evaluation_semantic,
-// so a semantic can be handed to the library without a translation table.
+// These are P2900R14's values, the same ones std::contracts::evaluation_semantic
+// uses, so a semantic crosses into the library as a plain cast and the numbering
+// is the same everywhere: here, in the library, and in what the violation
+// handler observes. Note that 0 is not a semantic - it is the library's
+// __unknown - so this enum has no zero state.
 enum class ContractEvaluationSemantic {
   // Contracts are parsed, syntax checked and type checked, but never evaluated.
-  Ignore = 0,
-
-  // Contracts are run, failures are reported, and when a contract fails the
-  // program is terminated. The compiler can assume after contracts statements
-  // that the contracts hold.
-  Enforce = 1,
+  Ignore = 1,
 
   // Contracts are run, and failures are reported, but contract failures do not
   // logically stop execution of the program, nor can the compiler assume
   // contracts are true for optimizing.
   Observe = 2,
 
+  // Contracts are run, failures are reported, and when a contract fails the
+  // program is terminated. The compiler can assume after contracts statements
+  // that the contracts hold.
+  Enforce = 3,
+
   // Contracts are run, failures cause an immediate trap
-  QuickEnforce = 3,
+  QuickEnforce = 4,
 };
+
 
 /// The result of checking a contract. PredicateFailed matches
 /// std::contracts::detection_mode::predicate_false. D4324 predicates propagate

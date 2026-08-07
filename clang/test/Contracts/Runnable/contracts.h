@@ -19,8 +19,10 @@ enum class assertion_kind : unsigned {
 };
 enum class evaluation_semantic : unsigned {
   __unspecified = 0,
-  enforce = 1,
-  observe = 2
+  ignore = 1,
+  observe = 2,
+  enforce = 3,
+  quick_enforce = 4
 };
 enum class detection_mode : unsigned {
   predicate_false = 1,

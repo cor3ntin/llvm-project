@@ -70,9 +70,8 @@ constexpr std::string_view enum_to_string(Semantic S) {
     return "enforce";
   case Semantic::quick_enforce:
     return "quick_enforce";
-  // 'ignore' shares its value with '__unknown'. A violation is never reported
-  // with the ignore semantic - an ignored assertion is not evaluated - so a zero
-  // here means the semantic was never set.
+  case Semantic::ignore:
+    return "ignore";
   case Semantic::__unknown:
     return "<unknown>";
   }

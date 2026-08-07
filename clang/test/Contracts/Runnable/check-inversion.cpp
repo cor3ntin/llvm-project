@@ -68,16 +68,17 @@ int main() {
   // CHECK: evaluated repeatedly: 3
   std::printf("evaluated repeatedly: %d\n", evaluations);
 
-  // kind 1 is pre, 2 is post, 3 is assert; semantic 1 is enforce.
-  // CHECK: kind=1 semantic=1 comment=x > 0 result=1
+  // kind 1 is pre, 2 is post, 3 is assert; semantic 3 is enforce
+  // (P2900R14's numbering: ignore 1, observe 2, enforce 3, quick_enforce 4).
+  // CHECK: kind=1 semantic=3 comment=x > 0 result=1
   described(5);
-  // CHECK: kind=2 semantic=1 comment=x > 0 result=1
+  // CHECK: kind=2 semantic=3 comment=x > 0 result=1
   described_post(5);
-  // CHECK: kind=3 semantic=1 comment=x > 0 result=0
+  // CHECK: kind=3 semantic=3 comment=x > 0 result=0
   described_assert(-5);
 
   // The predicate reads a member, so the checker has to be handed `this`.
-  // CHECK: kind=1 semantic=1 comment=m > x result=1
+  // CHECK: kind=1 semantic=3 comment=m > x result=1
   S s{10};
   s.mem(3);
 

@@ -16,17 +16,15 @@ namespace std::contracts {
 
 enum class assertion_kind : unsigned char { __unknown = 0, pre = 1, post = 2, assert = 3, manual = 4, cassert = 5 };
 using _AssertKind = assertion_kind;
-// The values match clang's ContractEvaluationSemantic one for one, so the
-// compiler can pass a semantic through without a translation table. `ignore`
-// deliberately shares its value with `__unknown`: the enumerator was missing
-// when only `enforce` and `observe` could reach the violation handler, and the
-// runtime ABI already fixes those two values.
+// P2900R14's numbering, which is what the reference implementation uses. It is
+// deliberately not clang's ContractEvaluationSemantic ordering, so the compiler
+// translates rather than casts - see mapSemanticToLibraryValue.
 enum class evaluation_semantic : unsigned char {
   __unknown     = 0,
-  ignore        = 0,
-  enforce       = 1,
+  ignore        = 1,
   observe       = 2,
-  quick_enforce = 3
+  enforce       = 3,
+  quick_enforce = 4
 };
 using _EvaluationSemantic = evaluation_semantic;
 

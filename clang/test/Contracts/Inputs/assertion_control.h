@@ -37,13 +37,13 @@ concept convertible_to = __is_convertible(From, To);
 
 namespace std::contracts {
 
-// Mirrors <contracts>. The values match clang's ContractEvaluationSemantic.
+// Mirrors <contracts>, including P2900R14's numbering.
 enum class evaluation_semantic : unsigned char {
   __unknown = 0,
-  ignore = 0,
-  enforce = 1,
+  ignore = 1,
   observe = 2,
-  quick_enforce = 3,
+  enforce = 3,
+  quick_enforce = 4,
 };
 
 enum class assertion_check_side : unsigned char {
