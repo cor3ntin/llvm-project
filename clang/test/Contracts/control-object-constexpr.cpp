@@ -28,7 +28,7 @@ struct strict {
   static consteval bool constify(assertion_static_info) { return false; }
   constexpr void operator()(const assertion_context &ctx) const {
     if (!ctx.check())
-      __builtin_trap(); // expected-note 3 {{subexpression not valid in a constant expression}}
+      __builtin_trap(); // expected-note 5 {{subexpression not valid in a constant expression}}
   }
 };
 inline constexpr strict strict_v{};
@@ -170,3 +170,51 @@ constexpr int as_assert(int x) {
 static_assert(as_assert(1) == 1);
 
 } // namespace context_at_compile_time
+
+namespace result_name {
+
+// A postcondition may name its result here too. The result is the function's
+// return slot rather than anything in the frame, so this also checks the slot is
+// actually populated: it is normally elided when the return is its only reader,
+// which left the predicate reading uninitialized memory.
+constexpr int scalar(int x) post<strict_v>(r: r > 0) { return x; } // expected-note {{in call to}}
+static_assert(scalar(1) == 1);
+// expected-error@+2 {{static assertion expression is not an integral constant expression}}
+// expected-note@+1 {{in call to}}
+static_assert(scalar(-1) == -1);
+
+// This doubles its argument, so the result and the parameter differ - which is
+// what distinguishes reading the result from reading the parameter. Getting that
+// wrong would make the first of these fail and the second succeed.
+constexpr long doubled(const int x) post<strict_v>(r: r == 120) { return x * 2L; }
+static_assert(doubled(60) == 120);
+
+constexpr long mistaken(const int x) post<strict_v>(r: r == x) { // expected-note {{in call to}}
+  return x * 2L;
+}
+// expected-error@+2 {{static assertion expression is not an integral constant expression}}
+// expected-note@+1 {{in call to}}
+static_assert(mistaken(60) == 120);
+
+// A class result, returned indirectly.
+struct S {
+  int m;
+};
+constexpr S make(const int v) post<strict_v>(r: r.m == v) { return S{v}; }
+static_assert(make(5).m == 5);
+
+// The result read alongside a parameter and a member.
+struct T {
+  int limit;
+  constexpr int clamp(const int v) const post<strict_v>(r: r <= limit && r <= v) {
+    return v < limit ? v : limit;
+  }
+};
+static_assert(T{10}.clamp(3) == 3);
+static_assert(T{10}.clamp(30) == 10);
+
+// And the object still decides: this one shrugs at the violated postcondition.
+constexpr int shrugged(int x) post<lenient_v>(r: r > 0) { return x; }
+static_assert(shrugged(-1) == -1);
+
+} // namespace result_name

@@ -137,6 +137,16 @@ void CodeGenFunction::GenerateContractCheckFunction(const ContractStmt &S,
     }
 
     QualType T = Captured->getType();
+
+    // A postcondition's result name is not a variable, so it is not bound
+    // through LocalDeclMap; EmitDeclRefLValue consults this instead.
+    if (isa<ResultNameDecl>(Captured)) {
+      QualType Result = T.getNonReferenceType();
+      ContractResultAddr = Address(Raw, ConvertTypeForMem(Result),
+                                   Ctx.getTypeAlignInChars(Result));
+      continue;
+    }
+
     // A reference is captured by the address of what it binds to, so the
     // pointer in the array already is the referent.
     QualType Pointee = T.getNonReferenceType();

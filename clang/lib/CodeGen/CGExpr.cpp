@@ -3627,6 +3627,10 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   // FIXME(EricWF): There's got to be more to this.
   if (const auto *RND = dyn_cast<ResultNameDecl>(ND)) {
     ((void)RND);
+    // Inside a synthesized predicate checker the result is not this function's
+    // return value; it was passed in. See ContractResultAddr.
+    if (ContractResultAddr.isValid())
+      return MakeAddrLValue(ContractResultAddr, T, AlignmentSource::Decl);
     return MakeAddrLValue(ReturnValue, T, AlignmentSource::Decl);
   }
 

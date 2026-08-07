@@ -13153,9 +13153,6 @@ def err_contract_control_not_consteval : Error<
   "member '%0' of assertion-control object type %1 must be declared consteval; "
   "it decides how the contract is compiled, so it cannot be a function that "
   "might only be known at run time">;
-def err_contract_control_result_name : Error<
-  "a postcondition whose predicate names its result is not yet supported with "
-  "an assertion-control object">;
 
 // Diagnose clang::contract_group attribute strings
 def err_contract_group_attribute_invalid_group : Error<

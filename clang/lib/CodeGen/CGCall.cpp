@@ -4078,6 +4078,18 @@ static llvm::Value *emitAutoreleaseOfResult(CodeGenFunction &CGF,
   return CGF.EmitARCAutoreleaseReturnValue(result);
 }
 
+/// D4324: whether a postcondition of the function being emitted names its
+/// result. Such a predicate reads the returned value out of the return slot,
+/// which means the store into that slot has to survive: eliding it leaves the
+/// slot uninitialized and the predicate reading whatever was there.
+static bool hasPostconditionNamingResult(const Decl *CurCodeDecl) {
+  const auto *FD = dyn_cast_or_null<FunctionDecl>(CurCodeDecl);
+  if (!FD || !FD->hasContracts())
+    return false;
+  const ContractSpecifierDecl *CSD = FD->getContracts();
+  return CSD && CSD->getCanonicalResultName();
+}
+
 /// Heuristically search for a dominating store to the return-value slot.
 static llvm::StoreInst *findDominatingStoreToReturnValue(CodeGenFunction &CGF) {
   llvm::Value *ReturnValuePtr = CGF.ReturnValue.getBasePointer();
@@ -4436,7 +4448,10 @@ void CodeGenFunction::EmitFunctionEpilog(
 
       // If there is a dominating store to ReturnValue, we can elide
       // the load, zap the store, and usually zap the alloca.
-      if (llvm::StoreInst *SI = findDominatingStoreToReturnValue(*this)) {
+      if (llvm::StoreInst *SI =
+              hasPostconditionNamingResult(CurCodeDecl)
+                  ? nullptr
+                  : findDominatingStoreToReturnValue(*this)) {
         // Reuse the debug location from the store unless there is
         // cleanup code to be emitted between the store and return
         // instruction.

@@ -4596,6 +4596,13 @@ private:
   void GenerateContractCheckFunction(const ContractStmt &S, llvm::Function *Fn,
                                      const FunctionDecl *FD);
 
+  /// D4324: while generating such a checker, where a postcondition's result name
+  /// lives. The checker is a separate function, so its own ReturnValue is the
+  /// bool it returns rather than the result the predicate is talking about;
+  /// the real one arrives through the argument array. Invalid outside a checker,
+  /// where a result name does refer to the enclosing function's return slot.
+  Address ContractResultAddr = Address::invalid();
+
 public:
   void EmitHandleContractViolationCall(llvm::Constant *Semantic,
                                        llvm::Constant *DetectionMode,

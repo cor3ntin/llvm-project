@@ -321,25 +321,21 @@ class ContractCaptureCollector
 public:
   SmallVector<const ValueDecl *, 4> Captures;
   bool UsesThis = false;
-  bool UsesResultName = false;
 
   bool VisitDeclRefExpr(DeclRefExpr *E) {
     const auto *VD = dyn_cast<ValueDecl>(E->getDecl());
     if (!VD)
       return true;
-    // A postcondition's result name is not an object in the frame: CodeGen
-    // binds it to the return slot through an opaque value, so its address
-    // cannot be put in the array the way a parameter's can.
-    if (isa<ResultNameDecl>(VD)) {
-      UsesResultName = true;
-      return true;
-    }
+    // A postcondition's result name refers to the enclosing function's return
+    // slot, whose address is passed in like any other capture.
+    if (!isa<ResultNameDecl>(VD)) {
     // Only entities that live in the enclosing function's frame.
     if (const auto *Var = dyn_cast<VarDecl>(VD)) {
       if (!Var->hasLocalStorage())
         return true;
     } else if (!isa<BindingDecl>(VD)) {
       return true;
+    }
     }
     if (Seen.insert(VD).second)
       Captures.push_back(VD);
@@ -366,11 +362,6 @@ FunctionDecl *buildContractCheckFn(Sema &S, ContractStmt *CS) {
 
   ContractCaptureCollector Collector;
   Collector.TraverseStmt(const_cast<Expr *>(CS->getCond()));
-  if (Collector.UsesResultName) {
-    S.Diag(Loc, diag::err_contract_control_result_name);
-    return nullptr;
-  }
-
   SmallVector<const ValueDecl *, 4> Captures;
   // `this` is recorded as a null entry, and goes first so CodeGen does not have
   // to search for it.
@@ -525,7 +516,8 @@ ExprResult buildContractArgsArray(Sema &S, ContractStmt *CS, QualType ArgsTy,
                                  /*IsImplicit=*/true);
     } else {
       ExprResult Ref = S.BuildDeclRefExpr(const_cast<ValueDecl *>(Captured),
-                                          Captured->getType(), VK_LValue, Loc);
+                                          Captured->getType().getNonReferenceType(),
+                                          VK_LValue, Loc);
       if (Ref.isInvalid())
         return ExprError();
       Addr = S.CreateBuiltinUnaryOp(Loc, UO_AddrOf, Ref.get());
