@@ -162,8 +162,7 @@ void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
   // D4324: every contract - whether it names an explicit control object or uses
   // the built-in defaults - lowers to the same three-step algorithm:
   //
-  //   1. If is_ignored(cfg): stop, but if the control object is assumable hand
-  //      the predicate to the optimizer via llvm.assume first.
+  //   1. If is_ignored(info): stop.
   //   2. Evaluate the predicate. Exceptions propagate; there is no try/catch.
   //   3. If it is false, react. For an explicit control object T the reaction is
   //      r = T{}(comment, loc, cfg), trapping iff r is violation_response::
@@ -191,11 +190,7 @@ void CodeGenFunction::EmitContractStmtAsFullStmt(const ContractStmt &S) {
   const bool IsIgnored =
       HasControl ? S.controlIsIgnored() : (Semantic == Ignore);
   if (IsIgnored) {
-    // A skipped check emits nothing, unless the control object is assumable, in
-    // which case the predicate is handed to the optimizer as an assumption. The
-    // default path is never assumable.
-    if (HasControl && S.controlAssumable())
-      Builder.CreateAssumption(EvaluateExprAsBool(S.getCond()));
+    // A skipped check emits nothing at all.
     return;
   }
 

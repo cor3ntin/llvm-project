@@ -21,7 +21,6 @@ bool tick(bool r) {
 struct never {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &) const {}
 };
 inline constexpr never never_v{};
@@ -30,7 +29,6 @@ inline constexpr never never_v{};
 struct thrice {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     for (int i = 0; i < 3; ++i)
       (void)ctx.check();
@@ -42,7 +40,6 @@ inline constexpr thrice thrice_v{};
 struct describe {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     std::printf("kind=%d semantic=%d comment=%s result=%d\n", (int)ctx.kind(),
                 (int)ctx.semantic(), ctx.comment(), (int)ctx.check());

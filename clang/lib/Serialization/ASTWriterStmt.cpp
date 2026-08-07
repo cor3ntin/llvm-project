@@ -499,7 +499,6 @@ void ASTStmtWriter::VisitContractStmt(ContractStmt *S) {
   CurrentPackingBits.addBit(S->ContractAssertBits.HasControlExpr);
   Record.push_back(S->getAttrs().size());
   Record.push_back(S->controlIsIgnored());
-  Record.push_back(S->controlAssumable());
   bool HasViolationCall = S->getViolationCall() != nullptr;
   Record.push_back(HasViolationCall);
 

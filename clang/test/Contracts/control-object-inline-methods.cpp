@@ -15,7 +15,6 @@ using namespace std::contracts;
 template <class T> struct ctl {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     (void)ctx.check();
   }
@@ -25,7 +24,6 @@ struct tagged {
   const char *tag;
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     (void)ctx.check();
   }

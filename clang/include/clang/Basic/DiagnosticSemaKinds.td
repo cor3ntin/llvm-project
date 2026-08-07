@@ -13141,10 +13141,14 @@ def err_contract_control_not_class : Error<
 def err_contract_control_incomplete : Error<
   "assertion-control object has incomplete type %0">;
 def err_contract_control_missing_member : Error<
-  "assertion-control object type %0 is missing required member %1">;
+  "assertion-control object type %0 is missing required member '%1'">;
 def err_contract_control_no_static_info : Error<
   "cannot find 'std::__create_assertion_static_info'; include <contracts> to "
   "name an assertion-control object">;
+def err_contract_control_bad_member : Error<
+  "member '%0' of assertion-control object type %1 must be callable as "
+  "'%0(std::contracts::assertion_static_info)' and return a constant of type "
+  "bool">;
 def err_contract_control_result_name : Error<
   "a postcondition whose predicate names its result is not yet supported with "
   "an assertion-control object">;

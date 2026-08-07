@@ -18,7 +18,6 @@ using namespace std::contracts;
 struct lenient {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   constexpr void operator()(const assertion_context &) const {}
 };
 inline constexpr lenient lenient_v{};
@@ -27,7 +26,6 @@ inline constexpr lenient lenient_v{};
 struct strict {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   constexpr void operator()(const assertion_context &ctx) const {
     if (!ctx.check())
       __builtin_trap(); // expected-note 3 {{subexpression not valid in a constant expression}}
@@ -39,7 +37,6 @@ inline constexpr strict strict_v{};
 struct never {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   constexpr void operator()(const assertion_context &) const {}
 };
 inline constexpr never never_v{};
@@ -48,7 +45,6 @@ inline constexpr never never_v{};
 struct ignored {
   static consteval bool is_ignored(assertion_static_info) { return true; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   constexpr void operator()(const assertion_context &) const {}
 };
 inline constexpr ignored ignored_v{};
@@ -120,7 +116,6 @@ namespace repeated_evaluation {
 struct twice {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   constexpr void operator()(const assertion_context &ctx) const {
     const bool first = ctx.check();
     const bool second = ctx.check();
@@ -147,7 +142,6 @@ namespace context_at_compile_time {
 struct describing {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   constexpr void operator()(const assertion_context &ctx) const {
     if (ctx.kind() != assertion_kind::pre)
       __builtin_trap(); // expected-note {{subexpression not valid in a constant expression}}

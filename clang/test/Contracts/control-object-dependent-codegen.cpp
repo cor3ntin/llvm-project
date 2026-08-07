@@ -3,17 +3,15 @@
 // D4324: when the control object is dependent, the decisions the compiler makes
 // about a contract have to be made per instantiation. control-object-dependent.cpp
 // covers the ones that show up as diagnostics; this covers the ones that only
-// show up in the emitted code - whether the check is there at all, and whether an
-// ignored contract is still handed to the optimizer.
+// show up in the emitted code - whether the dispatch is there at all.
 
 #include "Inputs/assertion_control.h"
 
 using namespace std::contracts;
 
-template <bool Ignore, bool Assume> struct ctl {
+template <bool Ignore> struct ctl {
   static consteval bool is_ignored(assertion_static_info) { return Ignore; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = Assume;
   void operator()(const assertion_context &ctx) const {
     if (!ctx.check())
       __builtin_trap();
@@ -24,7 +22,7 @@ template <bool Ignore, bool Assume> struct ctl {
 // specialization of ctl governs the contract is only known once T is.
 template <class T> struct Outer {
   struct Nested {
-    static constexpr ctl<sizeof(T) == 1, false> c{};
+    static constexpr ctl<sizeof(T) == 1> c{};
     static int f(int x) pre<c>(x > 0) { return x; }
   };
 };
@@ -41,21 +39,3 @@ int checked(int x) { return Outer<int>::Nested::f(x); }
 // CHECK: ret
 
 int skipped(int x) { return Outer<char>::Nested::f(x); }
-
-// An ignored but assumable contract still reaches the optimizer as an
-// assumption, and that pairing is likewise decided per instantiation.
-template <class T> struct Assumed {
-  static constexpr ctl<true, sizeof(T) == 1> c{};
-  static int f(int x) pre<c>(x > 0) { return x; }
-};
-
-// Ignored and not assumable: nothing at all is emitted for the contract.
-// CHECK-LABEL: define {{.*}} @_ZN7AssumedIiE1fEi
-// CHECK-NOT: llvm.assume
-// CHECK: ret
-int not_assumed(int x) { return Assumed<int>::f(x); }
-
-// Ignored and assumable: the predicate survives as an assumption.
-// CHECK-LABEL: define {{.*}} @_ZN7AssumedIcE1fEi
-// CHECK: call void @llvm.assume
-int assumed(int x) { return Assumed<char>::f(x); }

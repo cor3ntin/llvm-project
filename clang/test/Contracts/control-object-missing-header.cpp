@@ -11,7 +11,6 @@ struct my_info {};
 struct my_control {
   static consteval bool is_ignored(my_info) { return false; }
   static consteval bool constify(my_info) { return false; }
-  static constexpr bool assumable = false;
   int operator()(const char *, int, int) const { return 0; }
 };
 inline constexpr my_control ctl{};

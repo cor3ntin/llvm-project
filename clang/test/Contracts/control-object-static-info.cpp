@@ -17,7 +17,6 @@ struct follows_semantic {
     return info.semantic() == evaluation_semantic::ignore;
   }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     if (!ctx.check())
       __builtin_trap();
@@ -32,7 +31,6 @@ struct boundary_only {
     return info.side() == assertion_check_side::not_applicable;
   }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     if (!ctx.check())
       __builtin_trap();

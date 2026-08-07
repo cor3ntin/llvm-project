@@ -23,7 +23,6 @@ struct WithState {
   const char *label;
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     (void)ctx.check();
   }
@@ -38,10 +37,13 @@ int bad2(int x) pre<incomplete_v>(x > 0) { return x; }
 // expected-error@-1 {{assertion-control object has incomplete type 'const Incomplete'}}
 
 // A class missing the required members is rejected, one diagnostic per member.
+// Only is_ignored and operator() are required; constify is optional and
+// defaults to false. See control-object-diagnostics.cpp.
 struct Missing {};
 inline constexpr Missing missing_v{};
 int bad3(int x) pre<missing_v>(x > 0) { return x; }
-// expected-error@-1 4 {{is missing required member}}
+// expected-error@-1 {{assertion-control object type 'const Missing' is missing required member 'is_ignored'}}
+// expected-error@-2 {{assertion-control object type 'const Missing' is missing required member 'operator()'}}
 
 // A dependent control object defers checking to instantiation: no error here.
 template <auto C> int tpl(int x) pre<C>(x > 0) { return x; }

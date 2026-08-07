@@ -575,10 +575,9 @@ class ContractStmt final
   // transforms.
   Stmt *ViolationCall = nullptr;
 
-  // D4324: const-evaluated `T::is_ignored(cfg)` and `T::assumable` for the
-  // build-selected config. Only meaningful when hasExplicitControl().
+  // D4324: const-evaluated `T::is_ignored(info)`. Only meaningful when
+  // hasExplicitControl().
   bool ControlIsIgnored = false;
-  bool ControlAssumable = false;
 
   // D4324 assertion_context::check(): the predicate has to be callable on
   // demand, because the control object decides whether and how often to
@@ -718,9 +717,6 @@ public:
   bool controlIsIgnored() const { return ControlIsIgnored; }
   void setControlIsIgnored(bool V) { ControlIsIgnored = V; }
 
-  /// Whether the control object's `assumable` member is true.
-  bool controlAssumable() const { return ControlAssumable; }
-  void setControlAssumable(bool V) { ControlAssumable = V; }
 
   /// The synthesized `bool(void **)` that evaluates this predicate on demand,
   /// or null if the contract does not need one. See the member comment.

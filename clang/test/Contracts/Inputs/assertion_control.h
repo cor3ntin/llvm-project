@@ -204,7 +204,6 @@ concept assertion_control =
                                    assertion_static_info info) {
       { T::is_ignored(info) } -> std::same_as<bool>;
       { T::constify(info) } -> std::same_as<bool>;
-      { T::assumable } -> std::convertible_to<bool>;
       { c(ctx) } -> std::same_as<void>;
     };
 
@@ -213,7 +212,6 @@ struct default_control {
     return info.semantic() == evaluation_semantic::ignore;
   }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     if (ctx.check())
       return;
@@ -227,7 +225,6 @@ inline constexpr default_control default_v{};
 struct review {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return true; }
-  static constexpr bool assumable = false;
   void operator()(const assertion_context &ctx) const {
     (void)ctx.check();
   }
@@ -238,7 +235,6 @@ inline constexpr review review_v{};
 struct mandatory {
   static consteval bool is_ignored(assertion_static_info) { return false; }
   static consteval bool constify(assertion_static_info) { return false; }
-  static constexpr bool assumable = true;
   void operator()(const assertion_context &ctx) const {
     if (!ctx.check())
       __builtin_trap();

@@ -517,7 +517,6 @@ void ASTStmtReader::VisitContractStmt(ContractStmt *S) {
   Record.skipInts(1);
   unsigned NumAttrs = Record.readInt();
   S->setControlIsIgnored(Record.readInt());
-  S->setControlAssumable(Record.readInt());
   bool HasViolationCall = Record.readInt();
 
   S->KeywordLoc = Record.readSourceLocation();

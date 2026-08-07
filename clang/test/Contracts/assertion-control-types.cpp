@@ -50,7 +50,6 @@ static_assert(!assertion_control<int>);
 static_assert(default_control::constify(make_info(
                   evaluation_semantic::enforce,
                   assertion_check_side::definition)) == false);
-static_assert(default_control::assumable == false);
 static_assert(default_control::is_ignored(make_info(
     evaluation_semantic::ignore, assertion_check_side::definition)));
 static_assert(!default_control::is_ignored(make_info(
@@ -60,12 +59,10 @@ static_assert(!default_control::is_ignored(make_info(
 static_assert(review::constify(make_info(
                   evaluation_semantic::enforce,
                   assertion_check_side::definition)) == true);
-static_assert(review::assumable == false);
 static_assert(!review::is_ignored(make_info(
     evaluation_semantic::ignore, assertion_check_side::definition)));
 
 // mandatory: guaranteed-enforced and optimizable.
-static_assert(mandatory::assumable == true);
 static_assert(mandatory::constify(make_info(
                   evaluation_semantic::enforce,
                   assertion_check_side::definition)) == false);

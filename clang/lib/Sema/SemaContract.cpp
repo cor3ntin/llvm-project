@@ -171,7 +171,7 @@ ExprResult Sema::ActOnContractAssertCondition(Expr *Cond)  {
 
 /// D4324: the class describing a named assertion-control object, or null when
 /// the object is absent, dependent, or not of class type. The control object's
-/// static properties (is_ignored, constify, assumable) and its call operator are
+/// static properties (is_ignored, optional constify) and its call operator are
 /// all looked up on this class.
 static const CXXRecordDecl *getControlObjectRecord(const Expr *ControlExpr) {
   if (!ControlExpr || ControlExpr->isTypeDependent() ||
@@ -182,28 +182,6 @@ static const CXXRecordDecl *getControlObjectRecord(const Expr *ControlExpr) {
   return RD ? RD->getDefinition() : nullptr;
 }
 
-/// D4324: read a constexpr bool data member off a control object's class,
-/// returning nullopt when it is missing or has no usable constant value. A
-/// static data member of a class template specialization is only instantiated on
-/// use, so its initializer has to be requested before it can be folded.
-static std::optional<bool> readControlBoolMember(Sema &S,
-                                                 const CXXRecordDecl *RD,
-                                                 StringRef Name,
-                                                 SourceLocation Loc) {
-  for (NamedDecl *ND : RD->lookup(&S.Context.Idents.get(Name))) {
-    auto *VD = dyn_cast<VarDecl>(ND->getUnderlyingDecl());
-    if (!VD)
-      continue;
-    if (!VD->getAnyInitializer() &&
-        VD->getTemplateSpecializationKind() == TSK_ImplicitInstantiation)
-      S.InstantiateVariableDefinition(Loc, VD);
-    if (!VD->getAnyInitializer())
-      continue;
-    if (const APValue *V = VD->evaluateValue(); V && V->isInt())
-      return V->getInt().getBoolValue();
-  }
-  return std::nullopt;
-}
 
 bool Sema::CheckContractControlObject(Expr *ControlExpr, SourceLocation Loc) {
   // No control object named, or still dependent: nothing to check now. A
@@ -233,12 +211,12 @@ bool Sema::CheckContractControlObject(Expr *ControlExpr, SourceLocation Loc) {
     return !R.empty();
   };
 
+  // `constify` is optional and defaults to false, so a control object that does
+  // not care about constification need not mention it.
   bool Ok = true;
-  for (StringRef Member : {"is_ignored", "constify", "assumable"}) {
-    if (!HasMember(&Context.Idents.get(Member))) {
-      Diag(Loc, diag::err_contract_control_missing_member) << T << Member;
-      Ok = false;
-    }
+  if (!HasMember(&Context.Idents.get("is_ignored"))) {
+    Diag(Loc, diag::err_contract_control_missing_member) << T << "is_ignored";
+    Ok = false;
   }
   if (!HasMember(Context.DeclarationNames.getCXXOperatorName(OO_Call))) {
     Diag(Loc, diag::err_contract_control_missing_member) << T << "operator()";
@@ -431,6 +409,72 @@ FunctionDecl *buildContractCheckFn(Sema &S, ContractStmt *CS) {
   return FD;
 }
 
+// D4324: const-evaluate one of a control object's compile-time policies,
+// `bool Name(assertion_static_info)`. Returns nullopt when the member is absent,
+// which is not an error for an optional policy such as `constify`.
+//
+// A member that is present but not callable that way is diagnosed here rather
+// than being left to overload resolution: the call is synthesized, so the usual
+// cascade points at code the user never wrote and has been seen to suggest a
+// same-named member of an unrelated class.
+std::optional<bool> evaluateControlPolicy(Sema &S, const CXXRecordDecl *RD,
+                                          StringRef Name, ContractKind CK,
+                                          ContractEvaluationSemantic Sem,
+                                          QualType T, SourceLocation Loc) {
+  ASTContext &Ctx = S.Context;
+  LookupResult R(S, DeclarationName(&Ctx.Idents.get(Name)), Loc,
+                 Sema::LookupOrdinaryName);
+  S.LookupQualifiedName(R, const_cast<CXXRecordDecl *>(RD));
+  if (R.empty())
+    return std::nullopt;
+
+  ExprResult Info = buildAssertionStaticInfo(S, CK, Sem, Loc);
+  if (Info.isInvalid())
+    return std::nullopt;
+
+  // Check the shape before forming a call. These members are usually consteval,
+  // and merely naming a consteval function that does not end up part of an
+  // immediate invocation is an error in itself - so a member that cannot take
+  // the static info has to be rejected without building a call to it, or that
+  // error surfaces instead of this one.
+  QualType InfoTy = Info.get()->getType();
+  bool Callable = false;
+  for (NamedDecl *ND : R) {
+    const auto *FD = dyn_cast<FunctionDecl>(ND->getUnderlyingDecl());
+    if (FD && FD->getNumParams() == 1 &&
+        S.Context.hasSameUnqualifiedType(
+            FD->getParamDecl(0)->getType().getNonReferenceType(), InfoTy)) {
+      Callable = true;
+      break;
+    }
+  }
+  if (!Callable) {
+    S.Diag(Loc, diag::err_contract_control_bad_member) << Name << T;
+    return std::nullopt;
+  }
+
+  {
+    // An SFINAE trap rather than a tentative scope: forming the call can emit
+    // errors of its own (naming a consteval function outside an immediate
+    // invocation, for one), and those describe the synthesized call rather than
+    // the mistake in the object.
+    Sema::SFINAETrap Trap(S);
+    CXXScopeSpec SS;
+    ExprResult Fn = S.BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
+    if (!Fn.isInvalid()) {
+      Expr *Args[] = {Info.get()};
+      ExprResult Call = S.BuildCallExpr(nullptr, Fn.get(), Loc, Args, Loc);
+      bool Value = false;
+      if (!Call.isInvalid() && !Trap.hasErrorOccurred() &&
+          Call.get()->EvaluateAsBooleanCondition(Value, Ctx))
+        return Value;
+    }
+  }
+
+  S.Diag(Loc, diag::err_contract_control_bad_member) << Name << T;
+  return std::nullopt;
+}
+
 // D4324: the addresses the checker needs, as a `void **`. Built as a compound
 // literal so it lowers to an ordinary local array; a contract whose predicate
 // reads nothing from the enclosing function passes a null pointer.
@@ -489,7 +533,7 @@ ExprResult buildContractArgsArray(Sema &S, ContractStmt *CS, QualType ArgsTy,
 // D4324: synthesize the runtime dispatch for a contract that names a
 // non-dependent control object. Builds the violation-handler call
 // `obj(comment, loc, cfg)` (evaluated when the predicate is false) and
-// const-evaluates `T::is_ignored(cfg)` and `T::assumable` for the build config,
+// const-evaluates `T::is_ignored(info)` for the build config,
 // where T is the control object's type. Returns false if T does not model the
 // assertion_control interface well enough to form the call; diagnostics for that
 // case come from the expression builders.
@@ -501,52 +545,25 @@ bool synthesizeControlObjectDispatch(Sema &S, ContractStmt *CS) {
   const CXXRecordDecl *RD = getControlObjectRecord(ControlExpr);
   assert(RD && "control object validated by CheckContractControlObject");
 
-  // Read the argument types off operator()(const char*, source_location, cfg).
-  const CXXMethodDecl *CallOp = nullptr;
-  for (NamedDecl *ND :
-       RD->lookup(Ctx.DeclarationNames.getCXXOperatorName(OO_Call))) {
-    if (auto *M = dyn_cast<CXXMethodDecl>(ND->getUnderlyingDecl())) {
-      CallOp = M;
-      break;
-    }
-  }
-  if (!CallOp || CallOp->getNumParams() != 1)
-    return false;
+  // Whether operator() can actually be called with an assertion_context is left
+  // to overload resolution on the call built below, which reports a mismatch
+  // properly. Short-circuiting on the parameter count here instead just failed
+  // silently.
 
   // The synthesized call is real, runtime-evaluated code: build it in a
   // potentially-evaluated context so operator() is marked used and emitted.
   EnterExpressionEvaluationContext Eval(
       S, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
 
-  // Step 1 datum: const-evaluate T::is_ignored(static_info).
-  {
-    ExprResult Info = buildAssertionStaticInfo(S, CS->getContractKind(),
-                                               CS->getSemantic(Ctx), Loc);
-    if (Info.isInvalid())
-      return false;
-    LookupResult R(S, DeclarationName(&Ctx.Idents.get("is_ignored")), Loc,
-                   Sema::LookupOrdinaryName);
-    S.LookupQualifiedName(R, const_cast<CXXRecordDecl *>(RD));
-    if (!R.isSingleResult())
-      return false;
-    CXXScopeSpec SS;
-    ExprResult Fn = S.BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
-    if (Fn.isInvalid())
-      return false;
-    Expr *IgnoredArgs[] = {Info.get()};
-    ExprResult Call = S.BuildCallExpr(nullptr, Fn.get(), Loc, IgnoredArgs, Loc);
-    if (Call.isInvalid())
-      return false;
-    bool Ignored = false;
-    if (!Call.get()->EvaluateAsBooleanCondition(Ignored, Ctx))
-      return false;
-    CS->setControlIsIgnored(Ignored);
-  }
-
-  // Step 1 datum: read T::assumable (static constexpr bool).
-  if (std::optional<bool> Assumable =
-          readControlBoolMember(S, RD, "assumable", Loc))
-    CS->setControlAssumable(*Assumable);
+  // Step 1 datum: const-evaluate T::is_ignored(static_info). Unlike constify
+  // this one is required, and a missing member was already diagnosed by
+  // CheckContractControlObject.
+  std::optional<bool> Ignored =
+      evaluateControlPolicy(S, RD, "is_ignored", CS->getContractKind(),
+                            CS->getSemantic(Ctx), ControlExpr->getType(), Loc);
+  if (!Ignored)
+    return false;
+  CS->setControlIsIgnored(*Ignored);
 
   // An ignored contract never reaches the control object, so there is nothing
   // left to build: no checker, no context, and no call. The predicate may still
@@ -2289,30 +2306,12 @@ bool Sema::shouldConstifyContractPredicate(Expr *ControlExpr, ContractKind CK) {
   // parsed yet, because whether it is constified is what we are deciding - so
   // there is no ContractStmt to read a per-contract semantic off yet and the
   // build-selected default is used.
+  // constify is optional: absent means no constification.
   SourceLocation Loc = ControlExpr->getExprLoc();
-  ExprResult Info = buildAssertionStaticInfo(
-      *this, CK, LangOpts.ContractOpts.DefaultSemantic, Loc);
-  if (Info.isInvalid())
-    return LangOpts.ContractConstification;
-
-  LookupResult R(*this, DeclarationName(&Context.Idents.get("constify")), Loc,
-                 LookupOrdinaryName);
-  LookupQualifiedName(R, const_cast<CXXRecordDecl *>(RD));
-  if (!R.isSingleResult())
-    return false;
-
-  CXXScopeSpec SS;
-  ExprResult Fn = BuildDeclarationNameExpr(SS, R, /*NeedsADL=*/false);
-  if (Fn.isInvalid())
-    return false;
-
-  Expr *Args[] = {Info.get()};
-  ExprResult Call = BuildCallExpr(nullptr, Fn.get(), Loc, Args, Loc);
-  bool Constify = false;
-  if (Call.isInvalid() ||
-      !Call.get()->EvaluateAsBooleanCondition(Constify, Context))
-    return false;
-  return Constify;
+  return evaluateControlPolicy(*this, RD, "constify", CK,
+                               LangOpts.ContractOpts.DefaultSemantic,
+                               ControlExpr->getType(), Loc)
+      .value_or(false);
 }
 
 void Sema::PushContractScope(ContractKind Kind, ContractScopeOffset ScopeOffset,
