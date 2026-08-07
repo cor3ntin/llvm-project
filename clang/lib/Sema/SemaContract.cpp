@@ -438,21 +438,43 @@ std::optional<bool> evaluateControlPolicy(Sema &S, const CXXRecordDecl *RD,
   // the static info has to be rejected without building a call to it, or that
   // error surfaces instead of this one.
   QualType InfoTy = Info.get()->getType();
-  bool Callable = false;
+  const FunctionDecl *Match = nullptr;
+  bool IsConsteval = false;
   for (NamedDecl *ND : R) {
     const auto *FD = dyn_cast<FunctionDecl>(ND->getUnderlyingDecl());
-    if (FD && FD->getNumParams() == 1 &&
-        S.Context.hasSameUnqualifiedType(
-            FD->getParamDecl(0)->getType().getNonReferenceType(), InfoTy)) {
-      Callable = true;
+    if (!FD || FD->getNumParams() != 1)
+      continue;
+    // It is called without an object, so a non-static member is no good - and
+    // naming one is another way to reach the consteval address-of error.
+    if (const auto *MD = dyn_cast<CXXMethodDecl>(FD); MD && MD->isInstance())
+      continue;
+    if (!S.Context.hasSameUnqualifiedType(
+            FD->getParamDecl(0)->getType().getNonReferenceType(), InfoTy))
+      continue;
+    Match = FD;
+    if (FD->isConsteval()) {
+      IsConsteval = true;
       break;
     }
   }
-  if (!Callable) {
+  if (!Match) {
     S.Diag(Loc, diag::err_contract_control_bad_member) << Name << T;
     return std::nullopt;
   }
+  // constexpr is not enough. A constexpr function can also be called at run
+  // time, so it does not say on its face that this policy is fixed at compile
+  // time; requiring consteval means the answer cannot depend on anything else.
+  if (!IsConsteval) {
+    S.Diag(Loc, diag::err_contract_control_not_consteval) << Name << T;
+    S.Diag(Match->getLocation(), diag::note_declared_at);
+    return std::nullopt;
+  }
 
+  // The shape is right, so anything that goes wrong from here is about the
+  // value. Being consteval, the call is an immediate invocation, and a member
+  // that cannot produce a constant has already been reported against whatever
+  // inside it was not constant - a better place to point than the contract.
+  bool AlreadyDiagnosed = false;
   {
     // An SFINAE trap rather than a tentative scope: forming the call can emit
     // errors of its own (naming a consteval function outside an immediate
@@ -465,13 +487,16 @@ std::optional<bool> evaluateControlPolicy(Sema &S, const CXXRecordDecl *RD,
       Expr *Args[] = {Info.get()};
       ExprResult Call = S.BuildCallExpr(nullptr, Fn.get(), Loc, Args, Loc);
       bool Value = false;
-      if (!Call.isInvalid() && !Trap.hasErrorOccurred() &&
-          Call.get()->EvaluateAsBooleanCondition(Value, Ctx))
-        return Value;
+      if (!Call.isInvalid() && !Trap.hasErrorOccurred()) {
+        if (Call.get()->EvaluateAsBooleanCondition(Value, Ctx))
+          return Value;
+        AlreadyDiagnosed = true;
+      }
     }
   }
 
-  S.Diag(Loc, diag::err_contract_control_bad_member) << Name << T;
+  if (!AlreadyDiagnosed)
+    S.Diag(Loc, diag::err_contract_control_bad_member) << Name << T;
   return std::nullopt;
 }
 

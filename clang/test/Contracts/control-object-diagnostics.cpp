@@ -63,15 +63,76 @@ inline constexpr bad_constify bad_constify_v{};
 // expected-error@+1 {{member 'constify' of assertion-control object type 'const bad_constify' must be callable as 'constify(std::contracts::assertion_static_info)' and return a constant of type bool}}
 int wrong_constify(int x) pre<bad_constify_v>(x > 0) { return x; }
 
-// is_ignored that is not a constant expression.
-bool runtime_flag();
-struct non_constant {
+// These must be consteval. constexpr is not enough: a constexpr function can
+// also be called at run time, so it does not on its face fix the policy at
+// compile time.
+bool runtime_flag(); // expected-note {{declared here}}
+struct plain_constexpr {
+  // expected-note@+1 {{declared here}}
+  static constexpr bool is_ignored(assertion_static_info) { return false; }
+  void operator()(const assertion_context &ctx) const { (void)ctx.check(); }
+};
+inline constexpr plain_constexpr plain_constexpr_v{};
+// expected-error@+1 {{member 'is_ignored' of assertion-control object type 'const plain_constexpr' must be declared consteval; it decides how the contract is compiled, so it cannot be a function that might only be known at run time}}
+int constexpr_rejected(int x) pre<plain_constexpr_v>(x > 0) { return x; }
+
+// The optional constify is held to the same rule when it is present.
+struct constexpr_constify {
+  static consteval bool is_ignored(assertion_static_info) { return false; }
+  // expected-note@+1 {{declared here}}
+  static constexpr bool constify(assertion_static_info) { return true; }
+  void operator()(const assertion_context &ctx) const { (void)ctx.check(); }
+};
+inline constexpr constexpr_constify constexpr_constify_v{};
+// expected-error@+1 {{member 'constify' of assertion-control object type 'const constexpr_constify' must be declared consteval}}
+int constexpr_constify_rejected(int x) pre<constexpr_constify_v>(x > 0) {
+  return x;
+}
+
+// Not constexpr at all is likewise rejected, and for the same reason.
+struct not_constexpr {
+  // expected-note@+1 {{declared here}}
   static bool is_ignored(assertion_static_info) { return runtime_flag(); }
   void operator()(const assertion_context &ctx) const { (void)ctx.check(); }
 };
-inline constexpr non_constant non_constant_v{};
-// expected-error@+1 {{member 'is_ignored' of assertion-control object type 'const non_constant' must be callable as 'is_ignored(std::contracts::assertion_static_info)' and return a constant of type bool}}
-int not_constant(int x) pre<non_constant_v>(x > 0) { return x; }
+inline constexpr not_constexpr not_constexpr_v{};
+// expected-error@+1 {{member 'is_ignored' of assertion-control object type 'const not_constexpr' must be declared consteval}}
+int no_constexpr(int x) pre<not_constexpr_v>(x > 0) { return x; }
+
+// Requiring consteval means a member that cannot produce a constant is reported
+// by the immediate-invocation machinery, pointing at what actually went wrong
+// inside it rather than at the contract.
+struct consteval_not_constant {
+  static consteval bool is_ignored(assertion_static_info) {
+    // expected-note@+1 {{non-constexpr function 'runtime_flag' cannot be used in a constant expression}}
+    return runtime_flag();
+  }
+  void operator()(const assertion_context &ctx) const { (void)ctx.check(); }
+};
+inline constexpr consteval_not_constant consteval_not_constant_v{};
+// expected-error@+2 {{call to consteval function 'consteval_not_constant::is_ignored' is not a constant expression}}
+// expected-note@+1 {{in call to}}
+int not_constant(int x) pre<consteval_not_constant_v>(x > 0) { return x; }
+
+// A non-static member cannot be called without an object, so it does not count
+// as providing the policy - and saying so must not leak the consteval
+// address-of error that naming it would otherwise produce.
+struct non_static {
+  consteval bool is_ignored(assertion_static_info) const { return false; }
+  void operator()(const assertion_context &ctx) const { (void)ctx.check(); }
+};
+inline constexpr non_static non_static_v{};
+// expected-error@+1 {{member 'is_ignored' of assertion-control object type 'const non_static' must be callable as 'is_ignored(std::contracts::assertion_static_info)' and return a constant of type bool}}
+int instance_member(int x) pre<non_static_v>(x > 0) { return x; }
+
+// A data member of the right type is not callable either.
+struct data_member {
+  static constexpr bool is_ignored = false;
+  void operator()(const assertion_context &ctx) const { (void)ctx.check(); }
+};
+inline constexpr data_member data_member_v{};
+// expected-error@+1 {{member 'is_ignored' of assertion-control object type 'const data_member' must be callable as 'is_ignored(std::contracts::assertion_static_info)' and return a constant of type bool}}
+int not_a_function(int x) pre<data_member_v>(x > 0) { return x; }
 
 // is_ignored of the right arity but the wrong parameter type.
 struct wrong_param {
