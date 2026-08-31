@@ -2682,6 +2682,11 @@ void StmtProfiler::VisitTemplateArgument(const TemplateArgument &Arg) {
     break;
   }
 
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    VisitDecl(Arg.getAsUniversalTemplateParameterOrPattern()->getDecl());
+    break;
+
   case TemplateArgument::Pack:
     for (const auto &P : Arg.pack_elements())
       VisitTemplateArgument(P);

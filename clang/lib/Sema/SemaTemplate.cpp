@@ -987,6 +987,15 @@ static TemplateArgumentLoc translateTemplateArgument(Sema &SemaRef,
         Arg.getNameLoc(), Arg.getEllipsisLoc());
   }
 
+  case ParsedTemplateArgument::Universal: {
+    UniversalTemplateParameterName *N =
+        Arg.getAsUniversalTemplateParamName().get();
+    TemplateArgument TArg(N);
+    return TemplateArgumentLoc(SemaRef.Context, TArg,
+                               /*TemplateKWLoc=*/SourceLocation(),
+                               NestedNameSpecifierLoc(), Arg.getNameLoc());
+  }
+
   case ParsedTemplateArgument::PartiallyAppliedConcept: {
     PartiallyAppliedConcept *C = Arg.getAsConcept();
     return TemplateArgumentLoc(
@@ -2586,6 +2595,12 @@ bool Sema::CheckTemplateParameterList(TemplateParameterList *NewParams,
         PreviousDefaultArgLoc = NewNonTypeParm->getDefaultArgumentLoc();
       } else if (SawDefaultArgument)
         MissingDefaultArg = true;
+    } else if (isa<UniversalTemplateParmDecl>(*NewParam)) {
+      // A universal template parameter has no type, no nested parameter list,
+      // and cannot yet have a default argument, so there is nothing to check.
+      if (OldParams)
+        ++OldParam;
+      continue;
     } else {
       TemplateTemplateParmDecl *NewTemplateParm
         = cast<TemplateTemplateParmDecl>(*NewParam);
@@ -2709,8 +2724,8 @@ bool Sema::CheckTemplateParameterList(TemplateParameterList *NewParams,
       else if (NonTypeTemplateParmDecl *NTTP
                                 = dyn_cast<NonTypeTemplateParmDecl>(*NewParam))
         NTTP->removeDefaultArgument();
-      else
-        cast<TemplateTemplateParmDecl>(*NewParam)->removeDefaultArgument();
+      else if (auto *TTP = dyn_cast<TemplateTemplateParmDecl>(*NewParam))
+        TTP->removeDefaultArgument();
     }
   }
 
@@ -2745,8 +2760,10 @@ struct DependencyChecker : DynamicRecursiveASTVisitor {
     } else if (NonTypeTemplateParmDecl *PD =
                  dyn_cast<NonTypeTemplateParmDecl>(ND)) {
       Depth = PD->getDepth();
+    } else if (auto *PD = dyn_cast<TemplateTemplateParmDecl>(ND)) {
+      Depth = PD->getDepth();
     } else {
-      Depth = cast<TemplateTemplateParmDecl>(ND)->getDepth();
+      Depth = cast<UniversalTemplateParmDecl>(ND)->getDepth();
     }
   }
 
@@ -4234,6 +4251,8 @@ static bool isTemplateArgumentTemplateParameter(const TemplateArgument &Arg,
   case TemplateArgument::Pack:
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     return false;
 
   case TemplateArgument::Type: {
@@ -5224,6 +5243,47 @@ TemplateNameKind Sema::ActOnTemplateName(Scope *S,
   return TNK_Non_template;
 }
 
+NamedDecl *Sema::ActOnUniversalTemplateParameter(
+    Scope *S, SourceLocation IntroducerLoc, SourceLocation EllipsisLoc,
+    IdentifierInfo *ParamName, SourceLocation NameLoc, unsigned Depth,
+    unsigned Position) {
+  assert(S->isTemplateParamScope() &&
+         "Universal template parameter not in template parameter scope!");
+
+  UniversalTemplateParmDecl *Param = UniversalTemplateParmDecl::Create(
+      Context, Context.getTranslationUnitDecl(),
+      NameLoc.isInvalid() ? IntroducerLoc : NameLoc, Depth, Position,
+      /*ParameterPack=*/EllipsisLoc.isValid(), ParamName);
+  Param->setAccess(AS_public);
+
+  if (Param->isParameterPack())
+    if (auto *LSI = getCurLambda())
+      LSI->LocalPacks.push_back(Param);
+
+  if (ParamName) {
+    maybeDiagnoseTemplateParameterShadow(*this, S, NameLoc, ParamName);
+    S->AddDecl(Param);
+    IdResolver.AddDecl(Param);
+  }
+  return Param;
+}
+
+bool Sema::ActOnUniversalTemplateParameterName(
+    Scope *S, const UnqualifiedId &Name, bool EnteringContext,
+    UniversalTemplateParamNameTy &Result) {
+  DeclarationNameInfo DNI = GetNameFromUnqualifiedId(Name);
+  LookupResult R(*this, DNI.getName(), Name.getBeginLoc(), LookupOrdinaryName);
+  LookupName(R, S);
+  if (!R.isSingleResult())
+    return true;
+  auto *UTP = R.getAsSingle<UniversalTemplateParmDecl>();
+  if (!UTP)
+    return true;
+  Result = UniversalTemplateParamNameTy::make(
+      Context.getUniversalTemplateParameterName(Name.getBeginLoc(), DNI, UTP));
+  return false;
+}
+
 PartiallyAppliedConcept *Sema::BuildPartiallyAppliedConcept(
     NestedNameSpecifierLoc NNS, SourceLocation ConceptKWLoc,
     DeclarationNameInfo ConceptName, TemplateName Concept,
@@ -5281,6 +5341,13 @@ bool Sema::CheckTemplateTypeArgument(
     diagnoseMissingTemplateArguments(Name, SR.getEnd());
     return true;
   }
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    // A universal template parameter may stand in for a type; whether it
+    // actually does is only known once it has been substituted.
+    SugaredConverted.push_back(Arg);
+    CanonicalConverted.push_back(Context.getCanonicalTemplateArgument(Arg));
+    return false;
   case TemplateArgument::Expression: {
     // We have a template type parameter but the template argument is an
     // expression; see if maybe it is missing the "typename" keyword.
@@ -5573,6 +5640,10 @@ TemplateArgumentLoc Sema::SubstDefaultTemplateArgumentIfAvailable(
     return Output;
   }
 
+  // A universal template parameter cannot have a default argument yet.
+  if (isa<UniversalTemplateParmDecl>(Param))
+    return TemplateArgumentLoc();
+
   TemplateTemplateParmDecl *TempTempParm
     = cast<TemplateTemplateParmDecl>(Param);
   if (!hasReachableDefaultArgument(TempTempParm))
@@ -5778,6 +5849,15 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
       NoteTemplateParameterLocation(*Param);
       return true;
 
+    // A universal template parameter can stand in for a non-type argument;
+    // its kind is only known once it has been substituted.
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
+      CTAI.SugaredConverted.push_back(Arg);
+      CTAI.CanonicalConverted.push_back(
+          Context.getCanonicalTemplateArgument(Arg));
+      break;
+
     case TemplateArgument::Type: {
       // We have a non-type template parameter but the template
       // argument is a type.
@@ -5806,6 +5886,14 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
     return false;
   }
 
+
+  // A universal template parameter accepts an argument of any kind; what it
+  // actually names is only determined once it has been substituted.
+  if (isa<UniversalTemplateParmDecl>(Param)) {
+    CTAI.SugaredConverted.push_back(Arg);
+    CTAI.CanonicalConverted.push_back(Context.getCanonicalTemplateArgument(Arg));
+    return false;
+  }
 
   // Check template template parameters.
   TemplateTemplateParmDecl *TempParm = cast<TemplateTemplateParmDecl>(Param);
@@ -5868,6 +5956,16 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
     if (CheckPartiallyAppliedConceptTemplateArgument(TempParm, Params, ArgLoc))
       return true;
 
+    CTAI.SugaredConverted.push_back(Arg);
+    CTAI.CanonicalConverted.push_back(
+        Context.getCanonicalTemplateArgument(Arg));
+    break;
+
+  // A universal template parameter can stand in for a template argument;
+  // whether it actually names a template is only known once it has been
+  // substituted.
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     CTAI.SugaredConverted.push_back(Arg);
     CTAI.CanonicalConverted.push_back(
         Context.getCanonicalTemplateArgument(Arg));
@@ -6223,9 +6321,16 @@ bool Sema::CheckTemplateArgumentList(
                 dyn_cast<NonTypeTemplateParmDecl>(*Param))
           return diagnoseMissingArgument(*this, TemplateLoc, Template, NTTP,
                                          NewArgs);
-        return diagnoseMissingArgument(*this, TemplateLoc, Template,
-                                       cast<TemplateTemplateParmDecl>(*Param),
-                                       NewArgs);
+        if (auto *TTP = dyn_cast<TemplateTemplateParmDecl>(*Param))
+          return diagnoseMissingArgument(*this, TemplateLoc, Template, TTP,
+                                         NewArgs);
+        // A universal template parameter has no default argument to use.
+        Diag(TemplateLoc, diag::err_template_arg_list_different_arity)
+            << /*too few*/ 0 << getTemplateNameKindForDiagnostics(
+                   TemplateName(Template))
+            << Template;
+        NoteTemplateLocation(*Template, Params->getSourceRange());
+        return true;
       }
       return true;
     }
@@ -8326,6 +8431,8 @@ Sema::BuildExpressionFromNonTypeTemplateArgument(const TemplateArgument &Arg,
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     llvm_unreachable("not a non-type template argument");
 
   case TemplateArgument::Expression:
@@ -8998,6 +9105,8 @@ DeclResult Sema::ActOnClassTemplateSpecialization(
               << NTTP->getDefaultArgument().getSourceRange();
           NTTP->removeDefaultArgument();
         }
+      } else if (isa<UniversalTemplateParmDecl>(Param)) {
+        // Universal template parameters cannot have default arguments.
       } else {
         TemplateTemplateParmDecl *TTP = cast<TemplateTemplateParmDecl>(Param);
         if (TTP->hasDefaultArgument()) {

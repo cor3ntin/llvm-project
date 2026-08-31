@@ -41,7 +41,9 @@ namespace clang {
       Template,
       /// A concept with some of its leading arguments bound, stored as a
       /// PartiallyAppliedConcept.
-      PartiallyAppliedConcept
+      PartiallyAppliedConcept,
+      /// The name of a universal template parameter.
+      Universal
     };
 
     /// Build an empty template argument.
@@ -86,6 +88,12 @@ namespace clang {
         : Kind(ParsedTemplateArgument::PartiallyAppliedConcept), Arg(Concept),
           SS(SS), NameLoc(NameLoc) {}
 
+    /// Create a template argument naming a universal template parameter.
+    ParsedTemplateArgument(UniversalTemplateParamNameTy Name,
+                           SourceLocation NameLoc)
+        : Kind(ParsedTemplateArgument::Universal),
+          Arg(Name.getAsOpaquePtr()), NameLoc(NameLoc) {}
+
     /// Determine whether the given template argument is invalid.
     bool isInvalid() const { return Arg == nullptr; }
 
@@ -108,6 +116,13 @@ namespace clang {
     ParsedTemplateTy getAsTemplate() const {
       assert(Kind == Template && "Not a template template argument");
       return ParsedTemplateTy::getFromOpaquePtr(Arg);
+    }
+
+    /// Retrieve the universal template parameter name.
+    UniversalTemplateParamNameTy getAsUniversalTemplateParamName() const {
+      assert(Kind == Universal &&
+             "Not a reference to a universal template parameter");
+      return UniversalTemplateParamNameTy::getFromOpaquePtr(Arg);
     }
 
     /// Retrieve the partially applied concept.

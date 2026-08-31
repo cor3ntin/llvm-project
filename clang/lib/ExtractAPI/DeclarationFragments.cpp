@@ -1191,6 +1191,8 @@ DeclarationFragmentsBuilder::getFragmentsForTemplateArguments(
       break;
     }
 
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
     case TemplateArgument::Concept: {
       std::string Str;
       raw_string_ostream Stream(Str);
