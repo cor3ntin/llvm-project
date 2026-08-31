@@ -23,6 +23,7 @@
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/LLVM.h"
@@ -283,6 +284,10 @@ StringRef TemplateArgument::getKindName() const {
     return "structural value";
   case TemplateArgument::Concept:
     return "concept";
+  case TemplateArgument::Universal:
+    return "universal";
+  case TemplateArgument::UniversalExpansion:
+    return "universal expansion";
   }
   llvm_unreachable("unhandled ArgKind");
 }
@@ -331,6 +336,16 @@ TemplateArgumentDependence TemplateArgument::getDependence() const {
   case Concept:
     return getAsPartiallyAppliedConcept()->getDependence();
 
+  case Universal:
+    Deps = TemplateArgumentDependence::DependentInstantiation;
+    if (getAsUniversalTemplateParameterName()
+            ->containsUnexpandedParameterPack())
+      Deps |= TemplateArgumentDependence::UnexpandedPack;
+    return Deps;
+
+  case UniversalExpansion:
+    return TemplateArgumentDependence::DependentInstantiation;
+
   case Pack:
     for (const auto &P : pack_elements())
       Deps |= P.getDependence();
@@ -357,9 +372,11 @@ bool TemplateArgument::isPackExpansion() const {
   case Template:
   case NullPtr:
   case Concept:
+  case Universal:
     return false;
 
   case TemplateExpansion:
+  case UniversalExpansion:
     return true;
 
   case Type:
@@ -384,7 +401,9 @@ bool TemplateArgument::containsUnexpandedParameterPack() const {
 }
 
 UnsignedOrNone TemplateArgument::getNumTemplateExpansions() const {
-  assert(getKind() == TemplateExpansion);
+  assert(getKind() == TemplateExpansion || getKind() == UniversalExpansion);
+  if (getKind() == UniversalExpansion)
+    return UniversalArg.NumExpansions;
   return TemplateArg.NumExpansions;
 }
 
@@ -396,6 +415,8 @@ QualType TemplateArgument::getNonTypeTemplateArgumentType() const {
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     return QualType();
 
   case TemplateArgument::Integral:
@@ -469,6 +490,13 @@ void TemplateArgument::Profile(llvm::FoldingSetNodeID &ID,
     getAsPartiallyAppliedConcept()->Profile(ID, Context);
     break;
 
+  case UniversalExpansion:
+    ID.AddInteger(UniversalArg.NumExpansions.toInternalRepresentation());
+    [[fallthrough]];
+  case Universal:
+    UniversalArg.Name->Profile(ID);
+    break;
+
   case Pack:
     ID.AddInteger(Args.NumArgs);
     for (unsigned I = 0; I != Args.NumArgs; ++I)
@@ -512,6 +540,11 @@ bool TemplateArgument::structurallyEquals(const TemplateArgument &Other) const {
     return A == B;
   }
 
+  case Universal:
+  case UniversalExpansion:
+    return UniversalArg.Name == Other.UniversalArg.Name &&
+           UniversalArg.NumExpansions == Other.UniversalArg.NumExpansions;
+
   case Concept: {
     const PartiallyAppliedConcept *C = getAsPartiallyAppliedConcept();
     const PartiallyAppliedConcept *OC = Other.getAsPartiallyAppliedConcept();
@@ -554,6 +587,9 @@ TemplateArgument TemplateArgument::getPackExpansionPattern() const {
   case TemplateExpansion:
     return TemplateArgument(getAsTemplateOrTemplatePattern());
 
+  case UniversalExpansion:
+    return TemplateArgument(getAsUniversalTemplateParameterOrPattern());
+
   case Declaration:
   case Integral:
   case StructuralValue:
@@ -562,6 +598,7 @@ TemplateArgument TemplateArgument::getPackExpansionPattern() const {
   case Template:
   case NullPtr:
   case Concept:
+  case Universal:
     return TemplateArgument();
   }
 
@@ -622,6 +659,15 @@ void TemplateArgument::print(const PrintingPolicy &Policy, raw_ostream &Out,
     getAsPartiallyAppliedConcept()->print(Out, Policy);
     break;
 
+  case UniversalExpansion:
+    getAsUniversalTemplateParameterOrPattern()->print(Out, Policy);
+    Out << "...";
+    break;
+
+  case Universal:
+    getAsUniversalTemplateParameterName()->print(Out, Policy);
+    break;
+
   case Integral:
     printIntegral(*this, Out, Policy, IncludeType);
     break;
@@ -663,10 +709,15 @@ TemplateArgumentLoc::TemplateArgumentLoc(ASTContext &Ctx,
       LocInfo(Ctx, TemplateKWLoc, QualifierLoc, TemplateNameLoc, EllipsisLoc) {
   assert(Argument.getKind() == TemplateArgument::Template ||
          Argument.getKind() == TemplateArgument::TemplateExpansion ||
-         Argument.getKind() == TemplateArgument::Concept);
+         Argument.getKind() == TemplateArgument::Concept ||
+         Argument.getKind() == TemplateArgument::Universal ||
+         Argument.getKind() == TemplateArgument::UniversalExpansion);
   // A partially applied concept carries its own qualifier, on the underlying
-  // ConceptReference, rather than in the template name.
+  // ConceptReference, rather than in the template name; a universal parameter
+  // name is never qualified.
   assert(Argument.getKind() == TemplateArgument::Concept ||
+         Argument.getKind() == TemplateArgument::Universal ||
+         Argument.getKind() == TemplateArgument::UniversalExpansion ||
          QualifierLoc.getNestedNameSpecifier() ==
              Argument.getAsTemplateOrTemplatePattern().getQualifier());
 }
@@ -728,6 +779,12 @@ SourceRange TemplateArgumentLoc::getSourceRange() const {
   case TemplateArgument::Concept:
     return Argument.getAsPartiallyAppliedConcept()->getSourceRange();
 
+  case TemplateArgument::Universal:
+    return SourceRange(getTemplateNameLoc());
+
+  case TemplateArgument::UniversalExpansion:
+    return SourceRange(getTemplateNameLoc(), getTemplateEllipsisLoc());
+
   case TemplateArgument::Pack:
     return SourceRange(LocInfo.getTrivialLoc());
 
@@ -778,6 +835,12 @@ static const T &DiagTemplateArg(const T &DB, const TemplateArgument &Arg) {
 
   case TemplateArgument::Concept:
     return DB << Arg.getAsPartiallyAppliedConcept();
+
+  case TemplateArgument::Universal:
+    return DB << Arg.getAsUniversalTemplateParameterName();
+
+  case TemplateArgument::UniversalExpansion:
+    return DB << Arg.getAsUniversalTemplateParameterOrPattern() << "...";
 
   case TemplateArgument::Expression:
     // FIXME: Support printing expressions as canonical

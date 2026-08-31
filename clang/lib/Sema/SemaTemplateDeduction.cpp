@@ -455,7 +455,9 @@ checkDeducedTemplateArguments(ASTContext &Context,
   }
 
   case TemplateArgument::Concept:
-    if (Y.getKind() == TemplateArgument::Concept && X.structurallyEquals(Y))
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    if (Y.getKind() == X.getKind() && X.structurallyEquals(Y))
       return X;
     return DeducedTemplateArgument();
   }
@@ -2624,10 +2626,12 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("caller should handle pack expansions");
 
-  // FIXME: Deduce through a partially applied concept.
+  // FIXME: Deduce through a partially applied concept or a universal
+  // template parameter.
   case TemplateArgument::Concept:
-    if (A.getKind() == TemplateArgument::Concept &&
-        P.structurallyEquals(A))
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    if (A.getKind() == P.getKind() && P.structurallyEquals(A))
       return TemplateDeductionResult::Success;
     Info.FirstArg = P;
     Info.SecondArg = A;
@@ -2702,6 +2706,8 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
       case TemplateArgument::Template:
       case TemplateArgument::TemplateExpansion:
       case TemplateArgument::Concept:
+      case TemplateArgument::Universal:
+      case TemplateArgument::UniversalExpansion:
       case TemplateArgument::Pack:
         Info.FirstArg = P;
         Info.SecondArg = A;
@@ -2935,6 +2941,8 @@ Sema::getTrivialTemplateArgumentLoc(const TemplateArgument &Arg,
     }
 
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     return TemplateArgumentLoc(Context, Arg, /*TemplateKWLoc=*/SourceLocation(),
                                NestedNameSpecifierLoc(), Loc);
 
@@ -7337,6 +7345,10 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
   case TemplateArgument::Expression:
     MarkUsedTemplateParameters(Ctx, TemplateArg.getAsExpr(), OnlyDeduced,
                                Depth, Used);
+    break;
+
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     break;
 
   case TemplateArgument::Concept: {

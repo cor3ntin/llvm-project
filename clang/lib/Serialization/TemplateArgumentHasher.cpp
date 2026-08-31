@@ -88,6 +88,10 @@ void TemplateArgumentHasher::AddTemplateArgument(TemplateArgument TA) {
       AddTemplateArgument(Bound.getArgument());
     break;
   }
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    // The kind is not known until substitution; nothing stable to hash.
+    break;
   case TemplateArgument::Pack:
     AddInteger(TA.pack_size());
     for (auto SubTA : TA.pack_elements()) {

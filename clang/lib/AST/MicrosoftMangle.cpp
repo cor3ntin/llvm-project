@@ -1802,6 +1802,11 @@ void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
     Error(TA.getAsPartiallyAppliedConcept()->getBeginLoc(),
           "partially applied concept");
     break;
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    Error(TA.getAsUniversalTemplateParameterOrPattern()->getLocation(),
+          "universal template parameter");
+    break;
   case TemplateArgument::Type: {
     QualType T = TA.getAsType();
     mangleType(T, SourceRange(), QMM_Escape);

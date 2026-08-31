@@ -737,6 +737,8 @@ void TemplateSpecializationTypeLoc::initializeArgLocs(
       break;
 
     case TemplateArgument::Concept:
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
       ArgInfos[i] = TemplateArgumentLocInfo(
           Context, Loc, NestedNameSpecifierLoc(), Loc, SourceLocation());
       break;
