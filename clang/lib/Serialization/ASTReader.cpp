@@ -8231,7 +8231,8 @@ ASTRecordReader::readTemplateArgumentLocInfo(TemplateArgument::ArgKind Kind) {
   case TemplateArgument::Type:
     return readTypeSourceInfo();
   case TemplateArgument::Template:
-  case TemplateArgument::TemplateExpansion: {
+  case TemplateArgument::TemplateExpansion:
+  case TemplateArgument::Concept: {
     SourceLocation TemplateKWLoc = readSourceLocation();
     NestedNameSpecifierLoc QualifierLoc = readNestedNameSpecifierLoc();
     SourceLocation TemplateNameLoc = readSourceLocation();

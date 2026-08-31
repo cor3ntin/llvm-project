@@ -11894,6 +11894,20 @@ public:
                                      bool EnteringContext, TemplateTy &Template,
                                      bool AllowInjectedClassName = false);
 
+  /// Build a concept whose leading template arguments have been bound, for
+  /// use as the argument of a concept template parameter.
+  PartiallyAppliedConcept *
+  BuildPartiallyAppliedConcept(NestedNameSpecifierLoc NNS,
+                               SourceLocation ConceptKWLoc,
+                               DeclarationNameInfo ConceptName,
+                               TemplateName Concept,
+                               const TemplateArgumentListInfo &TemplateArgs);
+
+  PartiallyAppliedConcept *
+  ActOnPartiallyAppliedConcept(Scope *S, CXXScopeSpec &SS,
+                               SourceLocation ConceptKWLoc,
+                               TemplateIdAnnotation *TemplateId);
+
   DeclResult ActOnClassTemplateSpecialization(
       Scope *S, unsigned TagSpec, TagUseKind TUK, SourceLocation KWLoc,
       SourceLocation ModulePrivateLoc, CXXScopeSpec &SS,
@@ -12213,6 +12227,15 @@ public:
   bool CheckDeclCompatibleWithTemplateTemplate(TemplateDecl *Template,
                                                TemplateTemplateParmDecl *Param,
                                                const TemplateArgumentLoc &Arg);
+
+  /// Check a partially applied concept against its corresponding concept
+  /// template parameter.
+  ///
+  /// It returns true if an error occurred, and false otherwise.
+  bool
+  CheckPartiallyAppliedConceptTemplateArgument(TemplateTemplateParmDecl *Param,
+                                               TemplateParameterList *Params,
+                                               TemplateArgumentLoc &Arg);
 
   void NoteTemplateLocation(const NamedDecl &Decl,
                             std::optional<SourceRange> ParamRange = {});

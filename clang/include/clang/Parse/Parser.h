@@ -8433,6 +8433,9 @@ private:
   /// Parse a C++ template template argument.
   ParsedTemplateArgument ParseTemplateTemplateArgument();
 
+  /// Parse a partially applied concept, used as a template argument.
+  ParsedTemplateArgument ParsePartiallyAppliedConceptTemplateArgument();
+
   /// ParseTemplateArgument - Parse a C++ template argument (C++ [temp.names]).
   ///
   /// \verbatim

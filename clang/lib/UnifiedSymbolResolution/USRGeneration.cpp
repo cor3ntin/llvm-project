@@ -1181,6 +1181,17 @@ void USRGenerator::VisitTemplateArgument(const TemplateArgument &Arg) {
     Out << Hash.CalculateHash();
     break;
   }
+
+  case TemplateArgument::Concept: {
+    const PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+    Out << 'c';
+    VisitTemplateName(C->getNamedConcept());
+    const auto *Args = C->getTemplateArgsAsWritten();
+    Out << Args->getNumTemplateArgs();
+    for (const TemplateArgumentLoc &Bound : Args->arguments())
+      VisitTemplateArgument(Bound.getArgument());
+    break;
+  }
   }
 }
 

@@ -212,6 +212,15 @@ void ODRHash::AddTemplateArgument(TemplateArgument TA) {
     case TemplateArgument::Expression:
       AddStmt(TA.getAsExpr());
       break;
+    case TemplateArgument::Concept: {
+      const PartiallyAppliedConcept *C = TA.getAsPartiallyAppliedConcept();
+      AddTemplateName(C->getNamedConcept());
+      const auto *Args = C->getTemplateArgsAsWritten();
+      ID.AddInteger(Args->getNumTemplateArgs());
+      for (const TemplateArgumentLoc &Bound : Args->arguments())
+        AddTemplateArgument(Bound.getArgument());
+      break;
+    }
     case TemplateArgument::Pack:
       ID.AddInteger(TA.pack_size());
       for (auto SubTA : TA.pack_elements()) {

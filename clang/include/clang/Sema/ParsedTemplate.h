@@ -26,6 +26,8 @@
 #include <new>
 
 namespace clang {
+  class PartiallyAppliedConcept;
+
   /// Represents the parsed form of a C++ template argument.
   class ParsedTemplateArgument {
   public:
@@ -36,7 +38,10 @@ namespace clang {
       /// A non-type template parameter, stored as an expression.
       NonType,
       /// A template template argument, stored as a template name.
-      Template
+      Template,
+      /// A concept with some of its leading arguments bound, stored as a
+      /// PartiallyAppliedConcept.
+      PartiallyAppliedConcept
     };
 
     /// Build an empty template argument.
@@ -66,6 +71,21 @@ namespace clang {
           Arg(Template.getAsOpaquePtr()), SS(SS), TemplateKwLoc(TemplateKwLoc),
           NameLoc(NameLoc) {}
 
+    /// Create a partially applied concept template argument.
+    ///
+    /// \param SS the C++ scope specifier that precedes the concept name, if
+    /// any.
+    ///
+    /// \param Concept the concept, together with the arguments bound to its
+    /// leading parameters.
+    ///
+    /// \param NameLoc the location of the introducing 'concept' keyword.
+    ParsedTemplateArgument(const CXXScopeSpec &SS,
+                           class PartiallyAppliedConcept *Concept,
+                           SourceLocation NameLoc)
+        : Kind(ParsedTemplateArgument::PartiallyAppliedConcept), Arg(Concept),
+          SS(SS), NameLoc(NameLoc) {}
+
     /// Determine whether the given template argument is invalid.
     bool isInvalid() const { return Arg == nullptr; }
 
@@ -90,6 +110,13 @@ namespace clang {
       return ParsedTemplateTy::getFromOpaquePtr(Arg);
     }
 
+    /// Retrieve the partially applied concept.
+    class PartiallyAppliedConcept *getAsConcept() const {
+      assert(Kind == PartiallyAppliedConcept &&
+             "Not a partially applied concept argument");
+      return static_cast<class PartiallyAppliedConcept *>(Arg);
+    }
+
     /// Retrieve the location of the template argument.
     SourceLocation getTemplateKwLoc() const { return TemplateKwLoc; }
 
@@ -99,7 +126,7 @@ namespace clang {
     /// Retrieve the nested-name-specifier that precedes the template
     /// name in a template template argument.
     const CXXScopeSpec &getScopeSpec() const {
-      assert(Kind == Template &&
+      assert((Kind == Template || Kind == PartiallyAppliedConcept) &&
              "Only template template arguments can have a scope specifier");
       return SS;
     }

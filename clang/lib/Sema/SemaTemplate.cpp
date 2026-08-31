@@ -984,6 +984,15 @@ static TemplateArgumentLoc translateTemplateArgument(Sema &SemaRef,
         Arg.getScopeSpec().getWithLocInContext(SemaRef.Context),
         Arg.getNameLoc(), Arg.getEllipsisLoc());
   }
+
+  case ParsedTemplateArgument::PartiallyAppliedConcept: {
+    PartiallyAppliedConcept *C = Arg.getAsConcept();
+    return TemplateArgumentLoc(
+        SemaRef.Context, TemplateArgument(C),
+        /*TemplateKWLoc=*/SourceLocation(),
+        Arg.getScopeSpec().getWithLocInContext(SemaRef.Context),
+        C->getConceptNameLoc());
+  }
   }
 
   llvm_unreachable("Unhandled parsed template argument");
@@ -4190,6 +4199,7 @@ static bool isTemplateArgumentTemplateParameter(const TemplateArgument &Arg,
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Pack:
   case TemplateArgument::TemplateExpansion:
+  case TemplateArgument::Concept:
     return false;
 
   case TemplateArgument::Type: {
@@ -5185,6 +5195,37 @@ TemplateNameKind Sema::ActOnTemplateName(Scope *S,
   return TNK_Non_template;
 }
 
+PartiallyAppliedConcept *Sema::BuildPartiallyAppliedConcept(
+    NestedNameSpecifierLoc NNS, SourceLocation ConceptKWLoc,
+    DeclarationNameInfo ConceptName, TemplateName Concept,
+    const TemplateArgumentListInfo &TemplateArgs) {
+  return PartiallyAppliedConcept::Create(
+      Context, NNS, ConceptName, ConceptKWLoc,
+      /*FoundDecl=*/Concept.getAsTemplateDecl(), Concept, TemplateArgs);
+}
+
+PartiallyAppliedConcept *
+Sema::ActOnPartiallyAppliedConcept(Scope *S, CXXScopeSpec &SS,
+                                   SourceLocation ConceptKWLoc,
+                                   TemplateIdAnnotation *TemplateId) {
+  if (TemplateId->isInvalid())
+    return nullptr;
+
+  TemplateName Concept = TemplateId->Template.get();
+  if (Concept.isNull() || !Concept.isConceptName()) {
+    Diag(TemplateId->TemplateNameLoc, diag::err_partial_concept_valid_template);
+    return nullptr;
+  }
+
+  DeclarationNameInfo ConceptName(DeclarationName(TemplateId->Name),
+                                  TemplateId->TemplateNameLoc);
+  TemplateArgumentListInfo TemplateArgs =
+      makeTemplateArgumentListInfo(*this, *TemplateId);
+  return BuildPartiallyAppliedConcept(SS.getWithLocInContext(Context),
+                                      ConceptKWLoc, ConceptName, Concept,
+                                      TemplateArgs);
+}
+
 bool Sema::CheckTemplateTypeArgument(
     TemplateTypeParmDecl *Param, TemplateArgumentLoc &AL,
     SmallVectorImpl<TemplateArgument> &SugaredConverted,
@@ -5701,6 +5742,13 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
 
       return true;
 
+    // TODO: support concepts as arguments of non-type template parameters.
+    case TemplateArgument::Concept:
+      Diag(ArgLoc.getLocation(), diag::err_template_arg_must_be_expr)
+          << ArgLoc.getSourceRange();
+      NoteTemplateParameterLocation(*Param);
+      return true;
+
     case TemplateArgument::Type: {
       // We have a non-type template parameter but the template
       // argument is a type.
@@ -5780,6 +5828,15 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
     if (CheckTemplateTemplateArgument(TempParm, Params, ArgLoc,
                                       CTAI.PartialOrdering,
                                       &CTAI.StrictPackMatch))
+      return true;
+
+    CTAI.SugaredConverted.push_back(Arg);
+    CTAI.CanonicalConverted.push_back(
+        Context.getCanonicalTemplateArgument(Arg));
+    break;
+
+  case TemplateArgument::Concept:
+    if (CheckPartiallyAppliedConceptTemplateArgument(TempParm, Params, ArgLoc))
       return true;
 
     CTAI.SugaredConverted.push_back(Arg);
@@ -7855,6 +7912,48 @@ bool Sema::CheckDeclCompatibleWithTemplateTemplate(
   return false;
 }
 
+bool Sema::CheckPartiallyAppliedConceptTemplateArgument(
+    TemplateTemplateParmDecl *Param, TemplateParameterList *Params,
+    TemplateArgumentLoc &Arg) {
+  PartiallyAppliedConcept *C = Arg.getArgument().getAsPartiallyAppliedConcept();
+  TemplateDecl *Template = C->getNamedConcept().getAsTemplateDecl();
+  if (!Template || Template->isInvalidDecl())
+    return true;
+
+  if (!CheckDeclCompatibleWithTemplateTemplate(Template, Param, Arg))
+    return true;
+
+  // Binding all but one of the concept's parameters leaves a concept of
+  // arity one, so that is the only shape the parameter can have.
+  if (Params->size() != 1) {
+    Diag(C->getSourceRange().getBegin(),
+         diag::err_partial_concept_param_must_have_one_arg);
+    Diag(Param->getLocation(),
+         diag::note_concept_template_parameter_declared_here)
+        << Param;
+    return true;
+  }
+
+  TemplateParameterList *ConceptParams = Template->getTemplateParameters();
+  unsigned Provided = C->getTemplateArgsAsWritten()->getNumTemplateArgs();
+
+  // One argument is supplied later, where the resulting concept is used.
+  bool TooFew = ConceptParams->getMinRequiredArguments() > Provided + 1;
+  bool TooMany = Provided + 1 > ConceptParams->size() &&
+                 !ConceptParams->hasParameterPack();
+
+  if (TooFew || TooMany) {
+    Diag(C->getSourceRange().getBegin(),
+         diag::err_template_arg_list_different_arity)
+        << (TooFew ? 0 : 1) << /*concept*/ 5 << Template;
+    Diag(Template->getLocation(), diag::note_template_decl_here)
+        << ConceptParams->getSourceRange();
+    return true;
+  }
+
+  return false;
+}
+
 /// Check a template argument against its corresponding
 /// template template parameter.
 ///
@@ -8200,6 +8299,7 @@ Sema::BuildExpressionFromNonTypeTemplateArgument(const TemplateArgument &Arg,
   case TemplateArgument::Template:
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
+  case TemplateArgument::Concept:
     llvm_unreachable("not a non-type template argument");
 
   case TemplateArgument::Expression:

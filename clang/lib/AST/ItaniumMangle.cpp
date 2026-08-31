@@ -6421,6 +6421,11 @@ void CXXNameMangler::mangleTemplateArg(TemplateArgument A, bool NeedExactType) {
     Out << "Dp";
     mangleType(A.getAsTemplateOrTemplatePattern());
     break;
+  case TemplateArgument::Concept:
+    // FIXME: The mangling of a partially applied concept is not yet specified.
+    Context.getDiags().Report(diag::err_unsupported_itanium_mangling)
+        << UnsupportedItaniumManglingKind::PartiallyAppliedConcept;
+    break;
   case TemplateArgument::Expression:
     mangleTemplateArgExpr(A.getAsExpr());
     break;

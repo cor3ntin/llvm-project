@@ -1501,6 +1501,9 @@ namespace {
     /// this declaration.
     Decl *TransformDecl(SourceLocation Loc, Decl *D);
 
+    bool InjectBoundConceptArguments(TemplateName Name,
+                                     TemplateArgumentListInfo &Outputs);
+
     void transformAttrs(Decl *Old, Decl *New) {
       SemaRef.InstantiateAttrs(TemplateArgs, Old, New);
     }
@@ -1970,6 +1973,14 @@ Decl *TemplateInstantiator::TransformDecl(SourceLocation Loc, Decl *D) {
         Arg = SemaRef.getPackSubstitutedTemplateArgument(Arg);
       }
 
+      // A concept template parameter bound to a partially applied concept
+      // resolves to the concept that was partially applied; the bound
+      // arguments are injected where the parameter is used.
+      if (Arg.getKind() == TemplateArgument::Concept)
+        return Arg.getAsPartiallyAppliedConcept()
+            ->getNamedConcept()
+            .getAsTemplateDecl();
+
       TemplateName Template = Arg.getAsTemplate();
       assert(!Template.isNull() && Template.getAsTemplateDecl() &&
              "Wrong kind of template template argument");
@@ -2037,6 +2048,28 @@ bool TemplateInstantiator::maybeInstantiateFunctionParameterToScope(
       return true;
   }
   return false;
+}
+
+bool TemplateInstantiator::InjectBoundConceptArguments(
+    TemplateName Name, TemplateArgumentListInfo &Outputs) {
+  auto *TTP = Name.getAsTemplateTemplateParmDecl();
+  if (!TTP)
+    return false;
+
+  unsigned Depth = TTP->getDepth(), Index = TTP->getPosition();
+  if (Depth >= TemplateArgs.getNumLevels() ||
+      !TemplateArgs.hasTemplateArgument(Depth, Index))
+    return false;
+
+  TemplateArgument Arg = TemplateArgs(Depth, Index);
+  if (Arg.getKind() != TemplateArgument::Concept)
+    return false;
+
+  for (const TemplateArgumentLoc &Bound :
+       Arg.getAsPartiallyAppliedConcept()->getTemplateArgsAsWritten()
+           ->arguments())
+    Outputs.addArgument(Bound);
+  return true;
 }
 
 Decl *TemplateInstantiator::TransformDefinition(SourceLocation Loc, Decl *D) {
@@ -2168,7 +2201,12 @@ TemplateName TemplateInstantiator::TransformTemplateName(
         Arg = SemaRef.getPackSubstitutedTemplateArgument(Arg);
       }
 
-      TemplateName Template = Arg.getAsTemplate();
+      // As in TransformDecl, a partially applied concept substitutes as the
+      // concept it names.
+      TemplateName Template =
+          Arg.getKind() == TemplateArgument::Concept
+              ? Arg.getAsPartiallyAppliedConcept()->getNamedConcept()
+              : Arg.getAsTemplate();
       assert(!Template.isNull() && "Null template template argument");
       return getSema().Context.getSubstTemplateTemplateParm(
           Template, AssociatedDecl, TTP->getIndex(), PackIndex, Final);

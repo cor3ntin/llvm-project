@@ -8016,6 +8016,11 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
       return TemplateArgument(getCanonicalType(Arg.getAsType()),
                               /*isNullPtr*/ false, Arg.getIsDefaulted());
 
+    // A partially applied concept is identified by the concept it names
+    // together with the arguments as written, so it is already canonical.
+    case TemplateArgument::Concept:
+      return Arg;
+
     case TemplateArgument::Pack: {
       bool AnyNonCanonArgs = false;
       auto CanonArgs = ::getCanonicalTemplateArguments(
@@ -8062,6 +8067,7 @@ bool ASTContext::isSameTemplateArgument(const TemplateArgument &Arg1,
                                      Arg2.getAsIntegral());
 
   case TemplateArgument::StructuralValue:
+  case TemplateArgument::Concept:
     return Arg1.structurallyEquals(Arg2);
 
   case TemplateArgument::Expression: {

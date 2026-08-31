@@ -944,6 +944,39 @@ let Class = PropertyTypeCase<TemplateArgument, "Expression"> in {
     return TemplateArgument(expression, IsCanonical, isDefaulted);
   }]>;
 }
+let Class = PropertyTypeCase<TemplateArgument, "Concept"> in {
+  def : Property<"name", TemplateName> {
+    let Read = [{ node.getAsPartiallyAppliedConcept()->getNamedConcept() }];
+  }
+  def : Property<"conceptName", DeclarationName> {
+    let Read = [{
+      node.getAsPartiallyAppliedConcept()->getConceptNameInfo().getName()
+    }];
+  }
+  def : Property<"conceptNameLoc", SourceLocation> {
+    let Read = [{ node.getAsPartiallyAppliedConcept()->getConceptNameLoc() }];
+  }
+  def : Property<"conceptKWLoc", SourceLocation> {
+    let Read = [{ node.getAsPartiallyAppliedConcept()->getConceptKWLoc() }];
+  }
+  def : Property<"foundDecl", DeclRef> {
+    let Read = [{ node.getAsPartiallyAppliedConcept()->getFoundDecl() }];
+  }
+  def : Property<"boundArguments", Array<TemplateArgument>> {
+    let Read = [{ node.getAsPartiallyAppliedConcept()->getBoundArguments() }];
+  }
+  def : Property<"isDefaulted", Bool> {
+    let Read = [{ node.getIsDefaulted() }];
+  }
+  def : Creator<[{
+    return TemplateArgument(
+        PartiallyAppliedConcept::CreateWithTrivialLocs(
+            ctx, NestedNameSpecifierLoc(),
+            DeclarationNameInfo(conceptName, conceptNameLoc), conceptKWLoc,
+            cast_or_null<NamedDecl>(foundDecl), name, boundArguments),
+        isDefaulted);
+  }]>;
+}
 let Class = PropertyTypeCase<TemplateArgument, "Pack"> in {
   def : Property<"elements", Array<TemplateArgument>> {
     let Read = [{ node.pack_elements() }];

@@ -792,6 +792,24 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   case TemplateArgument::StructuralValue:
     return Arg1.structurallyEquals(Arg2);
 
+  case TemplateArgument::Concept: {
+    const PartiallyAppliedConcept *C1 = Arg1.getAsPartiallyAppliedConcept();
+    const PartiallyAppliedConcept *C2 = Arg2.getAsPartiallyAppliedConcept();
+    if (!IsStructurallyEquivalent(Context, C1->getNamedConcept(),
+                                  C2->getNamedConcept()))
+      return false;
+    ArrayRef<TemplateArgumentLoc> Args1 =
+        C1->getTemplateArgsAsWritten()->arguments();
+    ArrayRef<TemplateArgumentLoc> Args2 =
+        C2->getTemplateArgsAsWritten()->arguments();
+    if (Args1.size() != Args2.size())
+      return false;
+    for (unsigned I = 0, E = Args1.size(); I != E; ++I)
+      if (!IsStructurallyEquivalent(Context, Args1[I], Args2[I]))
+        return false;
+    return true;
+  }
+
   case TemplateArgument::Pack:
     return IsStructurallyEquivalent(Context, Arg1.pack_elements(),
                                     Arg2.pack_elements());

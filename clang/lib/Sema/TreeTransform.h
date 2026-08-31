@@ -658,6 +658,17 @@ public:
       NestedNameSpecifierLoc &QualifierLoc, SourceLocation TemplateKeywordLoc,
       TemplateName Name, SourceLocation NameLoc);
 
+  /// If \p Name refers to a concept template parameter that is being
+  /// substituted with a partially applied concept, append the arguments bound
+  /// by that partial application to \p Outputs. They precede the arguments
+  /// written where the parameter is used.
+  ///
+  /// By default there is nothing to inject.
+  bool InjectBoundConceptArguments(TemplateName Name,
+                                   TemplateArgumentListInfo &Outputs) {
+    return false;
+  }
+
   /// Transform the given set of template arguments.
   ///
   /// By default, this operation transforms all of the template arguments
@@ -4120,6 +4131,7 @@ public:
     case TemplateArgument::Pack:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::NullPtr:
+    case TemplateArgument::Concept:
       llvm_unreachable("Pack expansion pattern has no parameter packs");
 
     case TemplateArgument::Type:
@@ -5217,6 +5229,50 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
 
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("Caller should expand pack expansions");
+
+  case TemplateArgument::Concept: {
+    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+    NestedNameSpecifierLoc QualifierLoc = C->getNestedNameSpecifierLoc();
+
+    TemplateArgument Out = getDerived().TransformNamedTemplateTemplateArgument(
+        QualifierLoc, C->getTemplateKWLoc(), C->getNamedConcept(),
+        C->getConceptNameLoc());
+    if (Out.isNull())
+      return true;
+
+    // Naming the concept through a concept template parameter resolves to
+    // whichever concept the parameter was bound to.
+    TemplateName Name = Out.getKind() == TemplateArgument::Concept
+                            ? Out.getAsPartiallyAppliedConcept()
+                                  ->getNamedConcept()
+                            : Out.getAsTemplate();
+
+    DeclarationNameInfo NameInfo = C->getConceptNameInfo();
+    if (NameInfo.getName()) {
+      NameInfo = getDerived().TransformDeclarationNameInfo(NameInfo);
+      if (!NameInfo.getName())
+        return true;
+    }
+
+    TemplateArgumentListInfo NewArgs(
+        C->getTemplateArgsAsWritten()->getLAngleLoc(),
+        C->getTemplateArgsAsWritten()->getRAngleLoc());
+    if (getDerived().TransformTemplateArguments(
+            C->getTemplateArgsAsWritten()->getTemplateArgs(),
+            C->getTemplateArgsAsWritten()->getNumTemplateArgs(), NewArgs))
+      return true;
+
+    PartiallyAppliedConcept *Transformed =
+        SemaRef.BuildPartiallyAppliedConcept(QualifierLoc, C->getConceptKWLoc(),
+                                             NameInfo, Name, NewArgs);
+    if (!Transformed)
+      return true;
+
+    Output = TemplateArgumentLoc(SemaRef.Context, TemplateArgument(Transformed),
+                                 /*TemplateKWLoc=*/SourceLocation(),
+                                 QualifierLoc, NameInfo.getLoc());
+    return false;
+  }
 
   case TemplateArgument::Expression: {
     // Template argument expressions are constant expressions.
@@ -16693,6 +16749,7 @@ ExprResult TreeTransform<Derived>::TransformDependentTemplateIdExpr(
     return ExprError();
 
   TemplateArgumentListInfo TransArgs(E->getLAngleLoc(), E->getRAngleLoc());
+  getDerived().InjectBoundConceptArguments(E->getTemplateName(), TransArgs);
   if (getDerived().TransformTemplateArguments(
           E->template_arguments().data(), E->getNumTemplateArgs(), TransArgs))
     return ExprError();

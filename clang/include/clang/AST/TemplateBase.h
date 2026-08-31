@@ -45,6 +45,7 @@ class Expr;
 struct PrintingPolicy;
 class TypeSourceInfo;
 class ValueDecl;
+class PartiallyAppliedConcept;
 
 /// Represents a template argument.
 class TemplateArgument {
@@ -93,7 +94,11 @@ public:
 
     /// The template argument is actually a parameter pack. Arguments are stored
     /// in the Args struct.
-    Pack
+    Pack,
+
+    /// The template argument is a concept whose leading arguments have been
+    /// bound, provided for a concept template parameter.
+    Concept
   };
 
 private:
@@ -160,6 +165,13 @@ private:
     unsigned IsCanonicalExpr : 1;
     uintptr_t V;
   };
+  struct PAC {
+    LLVM_PREFERRED_TYPE(ArgKind)
+    unsigned Kind : 31;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned IsDefaulted : 1;
+    PartiallyAppliedConcept *C;
+  };
   union {
     struct DA DeclArg;
     struct I Integer;
@@ -167,6 +179,7 @@ private:
     struct A Args;
     struct TA TemplateArg;
     struct TV TypeOrValue;
+    struct PAC PartialConcept;
   };
 
   void initFromType(QualType T, bool IsNullPtr, bool IsDefaulted);
@@ -272,6 +285,16 @@ public:
     this->Args.NumArgs = Args.size();
   }
 
+  /// Construct a template argument that is a concept with some of its
+  /// leading arguments bound, for use as a concept template parameter's
+  /// argument.
+  explicit TemplateArgument(PartiallyAppliedConcept *C,
+                            bool IsDefaulted = false) {
+    PartialConcept.Kind = Concept;
+    PartialConcept.IsDefaulted = IsDefaulted;
+    PartialConcept.C = C;
+  }
+
   static TemplateArgument getEmptyPack() {
     return TemplateArgument(ArrayRef<TemplateArgument>());
   }
@@ -346,6 +369,12 @@ public:
            "Unexpected kind");
 
     return TemplateName::getFromVoidPointer(TemplateArg.Name);
+  }
+
+  /// Retrieve the partially applied concept for a concept argument.
+  PartiallyAppliedConcept *getAsPartiallyAppliedConcept() const {
+    assert(getKind() == Concept && "Unexpected kind");
+    return PartialConcept.C;
   }
 
   /// Retrieve the number of expansions that a template template argument
@@ -570,6 +599,7 @@ public:
       return;
     case TemplateArgument::Template:
     case TemplateArgument::TemplateExpansion:
+    case TemplateArgument::Concept:
       assert(Opaque.getTemplate() != nullptr);
       return;
     }
@@ -603,7 +633,8 @@ public:
   /// - Fetches the primary location of the argument.
   SourceLocation getLocation() const {
     if (Argument.getKind() == TemplateArgument::Template ||
-        Argument.getKind() == TemplateArgument::TemplateExpansion)
+        Argument.getKind() == TemplateArgument::TemplateExpansion ||
+        Argument.getKind() == TemplateArgument::Concept)
       return getTemplateNameLoc();
 
     return getSourceRange().getBegin();
@@ -658,7 +689,8 @@ public:
 
   SourceLocation getTemplateNameLoc() const {
     if (Argument.getKind() != TemplateArgument::Template &&
-        Argument.getKind() != TemplateArgument::TemplateExpansion)
+        Argument.getKind() != TemplateArgument::TemplateExpansion &&
+        Argument.getKind() != TemplateArgument::Concept)
       return SourceLocation();
     return LocInfo.getTemplateNameLoc();
   }

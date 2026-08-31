@@ -6781,6 +6781,7 @@ static bool argMatchesTemplateParams(const ParsedTemplateArgument &Arg,
   case ParsedTemplateArgument::NonType:
     return llvm::isa<NonTypeTemplateParmDecl>(Param); // type not checked
   case ParsedTemplateArgument::Template:
+  case ParsedTemplateArgument::PartiallyAppliedConcept:
     return llvm::isa<TemplateTemplateParmDecl>(Param); // signature not checked
   }
   llvm_unreachable("Unhandled switch case");

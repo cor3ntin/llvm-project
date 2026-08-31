@@ -5705,6 +5705,14 @@ def err_template_arg_must_be_template
     : Error<"template argument for template template parameter must be a "
             "%select{class template%select{| or type alias template}1|variable "
             "template|concept}0">;
+def err_partial_concept_valid_template : Error<
+  "name of template argument does not refer to concept, or concept "
+  "template parameter">;
+def err_partial_concept_param_must_have_one_arg : Error<
+  "the corresponding template parameter of a partially applied concept must "
+  "have exactly one argument">;
+def note_concept_template_parameter_declared_here : Note<
+  "concept template parameter %0 declared here">;
 def ext_template_arg_local_type : ExtWarn<
   "template argument uses local type %0">, InGroup<LocalTypeTemplateArgs>;
 def ext_template_arg_unnamed_type : ExtWarn<

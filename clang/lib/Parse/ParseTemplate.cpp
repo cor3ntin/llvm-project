@@ -1335,7 +1335,74 @@ ParsedTemplateArgument Parser::ParseTemplateTemplateArgument() {
   return Result;
 }
 
+/// Parse a partially applied concept, for use as the argument of a concept
+/// template parameter.
+///
+///       partially-applied-concept:
+///         'concept' nested-name-specifier[opt] concept-name
+///                   '<' template-argument-list[opt] '>'
+ParsedTemplateArgument Parser::ParsePartiallyAppliedConceptTemplateArgument() {
+  assert(Tok.is(tok::kw_concept) && "Not a partially applied concept");
+  SourceLocation ConceptLoc = ConsumeToken();
+
+  CXXScopeSpec SS;
+  if (ParseOptionalCXXScopeSpecifier(SS, /*ObjectType=*/nullptr,
+                                     /*ObjectHasErrors=*/false,
+                                     /*EnteringContext=*/false))
+    return ParsedTemplateArgument();
+
+  // Parsing the nested-name-specifier may already have annotated the
+  // concept-name and its argument list as a template-id. If not, do so now,
+  // so that Sema sees the bound arguments as written.
+  if (Tok.is(tok::identifier)) {
+    UnqualifiedId Name;
+    Name.setIdentifier(Tok.getIdentifierInfo(), Tok.getLocation());
+
+    TemplateTy Template;
+    bool MemberOfUnknownSpecialization;
+    TemplateNameKind TNK = Actions.isTemplateName(
+        getCurScope(), SS, /*hasTemplateKeyword=*/false, Name,
+        /*ObjectType=*/nullptr, /*EnteringContext=*/false, Template,
+        MemberOfUnknownSpecialization);
+    if (TNK == TNK_Non_template) {
+      Diag(Tok, diag::err_partial_concept_valid_template);
+      return ParsedTemplateArgument();
+    }
+    ConsumeToken(); // the concept name
+
+    if (Tok.isNot(tok::less)) {
+      Diag(Tok, diag::err_expected) << tok::less;
+      return ParsedTemplateArgument();
+    }
+
+    if (AnnotateTemplateIdToken(Template, TNK, SS,
+                                /*TemplateKWLoc=*/SourceLocation(), Name,
+                                /*AllowTypeAnnotation=*/false))
+      return ParsedTemplateArgument();
+  }
+
+  if (Tok.isNot(tok::annot_template_id)) {
+    Diag(Tok, diag::err_partial_concept_valid_template);
+    return ParsedTemplateArgument();
+  }
+
+  TemplateIdAnnotation *TemplateId = takeTemplateIdAnnotation(Tok);
+  ConsumeAnnotationToken();
+
+  PartiallyAppliedConcept *C = Actions.ActOnPartiallyAppliedConcept(
+      getCurScope(), SS, ConceptLoc, TemplateId);
+  if (!C)
+    return ParsedTemplateArgument();
+
+  return ParsedTemplateArgument(SS, C, ConceptLoc);
+}
+
 ParsedTemplateArgument Parser::ParseTemplateArgument() {
+  // A partially applied concept is introduced by the 'concept' keyword, so it
+  // can never be confused with a type-id or an expression.
+  if (Tok.is(tok::kw_concept))
+    return ParsePartiallyAppliedConceptTemplateArgument();
+
   // C++ [temp.arg]p2:
   //   In a template-argument, an ambiguity between a type-id and an
   //   expression is resolved to a type-id, regardless of the form of

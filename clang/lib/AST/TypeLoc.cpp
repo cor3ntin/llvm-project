@@ -733,6 +733,11 @@ void TemplateSpecializationTypeLoc::initializeArgLocs(
       ArgInfos[i] = TemplateArgumentLocInfo(Context, Loc);
       break;
 
+    case TemplateArgument::Concept:
+      ArgInfos[i] = TemplateArgumentLocInfo(
+          Context, Loc, NestedNameSpecifierLoc(), Loc, SourceLocation());
+      break;
+
     case TemplateArgument::Expression:
       ArgInfos[i] = TemplateArgumentLocInfo(Args[i].getAsExpr());
       break;

@@ -3037,6 +3037,10 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result,
       //  associated namespaces. ]
       break;
 
+    case TemplateArgument::Concept:
+      // A concept does not contribute associated classes or namespaces.
+      break;
+
     case TemplateArgument::Pack:
       for (const auto &P : Arg.pack_elements())
         addAssociatedClassesAndNamespaces(Result, P);

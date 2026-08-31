@@ -772,6 +772,15 @@ Sema::ActOnPackExpansion(const ParsedTemplateArgument &Arg,
     }
 
     return Arg.getTemplatePackExpansion(EllipsisLoc);
+
+  // FIXME: Support pack expansion of a partially applied concept.
+  case ParsedTemplateArgument::PartiallyAppliedConcept: {
+    SourceRange R(Arg.getNameLoc());
+    if (Arg.getScopeSpec().isValid())
+      R.setBegin(Arg.getScopeSpec().getBeginLoc());
+    Diag(EllipsisLoc, diag::err_pack_expansion_without_parameter_packs) << R;
+    return ParsedTemplateArgument();
+  }
   }
   llvm_unreachable("Unhandled template argument kind?");
 }
@@ -1507,6 +1516,7 @@ TemplateArgumentLoc Sema::getTemplateArgumentPackExpansionPattern(
   case TemplateArgument::Integral:
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Pack:
+  case TemplateArgument::Concept:
   case TemplateArgument::Null:
     return TemplateArgumentLoc();
   }
@@ -1558,6 +1568,7 @@ UnsignedOrNone Sema::getFullyPackExpandedSize(TemplateArgument Arg) {
   case TemplateArgument::Integral:
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Pack:
+  case TemplateArgument::Concept:
   case TemplateArgument::Null:
     return std::nullopt;
   }
