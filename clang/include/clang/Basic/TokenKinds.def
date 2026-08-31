@@ -913,6 +913,9 @@ ANNOTATION(repl_input_end)
 // Annotation for #embed
 ANNOTATION(embed)
 
+// Annotation for a reference to a universal template parameter
+ANNOTATION(universal)
+
 #include "clang/Basic/BuiltinTraits.inc"
 
 #undef PRAGMA_ANNOTATION

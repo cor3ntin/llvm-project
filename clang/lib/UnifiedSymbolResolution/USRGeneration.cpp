@@ -1182,6 +1182,11 @@ void USRGenerator::VisitTemplateArgument(const TemplateArgument &Arg) {
     break;
   }
 
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    Out << 'u';
+    break;
+
   case TemplateArgument::Concept: {
     const PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
     Out << 'c';

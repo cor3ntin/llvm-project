@@ -933,8 +933,10 @@ ASTNodeImporter::import(const TemplateArgument &From) {
     return TemplateArgument(ArrayRef(ToPack).copy(Importer.getToContext()));
   }
 
-  case TemplateArgument::Concept: {
-    // FIXME: Import partially applied concepts.
+  case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion: {
+    // FIXME: Import partially applied concepts and universal parameters.
     return make_error<ASTImportError>(ASTImportError::UnsupportedConstruct);
   }
   }

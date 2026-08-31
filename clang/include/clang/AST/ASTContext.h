@@ -135,6 +135,8 @@ class TargetInfo;
 class TemplateDecl;
 class TemplateParameterList;
 class TemplateTemplateParmDecl;
+class UniversalTemplateParmDecl;
+class UniversalTemplateParameterName;
 class TemplateTypeParmDecl;
 class TypeConstraint;
 class UnresolvedSetIterator;
@@ -2686,6 +2688,12 @@ public:
   getPackIndexingTemplateName(TemplateName Pattern, Expr *IndexExpr,
                               bool FullySubstituted = false,
                               ArrayRef<TemplateName> Expansions = {}) const;
+
+  /// Build a name for a use of a universal template parameter.
+  UniversalTemplateParameterName *
+  getUniversalTemplateParameterName(SourceLocation Loc,
+                                    DeclarationNameInfo Name,
+                                    UniversalTemplateParmDecl *Param) const;
 
   /// Represents a TemplateName which had some of its default arguments
   /// deduced. This both represents this default argument deduction as sugar,

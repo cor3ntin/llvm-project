@@ -773,6 +773,17 @@ Sema::ActOnPackExpansion(const ParsedTemplateArgument &Arg,
 
     return Arg.getTemplatePackExpansion(EllipsisLoc);
 
+  case ParsedTemplateArgument::Universal: {
+    UniversalTemplateParameterName *N =
+        Arg.getAsUniversalTemplateParamName().get();
+    if (!N->containsUnexpandedParameterPack()) {
+      Diag(EllipsisLoc, diag::err_pack_expansion_without_parameter_packs)
+          << SourceRange(Arg.getNameLoc());
+      return ParsedTemplateArgument();
+    }
+    return Arg;
+  }
+
   // FIXME: Support pack expansion of a partially applied concept.
   case ParsedTemplateArgument::PartiallyAppliedConcept: {
     SourceRange R(Arg.getNameLoc());
@@ -1517,6 +1528,8 @@ TemplateArgumentLoc Sema::getTemplateArgumentPackExpansionPattern(
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
   case TemplateArgument::Null:
     return TemplateArgumentLoc();
   }
@@ -1569,6 +1582,8 @@ UnsignedOrNone Sema::getFullyPackExpandedSize(TemplateArgument Arg) {
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
   case TemplateArgument::Null:
     return std::nullopt;
   }

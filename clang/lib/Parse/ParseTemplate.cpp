@@ -512,6 +512,9 @@ NamedDecl *Parser::ParseTemplateParameter(unsigned Depth, unsigned Position) {
     llvm_unreachable("template param classification can't be ambiguous");
   }
 
+  if (isUniversalTemplateParameterIntroducer())
+    return ParseUniversalTemplateParameter(Depth, Position);
+
   if (Tok.is(tok::kw_template))
     return ParseTemplateTemplateParameter(Depth, Position);
 
@@ -519,6 +522,47 @@ NamedDecl *Parser::ParseTemplateParameter(unsigned Depth, unsigned Position) {
   // NOTE: This will pick up errors in the closure of the template parameter
   // list (e.g., template < ; Check here to implement >> style closures.
   return ParseNonTypeTemplateParameter(Depth, Position);
+}
+
+/// 'universal' is a contextual keyword: it only introduces a universal
+/// template parameter when immediately followed by 'template'.
+bool Parser::isUniversalTemplateParameterIntroducer() {
+  if (!Ident_universal)
+    Ident_universal = &PP.getIdentifierTable().get("universal");
+  return Tok.is(tok::identifier) &&
+         Tok.getIdentifierInfo() == Ident_universal &&
+         NextToken().is(tok::kw_template);
+}
+
+/// ParseUniversalTemplateParameter - Handle the parsing of universal
+/// template parameters (P1985).
+///
+///       template-parameter:
+///         'universal' 'template' '...'[opt] identifier[opt]
+NamedDecl *Parser::ParseUniversalTemplateParameter(unsigned Depth,
+                                                   unsigned Position) {
+  assert(isUniversalTemplateParameterIntroducer() &&
+         "Expected universal template parameter");
+
+  SourceLocation StartLoc = ConsumeToken(); // 'universal'
+  ConsumeToken();                           // 'template'
+
+  if (!getLangOpts().CPlusPlus26)
+    Diag(StartLoc, diag::err_cxx2c_universal_template_params);
+
+  SourceLocation EllipsisLoc;
+  TryConsumeToken(tok::ellipsis, EllipsisLoc);
+
+  IdentifierInfo *ParamName = nullptr;
+  SourceLocation NameLoc;
+  if (Tok.is(tok::identifier)) {
+    ParamName = Tok.getIdentifierInfo();
+    NameLoc = ConsumeToken();
+  }
+
+  return Actions.ActOnUniversalTemplateParameter(
+      getCurScope(), StartLoc, EllipsisLoc, ParamName, NameLoc, Depth,
+      Position);
 }
 
 bool Parser::isTypeConstraintAnnotation() {
@@ -1397,11 +1441,55 @@ ParsedTemplateArgument Parser::ParsePartiallyAppliedConceptTemplateArgument() {
   return ParsedTemplateArgument(SS, C, ConceptLoc);
 }
 
+/// Parse a reference to a universal template parameter, used as a template
+/// argument. Its kind is not known until it is substituted, so it is neither
+/// a type nor an expression here.
+ParsedTemplateArgument Parser::ParseUniversalTemplateParamNameArgument() {
+  if (!Tok.isOneOf(tok::identifier, tok::annot_universal))
+    return ParsedTemplateArgument();
+
+  UnqualifiedId Name;
+  if (Tok.is(tok::annot_universal)) {
+    NamedDecl *ND = getNonTypeAnnotation(Tok);
+    Name.setIdentifier(ND->getIdentifier(), Tok.getLocation());
+    ConsumeAnnotationToken();
+  } else {
+    Name.setIdentifier(Tok.getIdentifierInfo(), Tok.getLocation());
+    ConsumeToken();
+  }
+
+  SourceLocation EllipsisLoc;
+  TryConsumeToken(tok::ellipsis, EllipsisLoc);
+
+  UniversalTemplateParamNameTy Universal;
+  if (Actions.ActOnUniversalTemplateParameterName(
+          getCurScope(), Name, /*EnteringContext=*/false, Universal) ||
+      !Universal)
+    return ParsedTemplateArgument();
+
+  ParsedTemplateArgument Result(Universal, Name.getBeginLoc());
+  if (EllipsisLoc.isValid())
+    Result = Actions.ActOnPackExpansion(Result, EllipsisLoc);
+  return Result;
+}
+
 ParsedTemplateArgument Parser::ParseTemplateArgument() {
   // A partially applied concept is introduced by the 'concept' keyword, so it
   // can never be confused with a type-id or an expression.
   if (Tok.is(tok::kw_concept))
     return ParsePartiallyAppliedConceptTemplateArgument();
+
+  // A name that resolves to a universal template parameter is neither a type
+  // nor an expression, so it must be recognised before either is attempted.
+  {
+    TentativeParsingAction TPA(*this);
+    ParsedTemplateArgument Universal = ParseUniversalTemplateParamNameArgument();
+    if (!Universal.isInvalid()) {
+      TPA.Commit();
+      return Universal;
+    }
+    TPA.Revert();
+  }
 
   // C++ [temp.arg]p2:
   //   In a template-argument, an ambiguity between a type-id and an

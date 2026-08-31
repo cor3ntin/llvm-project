@@ -970,6 +970,7 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
 
     case ClassTemplate:
     case TemplateTemplateParm:
+    case UniversalTemplateParm:
     case TypeAliasTemplate:
       return IDNS_Ordinary | IDNS_Tag | IDNS_Type;
 

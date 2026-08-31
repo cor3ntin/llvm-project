@@ -11894,6 +11894,18 @@ public:
                                      bool EnteringContext, TemplateTy &Template,
                                      bool AllowInjectedClassName = false);
 
+  /// Build a universal template parameter (P1985).
+  NamedDecl *ActOnUniversalTemplateParameter(
+      Scope *S, SourceLocation IntroducerLoc, SourceLocation EllipsisLoc,
+      IdentifierInfo *ParamName, SourceLocation NameLoc, unsigned Depth,
+      unsigned Position);
+
+  /// Resolve a name to a universal template parameter, if it names one.
+  /// Returns true on failure.
+  bool ActOnUniversalTemplateParameterName(Scope *S, const UnqualifiedId &Name,
+                                           bool EnteringContext,
+                                           UniversalTemplateParamNameTy &Name_);
+
   /// Build a concept whose leading template arguments have been bound, for
   /// use as the argument of a concept template parameter.
   PartiallyAppliedConcept *

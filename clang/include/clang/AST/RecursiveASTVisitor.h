@@ -922,6 +922,10 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgument(
     return true;
   }
 
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    return true;
+
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());
   }
@@ -974,6 +978,10 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgumentLoc(
       TRY_TO(getDerived().TraverseTemplateArgumentLoc(Bound));
     return true;
   }
+
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    return true;
 
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());
@@ -2122,6 +2130,11 @@ DEF_TRAVERSE_DECL(TemplateTemplateParmDecl, {
   if (D->hasDefaultArgument() && !D->defaultArgumentWasInherited())
     TRY_TO(TraverseTemplateArgumentLoc(D->getDefaultArgument()));
   TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters()));
+})
+
+DEF_TRAVERSE_DECL(UniversalTemplateParmDecl, {
+  // D is the "U" in something like
+  //   template <universal template U> class container { };
 })
 
 DEF_TRAVERSE_DECL(BuiltinTemplateDecl, {

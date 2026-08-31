@@ -4048,6 +4048,18 @@ static void collectUnexpandedParameterPacks(
   }
 }
 
+Decl *TemplateDeclInstantiator::VisitUniversalTemplateParmDecl(
+    UniversalTemplateParmDecl *D) {
+  UniversalTemplateParmDecl *Param = UniversalTemplateParmDecl::Create(
+      SemaRef.Context, Owner, D->getLocation(),
+      D->getDepth() - TemplateArgs.getNumSubstitutedLevels(), D->getPosition(),
+      D->isParameterPack(), D->getIdentifier());
+  Param->setAccess(AS_public);
+  if (D->isImplicit())
+    Param->setImplicit();
+  return Param;
+}
+
 Decl *
 TemplateDeclInstantiator::VisitTemplateTemplateParmDecl(
                                                   TemplateTemplateParmDecl *D) {

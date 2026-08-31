@@ -55,6 +55,7 @@ class IdentifierInfo;
 class NonTypeTemplateParmDecl;
 class TemplateDecl;
 class TemplateTemplateParmDecl;
+class UniversalTemplateParmDecl;
 class TemplateTypeParmDecl;
 class ConceptDecl;
 class UnresolvedSetImpl;
@@ -64,7 +65,7 @@ class VarTemplatePartialSpecializationDecl;
 /// Stores a template parameter of any kind.
 using TemplateParameter =
     llvm::PointerUnion<TemplateTypeParmDecl *, NonTypeTemplateParmDecl *,
-                       TemplateTemplateParmDecl *>;
+                       TemplateTemplateParmDecl *, UniversalTemplateParmDecl *>;
 
 NamedDecl *getAsNamedDecl(TemplateParameter P);
 
@@ -1762,6 +1763,54 @@ public:
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K == TemplateTemplateParm; }
+};
+
+/// Declaration of a universal template parameter, which accepts an argument
+/// of any kind:
+///
+/// \code
+/// template <universal template U> struct S;
+/// \endcode
+class UniversalTemplateParmDecl final : public NamedDecl,
+                                        protected TemplateParmPosition {
+  /// Whether this universal template parameter is a parameter pack.
+  bool ParameterPack;
+
+  UniversalTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
+                            unsigned P, bool ParameterPack, IdentifierInfo *Id)
+      : NamedDecl(UniversalTemplateParm, DC, L, Id), TemplateParmPosition(D, P),
+        ParameterPack(ParameterPack) {}
+
+  void anchor() override;
+
+public:
+  friend class ASTDeclReader;
+  friend class ASTDeclWriter;
+
+  static UniversalTemplateParmDecl *Create(const ASTContext &C, DeclContext *DC,
+                                           SourceLocation L, unsigned D,
+                                           unsigned P, bool ParameterPack,
+                                           IdentifierInfo *Id);
+
+  static UniversalTemplateParmDecl *CreateDeserialized(ASTContext &C,
+                                                       GlobalDeclID ID);
+
+  using TemplateParmPosition::getDepth;
+  using TemplateParmPosition::getIndex;
+  using TemplateParmPosition::getPosition;
+  using TemplateParmPosition::setDepth;
+  using TemplateParmPosition::setPosition;
+
+  /// Whether this universal template parameter is a parameter pack.
+  ///
+  /// \code
+  /// template <universal template ...Us> struct Apply;
+  /// \endcode
+  bool isParameterPack() const { return ParameterPack; }
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classofKind(Kind K) { return K == UniversalTemplateParm; }
 };
 
 /// Represents the builtin template declaration which is used to
@@ -3474,7 +3523,9 @@ inline NamedDecl *getAsNamedDecl(TemplateParameter P) {
     return PD;
   if (auto *PD = P.dyn_cast<NonTypeTemplateParmDecl *>())
     return PD;
-  return cast<TemplateTemplateParmDecl *>(P);
+  if (auto *PD = P.dyn_cast<TemplateTemplateParmDecl *>())
+    return PD;
+  return cast<UniversalTemplateParmDecl *>(P);
 }
 
 inline TemplateDecl *getAsTypeTemplateDecl(Decl *D) {

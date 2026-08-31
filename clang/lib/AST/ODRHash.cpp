@@ -221,6 +221,11 @@ void ODRHash::AddTemplateArgument(TemplateArgument TA) {
         AddTemplateArgument(Bound.getArgument());
       break;
     }
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
+      ID.AddPointer(
+          TA.getAsUniversalTemplateParameterOrPattern()->getDecl());
+      break;
     case TemplateArgument::Pack:
       ID.AddInteger(TA.pack_size());
       for (auto SubTA : TA.pack_elements()) {

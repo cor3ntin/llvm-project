@@ -86,6 +86,9 @@ TemplateParameterList::TemplateParameterList(const ASTContext &C,
       }
       if (TTP->hasTypeConstraint())
         HasConstrainedParameters = true;
+    } else if (isa<UniversalTemplateParmDecl>(P)) {
+      // A universal template parameter has neither a type nor a default
+      // argument that could mention an unexpanded pack.
     } else {
       llvm_unreachable("unexpected template parameter type");
     }
@@ -204,6 +207,8 @@ unsigned TemplateParameterList::getDepth() const {
     return TTP->getDepth();
   else if (const auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(FirstParm))
     return NTTP->getDepth();
+  else if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(FirstParm))
+    return UTP->getDepth();
   else
     return cast<TemplateTemplateParmDecl>(FirstParm)->getDepth();
 }
@@ -914,6 +919,25 @@ TemplateTemplateParmDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID,
                                    nullptr, {});
   TTP->NumExpandedParams = NumExpansions;
   return TTP;
+}
+
+//===----------------------------------------------------------------------===//
+// UniversalTemplateParmDecl Implementation
+//===----------------------------------------------------------------------===//
+
+void UniversalTemplateParmDecl::anchor() {}
+
+UniversalTemplateParmDecl *
+UniversalTemplateParmDecl::Create(const ASTContext &C, DeclContext *DC,
+                                  SourceLocation L, unsigned D, unsigned P,
+                                  bool ParameterPack, IdentifierInfo *Id) {
+  return new (C, DC) UniversalTemplateParmDecl(DC, L, D, P, ParameterPack, Id);
+}
+
+UniversalTemplateParmDecl *
+UniversalTemplateParmDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID) {
+  return new (C, ID)
+      UniversalTemplateParmDecl(nullptr, SourceLocation(), 0, 0, false, nullptr);
 }
 
 SourceLocation TemplateTemplateParmDecl::getDefaultArgumentLoc() const {

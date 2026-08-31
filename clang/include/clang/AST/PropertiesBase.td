@@ -977,6 +977,59 @@ let Class = PropertyTypeCase<TemplateArgument, "Concept"> in {
         isDefaulted);
   }]>;
 }
+let Class = PropertyTypeCase<TemplateArgument, "Universal"> in {
+  def : Property<"parameter", DeclRef> {
+    let Read = [{ node.getAsUniversalTemplateParameterName()->getDecl() }];
+  }
+  def : Property<"name", DeclarationName> {
+    let Read = [{
+      node.getAsUniversalTemplateParameterName()->getNameInfo().getName()
+    }];
+  }
+  def : Property<"nameLoc", SourceLocation> {
+    let Read = [{ node.getAsUniversalTemplateParameterName()->getLocation() }];
+  }
+  def : Property<"isDefaulted", Bool> {
+    let Read = [{ node.getIsDefaulted() }];
+  }
+  def : Creator<[{
+    return TemplateArgument(
+        ctx.getUniversalTemplateParameterName(
+            nameLoc, DeclarationNameInfo(name, nameLoc),
+            cast<UniversalTemplateParmDecl>(parameter)),
+        isDefaulted);
+  }]>;
+}
+let Class = PropertyTypeCase<TemplateArgument, "UniversalExpansion"> in {
+  def : Property<"parameter", DeclRef> {
+    let Read = [{
+      node.getAsUniversalTemplateParameterOrPattern()->getDecl()
+    }];
+  }
+  def : Property<"name", DeclarationName> {
+    let Read = [{
+      node.getAsUniversalTemplateParameterOrPattern()->getNameInfo().getName()
+    }];
+  }
+  def : Property<"nameLoc", SourceLocation> {
+    let Read = [{
+      node.getAsUniversalTemplateParameterOrPattern()->getLocation()
+    }];
+  }
+  def : Property<"numExpansions", UnsignedOrNone> {
+    let Read = [{ node.getNumTemplateExpansions() }];
+  }
+  def : Property<"isDefaulted", Bool> {
+    let Read = [{ node.getIsDefaulted() }];
+  }
+  def : Creator<[{
+    return TemplateArgument(
+        ctx.getUniversalTemplateParameterName(
+            nameLoc, DeclarationNameInfo(name, nameLoc),
+            cast<UniversalTemplateParmDecl>(parameter)),
+        numExpansions, isDefaulted);
+  }]>;
+}
 let Class = PropertyTypeCase<TemplateArgument, "Pack"> in {
   def : Property<"elements", Array<TemplateArgument>> {
     let Read = [{ node.pack_elements() }];

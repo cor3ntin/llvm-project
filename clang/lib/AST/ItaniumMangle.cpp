@@ -6426,6 +6426,12 @@ void CXXNameMangler::mangleTemplateArg(TemplateArgument A, bool NeedExactType) {
     Context.getDiags().Report(diag::err_unsupported_itanium_mangling)
         << UnsupportedItaniumManglingKind::PartiallyAppliedConcept;
     break;
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    // A universal template parameter should have been substituted by now.
+    Context.getDiags().Report(diag::err_unsupported_itanium_mangling)
+        << UnsupportedItaniumManglingKind::UniversalTemplateParameter;
+    break;
   case TemplateArgument::Expression:
     mangleTemplateArgExpr(A.getAsExpr());
     break;

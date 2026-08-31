@@ -278,6 +278,10 @@ LinkageInfo LinkageComputer::getLVForTemplateParameterList(
       continue;
     }
 
+    // A universal template parameter places no restriction on linkage.
+    if (isa<UniversalTemplateParmDecl>(P))
+      continue;
+
     // Template template parameters can be restricted by their
     // template parameters, recursively.
     const auto *TTP = cast<TemplateTemplateParmDecl>(P);
@@ -360,6 +364,10 @@ LinkageComputer::getLVForTemplateArgumentList(ArrayRef<TemplateArgument> Args,
               Arg.getAsPartiallyAppliedConcept()->getNamedConcept()
                   .getAsTemplateDecl(/*IgnoreDeduced=*/true))
         LV.merge(getLVForDecl(Template, computation));
+      continue;
+
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
       continue;
 
     case TemplateArgument::Pack:

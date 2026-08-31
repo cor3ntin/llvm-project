@@ -17,6 +17,7 @@
 #include "clang/AST/DependenceFlags.h"
 #include "clang/AST/NestedNameSpecifierBase.h"
 #include "clang/AST/TemplateName.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/AST/TypeBase.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/SourceLocation.h"
@@ -98,7 +99,15 @@ public:
 
     /// The template argument is a concept whose leading arguments have been
     /// bound, provided for a concept template parameter.
-    Concept
+    Concept,
+
+    /// The template argument names a universal template parameter, whose
+    /// kind is not yet known.
+    Universal,
+
+    /// The template argument is a pack expansion of a universal template
+    /// parameter name.
+    UniversalExpansion
   };
 
 private:
@@ -172,6 +181,14 @@ private:
     unsigned IsDefaulted : 1;
     PartiallyAppliedConcept *C;
   };
+  struct UTP {
+    LLVM_PREFERRED_TYPE(ArgKind)
+    unsigned Kind : 31;
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned IsDefaulted : 1;
+    UnsignedOrNone NumExpansions;
+    UniversalTemplateParameterName *Name;
+  };
   union {
     struct DA DeclArg;
     struct I Integer;
@@ -180,6 +197,7 @@ private:
     struct TA TemplateArg;
     struct TV TypeOrValue;
     struct PAC PartialConcept;
+    struct UTP UniversalArg;
   };
 
   void initFromType(QualType T, bool IsNullPtr, bool IsDefaulted);
@@ -295,6 +313,25 @@ public:
     PartialConcept.C = C;
   }
 
+  /// Construct a template argument naming a universal template parameter.
+  explicit TemplateArgument(UniversalTemplateParameterName *Name,
+                            bool IsDefaulted = false) {
+    UniversalArg.Kind = Universal;
+    UniversalArg.IsDefaulted = IsDefaulted;
+    UniversalArg.NumExpansions = std::nullopt;
+    UniversalArg.Name = Name;
+  }
+
+  /// Construct a template argument that is a pack expansion of a universal
+  /// template parameter name.
+  TemplateArgument(UniversalTemplateParameterName *Name,
+                   UnsignedOrNone NumExpansions, bool IsDefaulted = false) {
+    UniversalArg.Kind = UniversalExpansion;
+    UniversalArg.IsDefaulted = IsDefaulted;
+    UniversalArg.NumExpansions = NumExpansions;
+    UniversalArg.Name = Name;
+  }
+
   static TemplateArgument getEmptyPack() {
     return TemplateArgument(ArrayRef<TemplateArgument>());
   }
@@ -375,6 +412,21 @@ public:
   PartiallyAppliedConcept *getAsPartiallyAppliedConcept() const {
     assert(getKind() == Concept && "Unexpected kind");
     return PartialConcept.C;
+  }
+
+  /// Retrieve the universal template parameter name for a universal argument.
+  UniversalTemplateParameterName *getAsUniversalTemplateParameterName() const {
+    assert(getKind() == Universal && "Unexpected kind");
+    return UniversalArg.Name;
+  }
+
+  /// Retrieve the universal template parameter name; if the argument is a
+  /// pack expansion, return the pattern.
+  UniversalTemplateParameterName *
+  getAsUniversalTemplateParameterOrPattern() const {
+    assert((getKind() == Universal || getKind() == UniversalExpansion) &&
+           "Unexpected kind");
+    return UniversalArg.Name;
   }
 
   /// Retrieve the number of expansions that a template template argument
@@ -600,6 +652,8 @@ public:
     case TemplateArgument::Template:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::Concept:
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
       assert(Opaque.getTemplate() != nullptr);
       return;
     }
@@ -634,7 +688,9 @@ public:
   SourceLocation getLocation() const {
     if (Argument.getKind() == TemplateArgument::Template ||
         Argument.getKind() == TemplateArgument::TemplateExpansion ||
-        Argument.getKind() == TemplateArgument::Concept)
+        Argument.getKind() == TemplateArgument::Concept ||
+        Argument.getKind() == TemplateArgument::Universal ||
+        Argument.getKind() == TemplateArgument::UniversalExpansion)
       return getTemplateNameLoc();
 
     return getSourceRange().getBegin();
@@ -690,13 +746,16 @@ public:
   SourceLocation getTemplateNameLoc() const {
     if (Argument.getKind() != TemplateArgument::Template &&
         Argument.getKind() != TemplateArgument::TemplateExpansion &&
-        Argument.getKind() != TemplateArgument::Concept)
+        Argument.getKind() != TemplateArgument::Concept &&
+        Argument.getKind() != TemplateArgument::Universal &&
+        Argument.getKind() != TemplateArgument::UniversalExpansion)
       return SourceLocation();
     return LocInfo.getTemplateNameLoc();
   }
 
   SourceLocation getTemplateEllipsisLoc() const {
-    if (Argument.getKind() != TemplateArgument::TemplateExpansion)
+    if (Argument.getKind() != TemplateArgument::TemplateExpansion &&
+        Argument.getKind() != TemplateArgument::UniversalExpansion)
       return SourceLocation();
     return LocInfo.getTemplateEllipsisLoc();
   }

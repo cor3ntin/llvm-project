@@ -80,6 +80,7 @@ void CodeGenFunction::EmitDecl(const Decl &D, bool EvaluateConditionDecl) {
   case Decl::FunctionTemplate:
   case Decl::TypeAliasTemplate:
   case Decl::TemplateTemplateParm:
+  case Decl::UniversalTemplateParm:
   case Decl::ObjCMethod:
   case Decl::ObjCCategory:
   case Decl::ObjCProtocol:

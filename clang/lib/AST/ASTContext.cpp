@@ -43,6 +43,7 @@
 #include "clang/AST/Stmt.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/TemplateName.h"
+#include "clang/AST/UniversalTemplateParameterName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/AST/UnresolvedSet.h"
@@ -6290,6 +6291,14 @@ TemplateArgument ASTContext::getInjectedTemplateArg(NamedDecl *Param) const {
     if (NTTP->isParameterPack())
       E = new (*this) PackExpansionExpr(E, NTTP->getLocation(), std::nullopt);
     Arg = TemplateArgument(E, /*IsCanonical=*/false);
+  } else if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(Param)) {
+    UniversalTemplateParameterName *Name = getUniversalTemplateParameterName(
+        UTP->getLocation(),
+        DeclarationNameInfo(UTP->getDeclName(), UTP->getLocation()), UTP);
+    if (UTP->isParameterPack())
+      Arg = TemplateArgument(Name, /*NumExpansions=*/std::nullopt);
+    else
+      Arg = TemplateArgument(Name);
   } else {
     auto *TTP = cast<TemplateTemplateParmDecl>(Param);
     TemplateName Name = getQualifiedTemplateName(
@@ -8019,6 +8028,9 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
     // A partially applied concept is identified by the concept it names
     // together with the arguments as written, so it is already canonical.
     case TemplateArgument::Concept:
+    // A universal template parameter name is identified by its declaration.
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
       return Arg;
 
     case TemplateArgument::Pack: {
@@ -8068,6 +8080,8 @@ bool ASTContext::isSameTemplateArgument(const TemplateArgument &Arg1,
 
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Concept:
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
     return Arg1.structurallyEquals(Arg2);
 
   case TemplateArgument::Expression: {
@@ -10607,6 +10621,16 @@ ASTContext::getSubstTemplateTemplateParmPack(const TemplateArgument &ArgPack,
   }
 
   return TemplateName(Subst);
+}
+
+UniversalTemplateParameterName *
+ASTContext::getUniversalTemplateParameterName(
+    SourceLocation Loc, DeclarationNameInfo Name,
+    UniversalTemplateParmDecl *Param) const {
+  // FIXME: These are not uniqued; two uses of the same parameter produce
+  // distinct names that compare equal only through their declaration.
+  return new (*this, alignof(UniversalTemplateParameterName))
+      UniversalTemplateParameterName(Loc, Name, Param);
 }
 
 /// Retrieve the template name that represents a template name

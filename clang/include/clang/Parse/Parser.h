@@ -1447,6 +1447,10 @@ private:
   /// Ident_vector, Ident_bool, Ident_Bool - cached IdentifierInfos for "vector"
   /// and "bool" fast comparison.  Only present if AltiVec or ZVector are
   /// enabled.
+  /// Ident_universal - cached IdentifierInfo for the contextual keyword
+  /// 'universal', which introduces a universal template parameter.
+  IdentifierInfo *Ident_universal = nullptr;
+
   IdentifierInfo *Ident_vector;
   IdentifierInfo *Ident_bool;
   IdentifierInfo *Ident_Bool;
@@ -8430,11 +8434,22 @@ private:
   bool ParseTemplateArgumentList(TemplateArgList &TemplateArgs,
                                  TemplateTy Template, SourceLocation OpenLoc);
 
+  /// Whether the current token introduces a universal template parameter,
+  /// that is, the contextual keyword 'universal' followed by 'template'.
+  bool isUniversalTemplateParameterIntroducer();
+
+  /// Parse a universal template parameter (P1985).
+  NamedDecl *ParseUniversalTemplateParameter(unsigned Depth, unsigned Position);
+
   /// Parse a C++ template template argument.
   ParsedTemplateArgument ParseTemplateTemplateArgument();
 
   /// Parse a partially applied concept, used as a template argument.
   ParsedTemplateArgument ParsePartiallyAppliedConceptTemplateArgument();
+
+  /// Parse a reference to a universal template parameter, used as a template
+  /// argument.
+  ParsedTemplateArgument ParseUniversalTemplateParamNameArgument();
 
   /// ParseTemplateArgument - Parse a C++ template argument (C++ [temp.names]).
   ///

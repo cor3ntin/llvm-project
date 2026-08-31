@@ -5705,6 +5705,8 @@ def err_template_arg_must_be_template
     : Error<"template argument for template template parameter must be a "
             "%select{class template%select{| or type alias template}1|variable "
             "template|concept}0">;
+def err_cxx2c_universal_template_params : Error<
+  "universal template parameters are a C++2c extension">;
 def err_partial_concept_valid_template : Error<
   "name of template argument does not refer to concept, or concept "
   "template parameter">;

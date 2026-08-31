@@ -3038,7 +3038,9 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result,
       break;
 
     case TemplateArgument::Concept:
-      // A concept does not contribute associated classes or namespaces.
+    case TemplateArgument::Universal:
+    case TemplateArgument::UniversalExpansion:
+      // These contribute no associated classes or namespaces.
       break;
 
     case TemplateArgument::Pack:

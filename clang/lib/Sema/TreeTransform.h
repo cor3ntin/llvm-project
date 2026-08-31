@@ -4132,7 +4132,17 @@ public:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::NullPtr:
     case TemplateArgument::Concept:
+    case TemplateArgument::UniversalExpansion:
       llvm_unreachable("Pack expansion pattern has no parameter packs");
+
+    case TemplateArgument::Universal:
+      return TemplateArgumentLoc(
+          SemaRef.Context,
+          TemplateArgument(
+              Pattern.getArgument().getAsUniversalTemplateParameterName(),
+              NumExpansions),
+          /*TemplateKWLoc=*/SourceLocation(), NestedNameSpecifierLoc(),
+          Pattern.getTemplateNameLoc(), EllipsisLoc);
 
     case TemplateArgument::Type:
       if (TypeSourceInfo *Expansion
@@ -5273,6 +5283,12 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
                                  QualifierLoc, NameInfo.getLoc());
     return false;
   }
+
+  case TemplateArgument::Universal:
+  case TemplateArgument::UniversalExpansion:
+    // FIXME: Substitute the argument bound to the universal parameter.
+    Output = Input;
+    return false;
 
   case TemplateArgument::Expression: {
     // Template argument expressions are constant expressions.

@@ -1069,6 +1069,7 @@ def err_unsupported_itanium_mangling : Error<
     "containing a substitution failure}"
     "|%PackIndexTemplateName{pack indexing template name}"
     "|%PartiallyAppliedConcept{partially applied concept}"
+    "|%UniversalTemplateParameter{universal template parameter}"
     "}0">;
 
 def err_unsupported_itanium_expr_mangling : Error<
