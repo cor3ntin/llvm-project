@@ -284,10 +284,88 @@ public:
   }
 };
 
+/// Models a concept whose leading template arguments have been bound, as
+/// written in a template argument list:
+///   S<concept convertible_to<int>>
+///     ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/// The bound arguments are prepended to the arguments supplied wherever the
+/// resulting concept is subsequently used.
+class PartiallyAppliedConcept : public ConceptReference,
+                                public llvm::FoldingSetNode {
+  /// \brief The location of the introducing 'concept' keyword.
+  SourceLocation ConceptKWLoc;
+
+  /// \brief The bound arguments, which are prepended to the arguments
+  /// supplied where the resulting concept is used.
+  ArrayRef<TemplateArgument> BoundArgs;
+
+  PartiallyAppliedConcept(NestedNameSpecifierLoc NNS,
+                          DeclarationNameInfo ConceptNameInfo,
+                          SourceLocation ConceptKWLoc, NamedDecl *FoundDecl,
+                          TemplateName NamedConcept,
+                          const ASTTemplateArgumentListInfo *ArgsAsWritten,
+                          ArrayRef<TemplateArgument> BoundArgs)
+      : ConceptReference(NNS, /*TemplateKWLoc=*/SourceLocation(),
+                         ConceptNameInfo, FoundDecl, NamedConcept,
+                         ArgsAsWritten),
+        ConceptKWLoc(ConceptKWLoc), BoundArgs(BoundArgs) {}
+
+public:
+  static PartiallyAppliedConcept *
+  Create(const ASTContext &C, NestedNameSpecifierLoc NNS,
+         DeclarationNameInfo ConceptNameInfo, SourceLocation ConceptKWLoc,
+         NamedDecl *FoundDecl, TemplateName NamedConcept,
+         const TemplateArgumentListInfo &TemplateArgs);
+
+  /// Rebuild a partially applied concept from its bound arguments alone,
+  /// giving each of them a trivial location. Used when deserializing, where
+  /// the arguments as written are not available.
+  static PartiallyAppliedConcept *
+  CreateWithTrivialLocs(const ASTContext &C, NestedNameSpecifierLoc NNS,
+                        DeclarationNameInfo ConceptNameInfo,
+                        SourceLocation ConceptKWLoc, NamedDecl *FoundDecl,
+                        TemplateName NamedConcept,
+                        ArrayRef<TemplateArgument> BoundArgs);
+
+  ArrayRef<TemplateArgument> getBoundArguments() const { return BoundArgs; }
+
+  TemplateArgumentDependence getDependence() const;
+
+  bool isDependent() const {
+    return static_cast<bool>(getDependence() &
+                             TemplateArgumentDependence::Dependent);
+  }
+
+  bool isInstantiationDependent() const {
+    return static_cast<bool>(getDependence() &
+                             TemplateArgumentDependence::Instantiation);
+  }
+
+  void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &C) const {
+    Profile(ID, C, getNamedConcept(), getTemplateArgsAsWritten());
+  }
+
+  static void Profile(llvm::FoldingSetNodeID &ID, const ASTContext &C,
+                      TemplateName NamedConcept,
+                      const ASTTemplateArgumentListInfo *ArgsAsWritten);
+
+  SourceLocation getConceptKWLoc() const { return ConceptKWLoc; }
+
+  SourceRange getSourceRange() const LLVM_READONLY {
+    return SourceRange(ConceptKWLoc,
+                       getTemplateArgsAsWritten()->getRAngleLoc());
+  }
+};
+
 /// Insertion operator for diagnostics.  This allows sending ConceptReferences's
 /// into a diagnostic with <<.
 const StreamingDiagnostic &operator<<(const StreamingDiagnostic &DB,
                                       const ConceptReference *C);
+
+/// Insertion operator for diagnostics.  This allows sending
+/// PartiallyAppliedConcepts into a diagnostic with <<.
+const StreamingDiagnostic &operator<<(const StreamingDiagnostic &DB,
+                                      const PartiallyAppliedConcept *C);
 
 } // clang
 

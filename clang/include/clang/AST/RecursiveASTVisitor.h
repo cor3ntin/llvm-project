@@ -913,6 +913,15 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgument(
   case TemplateArgument::Expression:
     return getDerived().TraverseStmt(Arg.getAsExpr());
 
+  case TemplateArgument::Concept: {
+    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+    TRY_TO(getDerived().TraverseTemplateName(C->getNamedConcept()));
+    for (const TemplateArgumentLoc &Bound :
+         C->getTemplateArgsAsWritten()->arguments())
+      TRY_TO(getDerived().TraverseTemplateArgument(Bound.getArgument()));
+    return true;
+  }
+
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());
   }
@@ -953,6 +962,18 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgumentLoc(
 
   case TemplateArgument::Expression:
     return getDerived().TraverseStmt(ArgLoc.getSourceExpression());
+
+  case TemplateArgument::Concept: {
+    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+    if (C->getNestedNameSpecifierLoc())
+      TRY_TO(getDerived().TraverseNestedNameSpecifierLoc(
+          C->getNestedNameSpecifierLoc()));
+    TRY_TO(getDerived().TraverseTemplateName(C->getNamedConcept()));
+    for (const TemplateArgumentLoc &Bound :
+         C->getTemplateArgsAsWritten()->arguments())
+      TRY_TO(getDerived().TraverseTemplateArgumentLoc(Bound));
+    return true;
+  }
 
   case TemplateArgument::Pack:
     return getDerived().TraverseTemplateArguments(Arg.pack_elements());

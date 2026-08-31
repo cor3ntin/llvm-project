@@ -139,6 +139,106 @@ const StreamingDiagnostic &clang::operator<<(const StreamingDiagnostic &DB,
   return DB << NameStr;
 }
 
+PartiallyAppliedConcept *PartiallyAppliedConcept::Create(
+    const ASTContext &C, NestedNameSpecifierLoc NNS,
+    DeclarationNameInfo ConceptNameInfo, SourceLocation ConceptKWLoc,
+    NamedDecl *FoundDecl, TemplateName NamedConcept,
+    const TemplateArgumentListInfo &TemplateArgs) {
+  assert(NamedConcept.isConceptName() &&
+         "partially applied concept does not name a concept");
+
+  unsigned NumArgs = TemplateArgs.size();
+  auto *BoundArgs = new (C) TemplateArgument[NumArgs];
+  for (unsigned I = 0; I != NumArgs; ++I)
+    BoundArgs[I] = TemplateArgs[I].getArgument();
+
+  return new (C) PartiallyAppliedConcept(
+      NNS, ConceptNameInfo, ConceptKWLoc, FoundDecl, NamedConcept,
+      ASTTemplateArgumentListInfo::Create(C, TemplateArgs),
+      ArrayRef(BoundArgs, NumArgs));
+}
+
+PartiallyAppliedConcept *PartiallyAppliedConcept::CreateWithTrivialLocs(
+    const ASTContext &C, NestedNameSpecifierLoc NNS,
+    DeclarationNameInfo ConceptNameInfo, SourceLocation ConceptKWLoc,
+    NamedDecl *FoundDecl, TemplateName NamedConcept,
+    ArrayRef<TemplateArgument> BoundArgs) {
+  SourceLocation Loc = ConceptNameInfo.getLoc();
+  TemplateArgumentListInfo ArgsAsWritten(Loc, Loc);
+  for (const TemplateArgument &Arg : BoundArgs) {
+    TemplateArgumentLocInfo LocInfo;
+    switch (Arg.getKind()) {
+    case TemplateArgument::Type:
+      LocInfo = TemplateArgumentLocInfo(
+          C.getTrivialTypeSourceInfo(Arg.getAsType(), Loc));
+      break;
+    case TemplateArgument::Expression:
+      LocInfo = TemplateArgumentLocInfo(Arg.getAsExpr());
+      break;
+    case TemplateArgument::Template:
+    case TemplateArgument::TemplateExpansion:
+    case TemplateArgument::Concept:
+      LocInfo = TemplateArgumentLocInfo(
+          const_cast<ASTContext &>(C), /*TemplateKWLoc=*/SourceLocation(),
+          NestedNameSpecifierLoc(), Loc, SourceLocation());
+      break;
+    default:
+      LocInfo = TemplateArgumentLocInfo(const_cast<ASTContext &>(C), Loc);
+      break;
+    }
+    ArgsAsWritten.addArgument(TemplateArgumentLoc(Arg, LocInfo));
+  }
+
+  auto *StoredArgs = new (C) TemplateArgument[BoundArgs.size()];
+  std::copy(BoundArgs.begin(), BoundArgs.end(), StoredArgs);
+
+  return new (C) PartiallyAppliedConcept(
+      NNS, ConceptNameInfo, ConceptKWLoc, FoundDecl, NamedConcept,
+      ASTTemplateArgumentListInfo::Create(C, ArgsAsWritten),
+      ArrayRef(StoredArgs, BoundArgs.size()));
+}
+
+TemplateArgumentDependence PartiallyAppliedConcept::getDependence() const {
+  auto Deps = TemplateArgumentDependence::None;
+
+  // Naming the concept through a concept template parameter means we cannot
+  // know which concept is being applied until instantiation.
+  if (getNamedConcept().getAsTemplateTemplateParmDecl())
+    Deps |= TemplateArgumentDependence::DependentInstantiation;
+
+  constexpr auto InterestingDeps = TemplateArgumentDependence::Instantiation |
+                                   TemplateArgumentDependence::UnexpandedPack;
+  for (const TemplateArgumentLoc &ArgLoc :
+       getTemplateArgsAsWritten()->arguments()) {
+    Deps |= ArgLoc.getArgument().getDependence() & InterestingDeps;
+    if ((Deps & InterestingDeps) == InterestingDeps)
+      break;
+  }
+  return Deps;
+}
+
+void PartiallyAppliedConcept::Profile(
+    llvm::FoldingSetNodeID &ID, const ASTContext &C, TemplateName NamedConcept,
+    const ASTTemplateArgumentListInfo *ArgsAsWritten) {
+  ID.AddPointer(NamedConcept.getAsVoidPointer());
+  ID.AddInteger(ArgsAsWritten->getNumTemplateArgs());
+  for (const TemplateArgumentLoc &Arg : ArgsAsWritten->arguments())
+    Arg.getArgument().Profile(ID, C);
+}
+
+const StreamingDiagnostic &clang::operator<<(const StreamingDiagnostic &DB,
+                                             const PartiallyAppliedConcept *C) {
+  std::string NameStr;
+  llvm::raw_string_ostream OS(NameStr);
+  LangOptions LO;
+  LO.CPlusPlus = true;
+  LO.Bool = true;
+  OS << "'concept ";
+  C->print(OS, PrintingPolicy(LO));
+  OS << '\'';
+  return DB << NameStr;
+}
+
 concepts::ExprRequirement::ExprRequirement(
     Expr *E, bool IsSimple, SourceLocation NoexceptLoc,
     ReturnTypeRequirement Req, SatisfactionStatus Status,

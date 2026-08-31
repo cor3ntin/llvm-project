@@ -1191,6 +1191,14 @@ DeclarationFragmentsBuilder::getFragmentsForTemplateArguments(
       break;
     }
 
+    case TemplateArgument::Concept: {
+      std::string Str;
+      raw_string_ostream Stream(Str);
+      CTA.print(Context.getPrintingPolicy(), Stream, /*IncludeType=*/false);
+      Fragments.append(Str, DeclarationFragments::FragmentKind::TypeIdentifier);
+      break;
+    }
+
     case TemplateArgument::Null:
       break;
     }

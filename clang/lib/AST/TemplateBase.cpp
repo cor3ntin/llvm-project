@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/TemplateBase.h"
+#include "clang/AST/ASTConcept.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclBase.h"
@@ -280,6 +281,8 @@ StringRef TemplateArgument::getKindName() const {
     return "pack";
   case TemplateArgument::StructuralValue:
     return "structural value";
+  case TemplateArgument::Concept:
+    return "concept";
   }
   llvm_unreachable("unhandled ArgKind");
 }
@@ -325,6 +328,9 @@ TemplateArgumentDependence TemplateArgument::getDependence() const {
               TemplateArgumentDependence::Instantiation;
     return Deps;
 
+  case Concept:
+    return getAsPartiallyAppliedConcept()->getDependence();
+
   case Pack:
     for (const auto &P : pack_elements())
       Deps |= P.getDependence();
@@ -350,6 +356,7 @@ bool TemplateArgument::isPackExpansion() const {
   case Pack:
   case Template:
   case NullPtr:
+  case Concept:
     return false;
 
   case TemplateExpansion:
@@ -366,6 +373,8 @@ bool TemplateArgument::isPackExpansion() const {
 }
 
 bool TemplateArgument::isConceptOrConceptTemplateParameter() const {
+  if (getKind() == TemplateArgument::Concept)
+    return true;
   return getKind() == TemplateArgument::Template &&
          getAsTemplate().isConceptName();
 }
@@ -386,6 +395,7 @@ QualType TemplateArgument::getNonTypeTemplateArgumentType() const {
   case TemplateArgument::Template:
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
+  case TemplateArgument::Concept:
     return QualType();
 
   case TemplateArgument::Integral:
@@ -455,6 +465,10 @@ void TemplateArgument::Profile(llvm::FoldingSetNodeID &ID,
     break;
   }
 
+  case Concept:
+    getAsPartiallyAppliedConcept()->Profile(ID, Context);
+    break;
+
   case Pack:
     ID.AddInteger(Args.NumArgs);
     for (unsigned I = 0; I != Args.NumArgs; ++I)
@@ -498,6 +512,23 @@ bool TemplateArgument::structurallyEquals(const TemplateArgument &Other) const {
     return A == B;
   }
 
+  case Concept: {
+    const PartiallyAppliedConcept *C = getAsPartiallyAppliedConcept();
+    const PartiallyAppliedConcept *OC = Other.getAsPartiallyAppliedConcept();
+    if (C->getNamedConcept() != OC->getNamedConcept())
+      return false;
+    ArrayRef<TemplateArgumentLoc> Args =
+        C->getTemplateArgsAsWritten()->arguments();
+    ArrayRef<TemplateArgumentLoc> OArgs =
+        OC->getTemplateArgsAsWritten()->arguments();
+    if (Args.size() != OArgs.size())
+      return false;
+    for (unsigned I = 0, E = Args.size(); I != E; ++I)
+      if (!Args[I].getArgument().structurallyEquals(OArgs[I].getArgument()))
+        return false;
+    return true;
+  }
+
   case Pack:
     if (Args.NumArgs != Other.Args.NumArgs) return false;
     for (unsigned I = 0, E = Args.NumArgs; I != E; ++I)
@@ -530,6 +561,7 @@ TemplateArgument TemplateArgument::getPackExpansionPattern() const {
   case Null:
   case Template:
   case NullPtr:
+  case Concept:
     return TemplateArgument();
   }
 
@@ -585,6 +617,11 @@ void TemplateArgument::print(const PrintingPolicy &Policy, raw_ostream &Out,
     Out << "...";
     break;
 
+  case Concept:
+    Out << "concept ";
+    getAsPartiallyAppliedConcept()->print(Out, Policy);
+    break;
+
   case Integral:
     printIntegral(*this, Out, Policy, IncludeType);
     break;
@@ -625,12 +662,18 @@ TemplateArgumentLoc::TemplateArgumentLoc(ASTContext &Ctx,
     : Argument(Argument),
       LocInfo(Ctx, TemplateKWLoc, QualifierLoc, TemplateNameLoc, EllipsisLoc) {
   assert(Argument.getKind() == TemplateArgument::Template ||
-         Argument.getKind() == TemplateArgument::TemplateExpansion);
-  assert(QualifierLoc.getNestedNameSpecifier() ==
-         Argument.getAsTemplateOrTemplatePattern().getQualifier());
+         Argument.getKind() == TemplateArgument::TemplateExpansion ||
+         Argument.getKind() == TemplateArgument::Concept);
+  // A partially applied concept carries its own qualifier, on the underlying
+  // ConceptReference, rather than in the template name.
+  assert(Argument.getKind() == TemplateArgument::Concept ||
+         QualifierLoc.getNestedNameSpecifier() ==
+             Argument.getAsTemplateOrTemplatePattern().getQualifier());
 }
 
 NestedNameSpecifierLoc TemplateArgumentLoc::getTemplateQualifierLoc() const {
+  if (Argument.getKind() == TemplateArgument::Concept)
+    return Argument.getAsPartiallyAppliedConcept()->getNestedNameSpecifierLoc();
   if (Argument.getKind() != TemplateArgument::Template &&
       Argument.getKind() != TemplateArgument::TemplateExpansion)
     return NestedNameSpecifierLoc();
@@ -682,6 +725,9 @@ SourceRange TemplateArgumentLoc::getSourceRange() const {
       return SourceRange(LocInfo.getTrivialLoc());
     return getSourceStructuralValueExpression()->getSourceRange();
 
+  case TemplateArgument::Concept:
+    return Argument.getAsPartiallyAppliedConcept()->getSourceRange();
+
   case TemplateArgument::Pack:
     return SourceRange(LocInfo.getTrivialLoc());
 
@@ -729,6 +775,9 @@ static const T &DiagTemplateArg(const T &DB, const TemplateArgument &Arg) {
 
   case TemplateArgument::TemplateExpansion:
     return DB << Arg.getAsTemplateOrTemplatePattern() << "...";
+
+  case TemplateArgument::Concept:
+    return DB << Arg.getAsPartiallyAppliedConcept();
 
   case TemplateArgument::Expression:
     // FIXME: Support printing expressions as canonical

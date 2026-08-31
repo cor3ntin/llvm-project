@@ -453,6 +453,11 @@ checkDeducedTemplateArguments(ASTContext &Context,
         TemplateArgument::CreatePackCopy(Context, NewPack),
         X.wasDeducedFromArrayBound() && Y.wasDeducedFromArrayBound());
   }
+
+  case TemplateArgument::Concept:
+    if (Y.getKind() == TemplateArgument::Concept && X.structurallyEquals(Y))
+      return X;
+    return DeducedTemplateArgument();
   }
 
   llvm_unreachable("Invalid TemplateArgument Kind!");
@@ -2619,6 +2624,15 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("caller should handle pack expansions");
 
+  // FIXME: Deduce through a partially applied concept.
+  case TemplateArgument::Concept:
+    if (A.getKind() == TemplateArgument::Concept &&
+        P.structurallyEquals(A))
+      return TemplateDeductionResult::Success;
+    Info.FirstArg = P;
+    Info.SecondArg = A;
+    return TemplateDeductionResult::NonDeducedMismatch;
+
   case TemplateArgument::Declaration:
     if (A.getKind() == TemplateArgument::Declaration &&
         isSameDeclaration(P.getAsDecl(), A.getAsDecl()))
@@ -2687,6 +2701,7 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
       case TemplateArgument::Type:
       case TemplateArgument::Template:
       case TemplateArgument::TemplateExpansion:
+      case TemplateArgument::Concept:
       case TemplateArgument::Pack:
         Info.FirstArg = P;
         Info.SecondArg = A;
@@ -2918,6 +2933,10 @@ Sema::getTrivialTemplateArgumentLoc(const TemplateArgument &Arg,
               ? Loc
               : SourceLocation());
     }
+
+  case TemplateArgument::Concept:
+    return TemplateArgumentLoc(Context, Arg, /*TemplateKWLoc=*/SourceLocation(),
+                               NestedNameSpecifierLoc(), Loc);
 
   case TemplateArgument::Expression:
     return TemplateArgumentLoc(Arg, Arg.getAsExpr());
@@ -7319,6 +7338,16 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
     MarkUsedTemplateParameters(Ctx, TemplateArg.getAsExpr(), OnlyDeduced,
                                Depth, Used);
     break;
+
+  case TemplateArgument::Concept: {
+    const PartiallyAppliedConcept *C =
+        TemplateArg.getAsPartiallyAppliedConcept();
+    MarkUsedTemplateParameters(Ctx, C->getNamedConcept(), OnlyDeduced, Depth,
+                               Used);
+    for (const TemplateArgument &Bound : C->getBoundArguments())
+      MarkUsedTemplateParameters(Ctx, Bound, OnlyDeduced, Depth, Used);
+    break;
+  }
 
   case TemplateArgument::Pack:
     for (const auto &P : TemplateArg.pack_elements())
