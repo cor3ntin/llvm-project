@@ -933,6 +933,11 @@ ASTNodeImporter::import(const TemplateArgument &From) {
 
     return TemplateArgument(ArrayRef(ToPack).copy(Importer.getToContext()));
   }
+
+  case TemplateArgument::Concept: {
+    // FIXME: Import partially applied concepts.
+    return make_error<ASTImportError>(ASTImportError::UnsupportedConstruct);
+  }
   }
 
   llvm_unreachable("Invalid template argument kind");

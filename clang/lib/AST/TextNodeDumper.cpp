@@ -1447,6 +1447,12 @@ void TextNodeDumper::VisitTemplateExpansionTemplateArgument(
   dumpBareTemplateName(TA.getAsTemplateOrTemplatePattern());
 }
 
+void TextNodeDumper::VisitConceptTemplateArgument(const TemplateArgument &TA) {
+  OS << " concept";
+  dumpTemplateArgument(TA);
+  dumpBareTemplateName(TA.getAsPartiallyAppliedConcept()->getNamedConcept());
+}
+
 void TextNodeDumper::VisitExpressionTemplateArgument(
     const TemplateArgument &TA) {
   OS << " expr";

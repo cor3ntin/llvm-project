@@ -344,10 +344,8 @@ namespace InvalidName {
 template <typename T, template <typename> concept C>
 concept A = C<T>; // expected-note {{here}}
 
-template <A<concept missing<int>> T> // expected-error {{expected expression}} \
-                                     // expected-error {{too few template arguments for concept 'A'}} \
-                                     // expected-error {{unknown type name 'T'}}  \
-                                     // expected-error {{expected unqualified-id}}
+template <A<concept missing<int>> T> // expected-error {{name of template argument does not refer to concept, or concept template parameter}} \
+                                     // expected-error {{too few template arguments for concept 'A'}}
 auto f();
 }
 
