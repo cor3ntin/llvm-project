@@ -784,13 +784,19 @@ Sema::ActOnPackExpansion(const ParsedTemplateArgument &Arg,
     return Arg;
   }
 
-  // FIXME: Support pack expansion of a partially applied concept.
   case ParsedTemplateArgument::PartiallyAppliedConcept: {
-    SourceRange R(Arg.getNameLoc());
-    if (Arg.getScopeSpec().isValid())
-      R.setBegin(Arg.getScopeSpec().getBeginLoc());
-    Diag(EllipsisLoc, diag::err_pack_expansion_without_parameter_packs) << R;
-    return ParsedTemplateArgument();
+    // The packs to expand are those mentioned by the bound arguments, as in
+    // 'concept Pair<Ts>...'.
+    if (!Arg.getAsConcept()->isInstantiationDependent() ||
+        !(Arg.getAsConcept()->getDependence() &
+          TemplateArgumentDependence::UnexpandedPack)) {
+      SourceRange R(Arg.getNameLoc());
+      if (Arg.getScopeSpec().isValid())
+        R.setBegin(Arg.getScopeSpec().getBeginLoc());
+      Diag(EllipsisLoc, diag::err_pack_expansion_without_parameter_packs) << R;
+      return ParsedTemplateArgument();
+    }
+    return Arg.getTemplatePackExpansion(EllipsisLoc);
   }
   }
   llvm_unreachable("Unhandled template argument kind?");
@@ -1526,6 +1532,14 @@ TemplateArgumentLoc Sema::getTemplateArgumentPackExpansionPattern(
   case TemplateArgument::Template:
   case TemplateArgument::Integral:
   case TemplateArgument::StructuralValue:
+  case TemplateArgument::ConceptExpansion:
+    Ellipsis = OrigLoc.getTemplateEllipsisLoc();
+    NumExpansions = Argument.getNumTemplateExpansions();
+    return TemplateArgumentLoc(
+        Context, Argument.getPackExpansionPattern(),
+        /*TemplateKWLoc=*/SourceLocation(), OrigLoc.getTemplateQualifierLoc(),
+        OrigLoc.getTemplateNameLoc());
+
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
   case TemplateArgument::Universal:
@@ -1582,6 +1596,7 @@ UnsignedOrNone Sema::getFullyPackExpandedSize(TemplateArgument Arg) {
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
   case TemplateArgument::Null:

@@ -8061,6 +8061,7 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
     // A partially applied concept is identified by the concept it names
     // together with the arguments as written, so it is already canonical.
     case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
     // A universal template parameter name is identified by its declaration.
     case TemplateArgument::Universal:
     case TemplateArgument::UniversalExpansion:
@@ -8113,6 +8114,7 @@ bool ASTContext::isSameTemplateArgument(const TemplateArgument &Arg1,
 
   case TemplateArgument::StructuralValue:
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     return Arg1.structurallyEquals(Arg2);

@@ -934,6 +934,7 @@ ASTNodeImporter::import(const TemplateArgument &From) {
   }
 
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion: {
     // FIXME: Import partially applied concepts and universal parameters.

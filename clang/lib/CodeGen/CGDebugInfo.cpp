@@ -2793,6 +2793,7 @@ CGDebugInfo::CollectTemplateParams(std::optional<TemplateArgs> OArgs,
     // And the following should never occur:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
     case TemplateArgument::Universal:
     case TemplateArgument::UniversalExpansion:
     case TemplateArgument::Null:

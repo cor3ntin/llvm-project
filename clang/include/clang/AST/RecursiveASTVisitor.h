@@ -913,8 +913,9 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgument(
   case TemplateArgument::Expression:
     return getDerived().TraverseStmt(Arg.getAsExpr());
 
-  case TemplateArgument::Concept: {
-    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
+    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConceptOrPattern();
     TRY_TO(getDerived().TraverseTemplateName(C->getNamedConcept()));
     for (const TemplateArgumentLoc &Bound :
          C->getTemplateArgsAsWritten()->arguments())
@@ -967,8 +968,9 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateArgumentLoc(
   case TemplateArgument::Expression:
     return getDerived().TraverseStmt(ArgLoc.getSourceExpression());
 
-  case TemplateArgument::Concept: {
-    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
+    PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConceptOrPattern();
     if (C->getNestedNameSpecifierLoc())
       TRY_TO(getDerived().TraverseNestedNameSpecifierLoc(
           C->getNestedNameSpecifierLoc()));

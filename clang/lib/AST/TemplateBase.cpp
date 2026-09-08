@@ -284,6 +284,8 @@ StringRef TemplateArgument::getKindName() const {
     return "structural value";
   case TemplateArgument::Concept:
     return "concept";
+  case TemplateArgument::ConceptExpansion:
+    return "concept expansion";
   case TemplateArgument::Universal:
     return "universal";
   case TemplateArgument::UniversalExpansion:
@@ -336,6 +338,10 @@ TemplateArgumentDependence TemplateArgument::getDependence() const {
   case Concept:
     return getAsPartiallyAppliedConcept()->getDependence();
 
+  case ConceptExpansion:
+    // The packs mentioned by the pattern are expanded by this argument.
+    return TemplateArgumentDependence::DependentInstantiation;
+
   case Universal:
     Deps = TemplateArgumentDependence::DependentInstantiation;
     if (getAsUniversalTemplateParameterName()
@@ -376,6 +382,7 @@ bool TemplateArgument::isPackExpansion() const {
     return false;
 
   case TemplateExpansion:
+  case ConceptExpansion:
   case UniversalExpansion:
     return true;
 
@@ -401,7 +408,10 @@ bool TemplateArgument::containsUnexpandedParameterPack() const {
 }
 
 UnsignedOrNone TemplateArgument::getNumTemplateExpansions() const {
-  assert(getKind() == TemplateExpansion || getKind() == UniversalExpansion);
+  assert(getKind() == TemplateExpansion || getKind() == ConceptExpansion ||
+         getKind() == UniversalExpansion);
+  if (getKind() == ConceptExpansion)
+    return PartialConcept.NumExpansions;
   if (getKind() == UniversalExpansion)
     return UniversalArg.NumExpansions;
   return TemplateArg.NumExpansions;
@@ -415,6 +425,7 @@ QualType TemplateArgument::getNonTypeTemplateArgumentType() const {
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     return QualType();
@@ -486,8 +497,11 @@ void TemplateArgument::Profile(llvm::FoldingSetNodeID &ID,
     break;
   }
 
+  case ConceptExpansion:
+    ID.AddInteger(PartialConcept.NumExpansions.toInternalRepresentation());
+    [[fallthrough]];
   case Concept:
-    getAsPartiallyAppliedConcept()->Profile(ID, Context);
+    getAsPartiallyAppliedConceptOrPattern()->Profile(ID, Context);
     break;
 
   case UniversalExpansion:
@@ -545,9 +559,13 @@ bool TemplateArgument::structurallyEquals(const TemplateArgument &Other) const {
     return UniversalArg.Name == Other.UniversalArg.Name &&
            UniversalArg.NumExpansions == Other.UniversalArg.NumExpansions;
 
-  case Concept: {
-    const PartiallyAppliedConcept *C = getAsPartiallyAppliedConcept();
-    const PartiallyAppliedConcept *OC = Other.getAsPartiallyAppliedConcept();
+  case Concept:
+  case ConceptExpansion: {
+    if (PartialConcept.NumExpansions != Other.PartialConcept.NumExpansions)
+      return false;
+    const PartiallyAppliedConcept *C = getAsPartiallyAppliedConceptOrPattern();
+    const PartiallyAppliedConcept *OC =
+        Other.getAsPartiallyAppliedConceptOrPattern();
     if (C->getNamedConcept() != OC->getNamedConcept())
       return false;
     ArrayRef<TemplateArgumentLoc> Args =
@@ -586,6 +604,9 @@ TemplateArgument TemplateArgument::getPackExpansionPattern() const {
 
   case TemplateExpansion:
     return TemplateArgument(getAsTemplateOrTemplatePattern());
+
+  case ConceptExpansion:
+    return TemplateArgument(getAsPartiallyAppliedConceptOrPattern());
 
   case UniversalExpansion:
     return TemplateArgument(getAsUniversalTemplateParameterOrPattern());
@@ -659,6 +680,12 @@ void TemplateArgument::print(const PrintingPolicy &Policy, raw_ostream &Out,
     getAsPartiallyAppliedConcept()->print(Out, Policy);
     break;
 
+  case ConceptExpansion:
+    Out << "concept ";
+    getAsPartiallyAppliedConceptOrPattern()->print(Out, Policy);
+    Out << "...";
+    break;
+
   case UniversalExpansion:
     getAsUniversalTemplateParameterOrPattern()->print(Out, Policy);
     Out << "...";
@@ -710,12 +737,14 @@ TemplateArgumentLoc::TemplateArgumentLoc(ASTContext &Ctx,
   assert(Argument.getKind() == TemplateArgument::Template ||
          Argument.getKind() == TemplateArgument::TemplateExpansion ||
          Argument.getKind() == TemplateArgument::Concept ||
+         Argument.getKind() == TemplateArgument::ConceptExpansion ||
          Argument.getKind() == TemplateArgument::Universal ||
          Argument.getKind() == TemplateArgument::UniversalExpansion);
   // A partially applied concept carries its own qualifier, on the underlying
   // ConceptReference, rather than in the template name; a universal parameter
   // name is never qualified.
   assert(Argument.getKind() == TemplateArgument::Concept ||
+         Argument.getKind() == TemplateArgument::ConceptExpansion ||
          Argument.getKind() == TemplateArgument::Universal ||
          Argument.getKind() == TemplateArgument::UniversalExpansion ||
          QualifierLoc.getNestedNameSpecifier() ==
@@ -723,8 +752,10 @@ TemplateArgumentLoc::TemplateArgumentLoc(ASTContext &Ctx,
 }
 
 NestedNameSpecifierLoc TemplateArgumentLoc::getTemplateQualifierLoc() const {
-  if (Argument.getKind() == TemplateArgument::Concept)
-    return Argument.getAsPartiallyAppliedConcept()->getNestedNameSpecifierLoc();
+  if (Argument.getKind() == TemplateArgument::Concept ||
+      Argument.getKind() == TemplateArgument::ConceptExpansion)
+    return Argument.getAsPartiallyAppliedConceptOrPattern()
+        ->getNestedNameSpecifierLoc();
   if (Argument.getKind() != TemplateArgument::Template &&
       Argument.getKind() != TemplateArgument::TemplateExpansion)
     return NestedNameSpecifierLoc();
@@ -778,6 +809,12 @@ SourceRange TemplateArgumentLoc::getSourceRange() const {
 
   case TemplateArgument::Concept:
     return Argument.getAsPartiallyAppliedConcept()->getSourceRange();
+
+  case TemplateArgument::ConceptExpansion:
+    return SourceRange(
+        Argument.getAsPartiallyAppliedConceptOrPattern()->getSourceRange()
+            .getBegin(),
+        getTemplateEllipsisLoc());
 
   case TemplateArgument::Universal:
     return SourceRange(getTemplateNameLoc());
@@ -835,6 +872,9 @@ static const T &DiagTemplateArg(const T &DB, const TemplateArgument &Arg) {
 
   case TemplateArgument::Concept:
     return DB << Arg.getAsPartiallyAppliedConcept();
+
+  case TemplateArgument::ConceptExpansion:
+    return DB << Arg.getAsPartiallyAppliedConceptOrPattern() << "...";
 
   case TemplateArgument::Universal:
     return DB << Arg.getAsUniversalTemplateParameterName();

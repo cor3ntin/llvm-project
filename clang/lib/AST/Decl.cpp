@@ -360,8 +360,9 @@ LinkageComputer::getLVForTemplateArgumentList(ArrayRef<TemplateArgument> Args,
       continue;
 
     case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
       if (TemplateDecl *Template =
-              Arg.getAsPartiallyAppliedConcept()->getNamedConcept()
+              Arg.getAsPartiallyAppliedConceptOrPattern()->getNamedConcept()
                   .getAsTemplateDecl(/*IgnoreDeduced=*/true))
         LV.merge(getLVForDecl(Template, computation));
       continue;

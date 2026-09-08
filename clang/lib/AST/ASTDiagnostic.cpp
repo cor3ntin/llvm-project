@@ -1266,6 +1266,7 @@ class TemplateDiff {
       case TemplateArgument::Template:
       case TemplateArgument::TemplateExpansion:
       case TemplateArgument::Concept:
+      case TemplateArgument::ConceptExpansion:
       case TemplateArgument::Universal:
       case TemplateArgument::UniversalExpansion:
         llvm_unreachable("TemplateArgument kind is not expected for NTTP");
@@ -1314,6 +1315,7 @@ class TemplateDiff {
     case TemplateArgument::Template:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
     case TemplateArgument::Universal:
     case TemplateArgument::UniversalExpansion:
       llvm_unreachable("TemplateArgument kind is not expected for NTTP");
