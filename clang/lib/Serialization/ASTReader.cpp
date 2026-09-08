@@ -8233,6 +8233,7 @@ ASTRecordReader::readTemplateArgumentLocInfo(TemplateArgument::ArgKind Kind) {
   case TemplateArgument::Template:
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion: {
     SourceLocation TemplateKWLoc = readSourceLocation();

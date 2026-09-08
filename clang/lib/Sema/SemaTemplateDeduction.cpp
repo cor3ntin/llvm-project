@@ -455,6 +455,7 @@ checkDeducedTemplateArguments(ASTContext &Context,
   }
 
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     if (Y.getKind() == X.getKind() && X.structurallyEquals(Y))
@@ -2616,6 +2617,7 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
   // FIXME: Deduce through a partially applied concept or a universal
   // template parameter.
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     if (A.getKind() == P.getKind() && P.structurallyEquals(A))
@@ -2694,6 +2696,7 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
       case TemplateArgument::Template:
       case TemplateArgument::TemplateExpansion:
       case TemplateArgument::Concept:
+      case TemplateArgument::ConceptExpansion:
       case TemplateArgument::Universal:
       case TemplateArgument::UniversalExpansion:
       case TemplateArgument::Pack:
@@ -2929,6 +2932,7 @@ Sema::getTrivialTemplateArgumentLoc(const TemplateArgument &Arg,
     }
 
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     return TemplateArgumentLoc(Context, Arg, /*TemplateKWLoc=*/SourceLocation(),
@@ -7339,9 +7343,10 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
   case TemplateArgument::UniversalExpansion:
     break;
 
-  case TemplateArgument::Concept: {
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
     const PartiallyAppliedConcept *C =
-        TemplateArg.getAsPartiallyAppliedConcept();
+        TemplateArg.getAsPartiallyAppliedConceptOrPattern();
     MarkUsedTemplateParameters(Ctx, C->getNamedConcept(), OnlyDeduced, Depth,
                                Used);
     for (const TemplateArgument &Bound : C->getBoundArguments())

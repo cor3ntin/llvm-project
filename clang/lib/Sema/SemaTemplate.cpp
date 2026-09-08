@@ -946,9 +946,10 @@ TemplateDecl *Sema::AdjustDeclIfTemplate(Decl *&D) {
 
 ParsedTemplateArgument ParsedTemplateArgument::getTemplatePackExpansion(
                                              SourceLocation EllipsisLoc) const {
-  assert(Kind == Template &&
+  assert((Kind == Template || Kind == PartiallyAppliedConcept) &&
          "Only template template arguments can be pack expansions here");
-  assert(getAsTemplate().get().containsUnexpandedParameterPack() &&
+  assert((Kind == PartiallyAppliedConcept ||
+          getAsTemplate().get().containsUnexpandedParameterPack()) &&
          "Template template argument pack expansion without packs");
   ParsedTemplateArgument Result(*this);
   Result.EllipsisLoc = EllipsisLoc;
@@ -996,11 +997,15 @@ static TemplateArgumentLoc translateTemplateArgument(Sema &SemaRef,
 
   case ParsedTemplateArgument::PartiallyAppliedConcept: {
     PartiallyAppliedConcept *C = Arg.getAsConcept();
+    TemplateArgument TArg =
+        Arg.getEllipsisLoc().isValid()
+            ? TemplateArgument(C, /*NumExpansions=*/std::nullopt)
+            : TemplateArgument(C);
     return TemplateArgumentLoc(
-        SemaRef.Context, TemplateArgument(C),
+        SemaRef.Context, TArg,
         /*TemplateKWLoc=*/SourceLocation(),
         Arg.getScopeSpec().getWithLocInContext(SemaRef.Context),
-        C->getConceptNameLoc());
+        C->getConceptNameLoc(), Arg.getEllipsisLoc());
   }
   }
 
@@ -4217,6 +4222,7 @@ static bool isTemplateArgumentTemplateParameter(const TemplateArgument &Arg,
   case TemplateArgument::Pack:
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     return false;
@@ -5815,6 +5821,7 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
 
     // TODO: support concepts as arguments of non-type template parameters.
     case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
       Diag(ArgLoc.getLocation(), diag::err_template_arg_must_be_expr)
           << ArgLoc.getSourceRange();
       NoteTemplateParameterLocation(*Param);
@@ -5924,6 +5931,7 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
     break;
 
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
     if (CheckPartiallyAppliedConceptTemplateArgument(TempParm, Params, ArgLoc))
       return true;
 
@@ -8020,7 +8028,8 @@ bool Sema::CheckDeclCompatibleWithTemplateTemplate(
 bool Sema::CheckPartiallyAppliedConceptTemplateArgument(
     TemplateTemplateParmDecl *Param, TemplateParameterList *Params,
     TemplateArgumentLoc &Arg) {
-  PartiallyAppliedConcept *C = Arg.getArgument().getAsPartiallyAppliedConcept();
+  PartiallyAppliedConcept *C =
+      Arg.getArgument().getAsPartiallyAppliedConceptOrPattern();
   TemplateDecl *Template = C->getNamedConcept().getAsTemplateDecl();
   if (!Template || Template->isInvalidDecl())
     return true;
@@ -8405,6 +8414,7 @@ Sema::BuildExpressionFromNonTypeTemplateArgument(const TemplateArgument &Arg,
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
   case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     llvm_unreachable("not a non-type template argument");

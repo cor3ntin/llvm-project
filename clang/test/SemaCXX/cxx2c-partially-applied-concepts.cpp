@@ -53,6 +53,53 @@ S<concept N::Concept<int>> s;
 
 } // namespace Qualified
 
+namespace PackExpansion {
+
+// A partially applied concept may be a pack expansion, expanding the packs
+// named by its bound arguments. Note this is a deliberate extension: P2841
+// does not allow it.
+template <typename, typename>
+concept Pair = true;
+
+template <template <typename> concept... Cs>
+struct Pack {};
+
+template <typename... Ts>
+struct Expand {
+  using type = Pack<concept Pair<Ts>...>;
+  // An expansion may be mixed with ordinary arguments.
+  using mixed = Pack<concept Pair<int>, concept Pair<Ts>...>;
+};
+
+using E = Expand<int, char>::type;
+using M = Expand<int, char>::mixed;
+using Empty = Expand<>::type;
+
+// The expansion must name at least one unexpanded pack.
+using Bad = Pack<concept Pair<int>...>; // expected-error {{pack expansion does not contain any unexpanded parameter packs}}
+
+// Each element of the expansion binds its own element of the pack, so this
+// checks Same<int, int> && Same<char, int>.
+template <typename A, typename B>
+concept Same = __is_same(A, B);
+
+template <template <typename> concept... Cs>
+struct AllSameAsInt {
+  static constexpr bool value = (Cs<int> && ...);
+};
+
+template <typename... Ts>
+struct Check {
+  using type = AllSameAsInt<concept Same<Ts>...>;
+};
+
+static_assert(Check<int, int>::type::value);
+static_assert(!Check<int, char>::type::value);
+static_assert(!Check<char, char>::type::value);
+static_assert(Check<>::type::value); // empty fold over '&&'
+
+} // namespace PackExpansion
+
 namespace Dependent {
 
 template <template <typename> concept C, typename T>

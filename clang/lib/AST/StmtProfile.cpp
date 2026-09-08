@@ -2657,8 +2657,10 @@ void StmtProfiler::VisitTemplateArgument(const TemplateArgument &Arg) {
     Visit(Arg.getAsExpr());
     break;
 
-  case TemplateArgument::Concept: {
-    const PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
+    const PartiallyAppliedConcept *C =
+        Arg.getAsPartiallyAppliedConceptOrPattern();
     VisitTemplateName(C->getNamedConcept());
     for (const TemplateArgumentLoc &Bound :
          C->getTemplateArgsAsWritten()->arguments())

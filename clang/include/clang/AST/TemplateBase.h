@@ -101,6 +101,10 @@ public:
     /// bound, provided for a concept template parameter.
     Concept,
 
+    /// The template argument is a pack expansion of a partially applied
+    /// concept.
+    ConceptExpansion,
+
     /// The template argument names a universal template parameter, whose
     /// kind is not yet known.
     Universal,
@@ -179,6 +183,7 @@ private:
     unsigned Kind : 31;
     LLVM_PREFERRED_TYPE(bool)
     unsigned IsDefaulted : 1;
+    UnsignedOrNone NumExpansions;
     PartiallyAppliedConcept *C;
   };
   struct UTP {
@@ -310,6 +315,17 @@ public:
                             bool IsDefaulted = false) {
     PartialConcept.Kind = Concept;
     PartialConcept.IsDefaulted = IsDefaulted;
+    PartialConcept.NumExpansions = std::nullopt;
+    PartialConcept.C = C;
+  }
+
+  /// Construct a template argument that is a pack expansion of a partially
+  /// applied concept.
+  TemplateArgument(PartiallyAppliedConcept *C, UnsignedOrNone NumExpansions,
+                   bool IsDefaulted = false) {
+    PartialConcept.Kind = ConceptExpansion;
+    PartialConcept.IsDefaulted = IsDefaulted;
+    PartialConcept.NumExpansions = NumExpansions;
     PartialConcept.C = C;
   }
 
@@ -411,6 +427,14 @@ public:
   /// Retrieve the partially applied concept for a concept argument.
   PartiallyAppliedConcept *getAsPartiallyAppliedConcept() const {
     assert(getKind() == Concept && "Unexpected kind");
+    return PartialConcept.C;
+  }
+
+  /// Retrieve the partially applied concept; if the argument is a pack
+  /// expansion, return the pattern.
+  PartiallyAppliedConcept *getAsPartiallyAppliedConceptOrPattern() const {
+    assert((getKind() == Concept || getKind() == ConceptExpansion) &&
+           "Unexpected kind");
     return PartialConcept.C;
   }
 
@@ -652,6 +676,7 @@ public:
     case TemplateArgument::Template:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
     case TemplateArgument::Universal:
     case TemplateArgument::UniversalExpansion:
       assert(Opaque.getTemplate() != nullptr);
@@ -689,6 +714,7 @@ public:
     if (Argument.getKind() == TemplateArgument::Template ||
         Argument.getKind() == TemplateArgument::TemplateExpansion ||
         Argument.getKind() == TemplateArgument::Concept ||
+        Argument.getKind() == TemplateArgument::ConceptExpansion ||
         Argument.getKind() == TemplateArgument::Universal ||
         Argument.getKind() == TemplateArgument::UniversalExpansion)
       return getTemplateNameLoc();
@@ -747,6 +773,7 @@ public:
     if (Argument.getKind() != TemplateArgument::Template &&
         Argument.getKind() != TemplateArgument::TemplateExpansion &&
         Argument.getKind() != TemplateArgument::Concept &&
+        Argument.getKind() != TemplateArgument::ConceptExpansion &&
         Argument.getKind() != TemplateArgument::Universal &&
         Argument.getKind() != TemplateArgument::UniversalExpansion)
       return SourceLocation();
@@ -755,6 +782,7 @@ public:
 
   SourceLocation getTemplateEllipsisLoc() const {
     if (Argument.getKind() != TemplateArgument::TemplateExpansion &&
+        Argument.getKind() != TemplateArgument::ConceptExpansion &&
         Argument.getKind() != TemplateArgument::UniversalExpansion)
       return SourceLocation();
     return LocInfo.getTemplateEllipsisLoc();

@@ -1187,8 +1187,10 @@ void USRGenerator::VisitTemplateArgument(const TemplateArgument &Arg) {
     Out << 'u';
     break;
 
-  case TemplateArgument::Concept: {
-    const PartiallyAppliedConcept *C = Arg.getAsPartiallyAppliedConcept();
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
+    const PartiallyAppliedConcept *C =
+        Arg.getAsPartiallyAppliedConceptOrPattern();
     Out << 'c';
     VisitTemplateName(C->getNamedConcept());
     const auto *Args = C->getTemplateArgsAsWritten();

@@ -4131,9 +4131,19 @@ public:
     case TemplateArgument::Pack:
     case TemplateArgument::TemplateExpansion:
     case TemplateArgument::NullPtr:
-    case TemplateArgument::Concept:
+    case TemplateArgument::ConceptExpansion:
     case TemplateArgument::UniversalExpansion:
       llvm_unreachable("Pack expansion pattern has no parameter packs");
+
+    case TemplateArgument::Concept:
+      return TemplateArgumentLoc(
+          SemaRef.Context,
+          TemplateArgument(
+              Pattern.getArgument().getAsPartiallyAppliedConcept(),
+              NumExpansions),
+          /*TemplateKWLoc=*/SourceLocation(),
+          Pattern.getTemplateQualifierLoc(), Pattern.getTemplateNameLoc(),
+          EllipsisLoc);
 
     case TemplateArgument::Universal:
       return TemplateArgumentLoc(
@@ -5238,6 +5248,7 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
   }
 
   case TemplateArgument::TemplateExpansion:
+  case TemplateArgument::ConceptExpansion:
     llvm_unreachable("Caller should expand pack expansions");
 
   case TemplateArgument::Concept: {

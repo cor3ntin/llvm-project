@@ -149,7 +149,7 @@ namespace clang {
     /// Retrieve the location of the ellipsis that makes a template
     /// template argument into a pack expansion.
     SourceLocation getEllipsisLoc() const {
-      assert(Kind == Template &&
+      assert((Kind == Template || Kind == PartiallyAppliedConcept) &&
              "Only template template arguments can have an ellipsis");
       return EllipsisLoc;
     }

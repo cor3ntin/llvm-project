@@ -977,6 +977,53 @@ let Class = PropertyTypeCase<TemplateArgument, "Concept"> in {
         isDefaulted);
   }]>;
 }
+let Class = PropertyTypeCase<TemplateArgument, "ConceptExpansion"> in {
+  def : Property<"name", TemplateName> {
+    let Read = [{
+      node.getAsPartiallyAppliedConceptOrPattern()->getNamedConcept()
+    }];
+  }
+  def : Property<"conceptName", DeclarationName> {
+    let Read = [{
+      node.getAsPartiallyAppliedConceptOrPattern()
+          ->getConceptNameInfo().getName()
+    }];
+  }
+  def : Property<"conceptNameLoc", SourceLocation> {
+    let Read = [{
+      node.getAsPartiallyAppliedConceptOrPattern()->getConceptNameLoc()
+    }];
+  }
+  def : Property<"conceptKWLoc", SourceLocation> {
+    let Read = [{
+      node.getAsPartiallyAppliedConceptOrPattern()->getConceptKWLoc()
+    }];
+  }
+  def : Property<"foundDecl", DeclRef> {
+    let Read = [{
+      node.getAsPartiallyAppliedConceptOrPattern()->getFoundDecl()
+    }];
+  }
+  def : Property<"boundArguments", Array<TemplateArgument>> {
+    let Read = [{
+      node.getAsPartiallyAppliedConceptOrPattern()->getBoundArguments()
+    }];
+  }
+  def : Property<"numExpansions", UnsignedOrNone> {
+    let Read = [{ node.getNumTemplateExpansions() }];
+  }
+  def : Property<"isDefaulted", Bool> {
+    let Read = [{ node.getIsDefaulted() }];
+  }
+  def : Creator<[{
+    return TemplateArgument(
+        PartiallyAppliedConcept::CreateWithTrivialLocs(
+            ctx, NestedNameSpecifierLoc(),
+            DeclarationNameInfo(conceptName, conceptNameLoc), conceptKWLoc,
+            cast_or_null<NamedDecl>(foundDecl), name, boundArguments),
+        numExpansions, isDefaulted);
+  }]>;
+}
 let Class = PropertyTypeCase<TemplateArgument, "Universal"> in {
   def : Property<"parameter", DeclRef> {
     let Read = [{ node.getAsUniversalTemplateParameterName()->getDecl() }];

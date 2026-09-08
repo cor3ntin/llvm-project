@@ -79,8 +79,10 @@ void TemplateArgumentHasher::AddTemplateArgument(TemplateArgument TA) {
     // that the template is still dependent. It is meaningless
     // to get a stable hash for the template.
     break;
-  case TemplateArgument::Concept: {
-    const PartiallyAppliedConcept *C = TA.getAsPartiallyAppliedConcept();
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
+    const PartiallyAppliedConcept *C =
+        TA.getAsPartiallyAppliedConceptOrPattern();
     AddTemplateName(C->getNamedConcept());
     const auto *Args = C->getTemplateArgsAsWritten();
     AddInteger(Args->getNumTemplateArgs());

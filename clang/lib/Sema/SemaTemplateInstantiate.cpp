@@ -2062,6 +2062,15 @@ bool TemplateInstantiator::InjectBoundConceptArguments(
     return false;
 
   TemplateArgument Arg = TemplateArgs(Depth, Index);
+
+  // When the parameter is a pack, the partially applied concept we need is
+  // the element currently being substituted.
+  if (TTP->isParameterPack() && Arg.getKind() == TemplateArgument::Pack) {
+    if (!getSema().ArgPackSubstIndex)
+      return false;
+    Arg = getSema().getPackSubstitutedTemplateArgument(Arg);
+  }
+
   if (Arg.getKind() != TemplateArgument::Concept)
     return false;
 
