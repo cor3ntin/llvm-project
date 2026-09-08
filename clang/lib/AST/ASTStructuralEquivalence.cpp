@@ -798,9 +798,12 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
         Context, Arg1.getAsUniversalTemplateParameterOrPattern()->getDecl(),
         Arg2.getAsUniversalTemplateParameterOrPattern()->getDecl());
 
-  case TemplateArgument::Concept: {
-    const PartiallyAppliedConcept *C1 = Arg1.getAsPartiallyAppliedConcept();
-    const PartiallyAppliedConcept *C2 = Arg2.getAsPartiallyAppliedConcept();
+  case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion: {
+    const PartiallyAppliedConcept *C1 =
+        Arg1.getAsPartiallyAppliedConceptOrPattern();
+    const PartiallyAppliedConcept *C2 =
+        Arg2.getAsPartiallyAppliedConceptOrPattern();
     if (!IsStructurallyEquivalent(Context, C1->getNamedConcept(),
                                   C2->getNamedConcept()))
       return false;

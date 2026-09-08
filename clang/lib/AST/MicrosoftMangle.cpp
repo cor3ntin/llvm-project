@@ -1798,8 +1798,9 @@ void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("Can't mangle template expansion arguments!");
   case TemplateArgument::Concept:
+  case TemplateArgument::ConceptExpansion:
     // FIXME: The mangling of a partially applied concept is not yet specified.
-    Error(TA.getAsPartiallyAppliedConcept()->getBeginLoc(),
+    Error(TA.getAsPartiallyAppliedConceptOrPattern()->getBeginLoc(),
           "partially applied concept");
     break;
   case TemplateArgument::Universal:
