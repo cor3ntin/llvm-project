@@ -715,6 +715,12 @@ void ASTContext::CanonicalTemplateTemplateParm::Profile(
       continue;
     }
 
+    if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(*P)) {
+      ID.AddInteger(3);
+      ID.AddBoolean(UTP->isParameterPack());
+      continue;
+    }
+
     auto *TTP = cast<TemplateTemplateParmDecl>(*P);
     ID.AddInteger(2);
     Profile(ID, C, TTP);
@@ -782,6 +788,10 @@ ASTContext::getCanonicalTemplateTemplateParmDecl(
                                                 TInfo);
       }
       CanonParams.push_back(Param);
+    } else if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(*P)) {
+      CanonParams.push_back(UniversalTemplateParmDecl::Create(
+          *this, getTranslationUnitDecl(), SourceLocation(), UTP->getDepth(),
+          UTP->getPosition(), UTP->isParameterPack(), nullptr));
     } else
       CanonParams.push_back(getCanonicalTemplateTemplateParmDecl(
                                            cast<TemplateTemplateParmDecl>(*P)));

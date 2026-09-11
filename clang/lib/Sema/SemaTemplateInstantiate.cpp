@@ -1501,6 +1501,9 @@ namespace {
     bool InjectBoundConceptArguments(TemplateName Name,
                                      TemplateArgumentListInfo &Outputs);
 
+    bool TransformUniversalTemplateArgument(const TemplateArgumentLoc &Input,
+                                            TemplateArgumentLoc &Output);
+
     void transformAttrs(Decl *Old, Decl *New) {
       SemaRef.InstantiateAttrs(TemplateArgs, Old, New);
     }
@@ -2051,6 +2054,35 @@ bool TemplateInstantiator::instantiateMissingDeclsToScopeForConcepts(Decl *D) {
                                     /*ExpectParameterPack=*/false))
       return true;
   }
+  return false;
+}
+
+bool TemplateInstantiator::TransformUniversalTemplateArgument(
+    const TemplateArgumentLoc &Input, TemplateArgumentLoc &Output) {
+  UniversalTemplateParmDecl *UTP =
+      Input.getArgument().getAsUniversalTemplateParameterName()->getDecl();
+  unsigned Depth = UTP->getDepth(), Index = UTP->getPosition();
+
+  // The parameter belongs to an enclosing level we are not substituting, or
+  // no argument has been supplied for it yet.
+  if (Depth >= TemplateArgs.getNumLevels() ||
+      !TemplateArgs.hasTemplateArgument(Depth, Index)) {
+    Output = Input;
+    return false;
+  }
+
+  TemplateArgument Arg = TemplateArgs(Depth, Index);
+  if (UTP->isParameterPack() && Arg.getKind() == TemplateArgument::Pack) {
+    if (!getSema().ArgPackSubstIndex) {
+      Output = Input;
+      return false;
+    }
+    Arg = getSema().getPackSubstitutedTemplateArgument(Arg);
+  }
+
+  // The argument may be of any kind, so hand it back with trivial locations.
+  Output = getSema().getTrivialTemplateArgumentLoc(Arg, QualType(),
+                                                   Input.getLocation());
   return false;
 }
 
