@@ -163,6 +163,11 @@ void TemplateParameterList::Profile(llvm::FoldingSetNodeID &ID,
                                                         /*Canonical=*/true);
       continue;
     }
+    if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(D)) {
+      ID.AddInteger(3);
+      ID.AddBoolean(UTP->isParameterPack());
+      continue;
+    }
     const auto *TTP = cast<TemplateTemplateParmDecl>(D);
     ID.AddInteger(2);
     ID.AddInteger(TTP->templateParameterKind());
