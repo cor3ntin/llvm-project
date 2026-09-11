@@ -658,6 +658,16 @@ public:
       NestedNameSpecifierLoc &QualifierLoc, SourceLocation TemplateKeywordLoc,
       TemplateName Name, SourceLocation NameLoc);
 
+  /// Transform a template argument that names a universal template
+  /// parameter.
+  ///
+  /// By default, there is no substitution to perform.
+  bool TransformUniversalTemplateArgument(const TemplateArgumentLoc &Input,
+                                          TemplateArgumentLoc &Output) {
+    Output = Input;
+    return false;
+  }
+
   /// If \p Name refers to a concept template parameter that is being
   /// substituted with a partially applied concept, append the arguments bound
   /// by that partial application to \p Outputs. They precede the arguments
@@ -5296,8 +5306,10 @@ bool TreeTransform<Derived>::TransformTemplateArgument(
   }
 
   case TemplateArgument::Universal:
+    return getDerived().TransformUniversalTemplateArgument(Input, Output);
+
   case TemplateArgument::UniversalExpansion:
-    // FIXME: Substitute the argument bound to the universal parameter.
+    // FIXME: Substitute through a pack of universal template parameters.
     Output = Input;
     return false;
 

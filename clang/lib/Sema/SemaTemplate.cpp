@@ -946,9 +946,10 @@ TemplateDecl *Sema::AdjustDeclIfTemplate(Decl *&D) {
 
 ParsedTemplateArgument ParsedTemplateArgument::getTemplatePackExpansion(
                                              SourceLocation EllipsisLoc) const {
-  assert((Kind == Template || Kind == PartiallyAppliedConcept) &&
+  assert((Kind == Template || Kind == PartiallyAppliedConcept ||
+          Kind == Universal) &&
          "Only template template arguments can be pack expansions here");
-  assert((Kind == PartiallyAppliedConcept ||
+  assert((Kind != Template ||
           getAsTemplate().get().containsUnexpandedParameterPack()) &&
          "Template template argument pack expansion without packs");
   ParsedTemplateArgument Result(*this);
@@ -989,10 +990,14 @@ static TemplateArgumentLoc translateTemplateArgument(Sema &SemaRef,
   case ParsedTemplateArgument::Universal: {
     UniversalTemplateParameterName *N =
         Arg.getAsUniversalTemplateParamName().get();
-    TemplateArgument TArg(N);
+    TemplateArgument TArg =
+        Arg.getEllipsisLoc().isValid()
+            ? TemplateArgument(N, /*NumExpansions=*/std::nullopt)
+            : TemplateArgument(N);
     return TemplateArgumentLoc(SemaRef.Context, TArg,
                                /*TemplateKWLoc=*/SourceLocation(),
-                               NestedNameSpecifierLoc(), Arg.getNameLoc());
+                               NestedNameSpecifierLoc(), Arg.getNameLoc(),
+                               Arg.getEllipsisLoc());
   }
 
   case ParsedTemplateArgument::PartiallyAppliedConcept: {
@@ -8444,6 +8449,12 @@ static bool MatchTemplateParameterKind(
     const Sema::TemplateCompareNewDeclInfo &NewInstFrom, NamedDecl *Old,
     const NamedDecl *OldInstFrom, bool Complain,
     Sema::TemplateParameterListEqualKind Kind, SourceLocation TemplateArgLoc) {
+  // A universal template parameter stands in for a parameter of any kind, so
+  // it matches whatever the other side declares.
+  if (isa<UniversalTemplateParmDecl>(Old) ||
+      isa<UniversalTemplateParmDecl>(New))
+    return true;
+
   // Check the actual kind (type, non-type, template).
   if (Old->getKind() != New->getKind()) {
     if (Complain) {

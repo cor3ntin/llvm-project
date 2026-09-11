@@ -260,6 +260,8 @@ bool Decl::isTemplateParameterPack() const {
     return NTTP->isParameterPack();
   if (const auto *TTP = dyn_cast<TemplateTemplateParmDecl>(this))
     return TTP->isParameterPack();
+  if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(this))
+    return UTP->isParameterPack();
   return false;
 }
 

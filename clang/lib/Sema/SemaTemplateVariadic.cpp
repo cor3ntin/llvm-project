@@ -304,6 +304,16 @@ class CollectUnexpandedParameterPacksVisitor
       if (Arg.isPackExpansion())
         return true;
 
+      // A universal template parameter is named by the argument itself,
+      // rather than by any type or expression nested within it.
+      if (Arg.getKind() == TemplateArgument::Universal) {
+        UniversalTemplateParmDecl *UTP =
+            Arg.getAsUniversalTemplateParameterName()->getDecl();
+        if (UTP->isParameterPack())
+          addUnexpanded(UTP);
+        return true;
+      }
+
       return DynamicRecursiveASTVisitor::TraverseTemplateArgument(Arg);
     }
 
@@ -312,6 +322,15 @@ class CollectUnexpandedParameterPacksVisitor
     TraverseTemplateArgumentLoc(const TemplateArgumentLoc &ArgLoc) override {
       if (ArgLoc.getArgument().isPackExpansion())
         return true;
+
+      if (ArgLoc.getArgument().getKind() == TemplateArgument::Universal) {
+        UniversalTemplateParmDecl *UTP =
+            ArgLoc.getArgument().getAsUniversalTemplateParameterName()
+                ->getDecl();
+        if (UTP->isParameterPack())
+          addUnexpanded(UTP, ArgLoc.getLocation());
+        return true;
+      }
 
       return DynamicRecursiveASTVisitor::TraverseTemplateArgumentLoc(ArgLoc);
     }
@@ -781,7 +800,7 @@ Sema::ActOnPackExpansion(const ParsedTemplateArgument &Arg,
           << SourceRange(Arg.getNameLoc());
       return ParsedTemplateArgument();
     }
-    return Arg;
+    return Arg.getTemplatePackExpansion(EllipsisLoc);
   }
 
   case ParsedTemplateArgument::PartiallyAppliedConcept: {

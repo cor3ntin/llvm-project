@@ -658,6 +658,53 @@ static TemplateDeductionResult DeduceTemplateArguments(
   return TemplateDeductionResult::NonDeducedMismatch;
 }
 
+/// If \p P names a universal template parameter that we are currently
+/// deducing, return its declaration; otherwise return null.
+static const UniversalTemplateParmDecl *
+getDeducedUniversalParameter(TemplateDeductionInfo &Info,
+                             const TemplateArgument &P) {
+  if (P.getKind() != TemplateArgument::Universal)
+    return nullptr;
+  const UniversalTemplateParmDecl *UTP =
+      P.getAsUniversalTemplateParameterName()->getDecl();
+  return UTP->getDepth() == Info.getDeducedDepth() ? UTP : nullptr;
+}
+
+/// Deduce a universal template parameter. Unlike every other kind of
+/// parameter, the argument it is deduced to may be of any kind, so it is
+/// simply recorded as-is.
+static TemplateDeductionResult DeduceUniversalTemplateArgument(
+    Sema &S, const UniversalTemplateParmDecl *UTP,
+    const DeducedTemplateArgument &NewDeduced, TemplateDeductionInfo &Info,
+    SmallVectorImpl<DeducedTemplateArgument> &Deduced,
+    bool *HasDeducedAnyParam) {
+  const DeducedTemplateArgument &Previous = Deduced[UTP->getIndex()];
+
+  // Only a universal template parameter can be deduced to arguments of
+  // differing kinds, which checkDeducedTemplateArguments does not expect.
+  // Deducing 'int' and then '42' for the same parameter is simply a mismatch.
+  if (!Previous.isNull() && Previous.getKind() != NewDeduced.getKind()) {
+    Info.Param = const_cast<UniversalTemplateParmDecl *>(UTP);
+    Info.FirstArg = Previous;
+    Info.SecondArg = NewDeduced;
+    return TemplateDeductionResult::Inconsistent;
+  }
+
+  DeducedTemplateArgument Result =
+      checkDeducedTemplateArguments(S.Context, Previous, NewDeduced);
+  if (Result.isNull()) {
+    Info.Param = const_cast<UniversalTemplateParmDecl *>(UTP);
+    Info.FirstArg = Previous;
+    Info.SecondArg = NewDeduced;
+    return TemplateDeductionResult::Inconsistent;
+  }
+
+  Deduced[UTP->getIndex()] = Result;
+  if (HasDeducedAnyParam)
+    *HasDeducedAnyParam = true;
+  return TemplateDeductionResult::Success;
+}
+
 /// Deduce the template arguments by comparing the template parameter
 /// type (which is a template-id) with the template argument type.
 ///
@@ -832,6 +879,8 @@ static TemplateParameter makeTemplateParameter(Decl *D) {
     return TemplateParameter(TTP);
   if (NonTypeTemplateParmDecl *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D))
     return TemplateParameter(NTTP);
+  if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(D))
+    return TemplateParameter(UTP);
 
   return TemplateParameter(cast<TemplateTemplateParmDecl>(D));
 }
@@ -2614,11 +2663,20 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
   case TemplateArgument::TemplateExpansion:
     llvm_unreachable("caller should handle pack expansions");
 
-  // FIXME: Deduce through a partially applied concept or a universal
-  // template parameter.
+  case TemplateArgument::Universal:
+    // A universal template parameter is deduced to the argument, whatever
+    // kind that argument has.
+    if (const UniversalTemplateParmDecl *UTP =
+            getDeducedUniversalParameter(Info, P))
+      return DeduceUniversalTemplateArgument(S, UTP, DeducedTemplateArgument(A),
+                                             Info, Deduced,
+                                             HasDeducedAnyParam);
+    [[fallthrough]];
+
+  // FIXME: Deduce through a partially applied concept, or through a pack of
+  // universal template parameters.
   case TemplateArgument::Concept:
   case TemplateArgument::ConceptExpansion:
-  case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     if (A.getKind() == P.getKind() && P.structurallyEquals(A))
       return TemplateDeductionResult::Success;
@@ -7340,8 +7398,13 @@ MarkUsedTemplateParameters(ASTContext &Ctx,
     break;
 
   case TemplateArgument::Universal:
-  case TemplateArgument::UniversalExpansion:
+  case TemplateArgument::UniversalExpansion: {
+    const UniversalTemplateParmDecl *UTP =
+        TemplateArg.getAsUniversalTemplateParameterOrPattern()->getDecl();
+    if (UTP->getDepth() == Depth)
+      Used[UTP->getIndex()] = true;
     break;
+  }
 
   case TemplateArgument::Concept:
   case TemplateArgument::ConceptExpansion: {
