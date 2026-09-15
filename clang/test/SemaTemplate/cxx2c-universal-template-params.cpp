@@ -1,5 +1,4 @@
 // RUN: %clang_cc1 -std=c++2c -verify %s
-// expected-no-diagnostics
 
 // A universal template parameter accepts an argument of any kind.
 template <universal template U>
@@ -130,3 +129,94 @@ struct Pack {};
 Pack<int> one;
 
 } // namespace Packs
+
+namespace DeferredDeduction {
+
+int x; // #x
+static constexpr int c = 1;
+int arr[2];
+void fn();
+namespace N { int y; }
+struct St { static int s; };
+struct Agg { int m; int a[2]; };
+Agg agg; // #agg
+
+// An unparenthesized id-expression or class member access denotes the entity
+// it names, so the type of the constant template parameter it is bound to is
+// deduced there rather than here.
+template <int &> struct Ref { static constexpr int k = 1; };
+template <universal template U> struct Through : Ref<U> {};
+
+static_assert(Through<x>::k == 1);
+static_assert(Through<N::y>::k == 1);
+static_assert(Through<St::s>::k == 1);
+static_assert(Through<agg.m>::k == 1);
+static_assert(Through<agg.a[1]>::k == 1);
+static_assert(Through<arr[0]>::k == 1);
+static_assert(Through<(x)>::k == 1);
+static_assert(Through<*&x>::k == 1);
+
+template <auto &> struct FnRef { static constexpr int k = 1; };
+template <universal template U> struct ThroughFn : FnRef<U> {};
+static_assert(ThroughFn<fn>::k == 1);
+
+template <decltype(auto)> struct DeclTypeAuto {};
+template <auto &V> struct AutoRef { using type = decltype(V); };
+template <auto V> struct ByValue { static constexpr int k = V; };
+
+template <template <universal template> class Z, universal template U>
+using Alias = Z<U>; // #Alias
+
+// Bound to a parameter of reference type, the entity is what binds.
+static_assert(__is_same(Alias<AutoRef, x>::type, int &));
+static_assert(__is_same(Alias<AutoRef, agg.m>::type, int &));
+
+// Bound to 'decltype(auto)', the argument behaves as if it had been written
+// there, so an entity that is not a constant expression is ill-formed, while a
+// parenthesized one denotes a reference.
+Alias<DeclTypeAuto, (x)> a1;
+Alias<DeclTypeAuto, x> a2;
+// expected-error@-1 {{non-type template argument is not a constant expression}}
+//   expected-note@-2 {{read of non-const variable 'x' is not allowed in a constant expression}}
+//   expected-note@-3 {{in instantiation of template type alias 'Alias' requested here}}
+//   expected-note@#x {{declared here}}
+Alias<DeclTypeAuto, agg.m> a3;
+// expected-error@-1 {{non-type template argument is not a constant expression}}
+//   expected-note@-2 {{read of non-constexpr variable 'agg' is not allowed in a constant expression}}
+//   expected-note@-3 {{in instantiation of template type alias 'Alias' requested here}}
+//   expected-note@#agg {{declared here}}
+
+// Bound by value, a constant is required.
+static_assert(Alias<ByValue, c>::k == 1);
+
+// Any other expression is a value, whose type is deduced as if the parameter
+// were declared 'decltype(auto)'; it must be a constant template argument.
+template <universal template U> struct S {};
+S<c + 1> v1;
+S<&x> v2;
+S<42> v3;
+S<x + 1> v4;
+// expected-error@-1 {{non-type template argument is not a constant expression}}
+//   expected-note@-2 {{read of non-const variable 'x' is not allowed in a constant expression}}
+//   expected-note@#x {{declared here}}
+S<agg.m + 1> v5;
+// expected-error@-1 {{non-type template argument is not a constant expression}}
+//   expected-note@-2 {{read of non-constexpr variable 'agg' is not allowed in a constant expression}}
+//   expected-note@#agg {{declared here}}
+
+// Arguments naming different entities are different, and parentheses matter.
+static_assert(!__is_same(S<x>, S<(x)>));
+static_assert(!__is_same(S<x>, S<N::y>));
+static_assert(!__is_same(S<agg.m>, S<agg.a[0]>));
+static_assert(__is_same(S<x>, S<x>));
+static_assert(__is_same(S<agg.m>, S<agg.m>));
+
+// The entity survives deduction: it can be recovered from a specialization and
+// bound to a parameter of reference type.
+template <universal template U> struct W {};
+template <typename T> struct Rebind;
+template <universal template U> struct Rebind<W<U>> { using type = Ref<U>; };
+static_assert(Rebind<W<x>>::type::k == 1);
+static_assert(Rebind<W<agg.m>>::type::k == 1);
+
+} // namespace DeferredDeduction
