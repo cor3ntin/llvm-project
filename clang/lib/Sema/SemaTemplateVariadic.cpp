@@ -1559,10 +1559,17 @@ TemplateArgumentLoc Sema::getTemplateArgumentPackExpansionPattern(
         /*TemplateKWLoc=*/SourceLocation(), OrigLoc.getTemplateQualifierLoc(),
         OrigLoc.getTemplateNameLoc());
 
+  case TemplateArgument::UniversalExpansion:
+    Ellipsis = OrigLoc.getTemplateEllipsisLoc();
+    NumExpansions = Argument.getNumTemplateExpansions();
+    return TemplateArgumentLoc(
+        Context, Argument.getPackExpansionPattern(),
+        /*TemplateKWLoc=*/SourceLocation(), NestedNameSpecifierLoc(),
+        OrigLoc.getTemplateNameLoc());
+
   case TemplateArgument::Pack:
   case TemplateArgument::Concept:
   case TemplateArgument::Universal:
-  case TemplateArgument::UniversalExpansion:
   case TemplateArgument::Null:
     return TemplateArgumentLoc();
   }

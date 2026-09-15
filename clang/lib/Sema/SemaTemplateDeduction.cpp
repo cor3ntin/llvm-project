@@ -6759,10 +6759,43 @@ bool Sema::isMoreSpecializedThanPrimary(
   return MaybeSpec;
 }
 
+/// Determine whether every parameter of \p P is a universal template
+/// parameter, and if so how many arguments such a list accepts: \p Arity
+/// non-pack parameters, plus any number more when it contains a pack.
+static bool isUniversalParameterList(const TemplateParameterList *P,
+                                     bool &HasPack, unsigned &Arity) {
+  HasPack = false;
+  Arity = 0;
+  if (P->size() == 0)
+    return false;
+  for (const NamedDecl *Param : *P) {
+    const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(Param);
+    if (!UTP)
+      return false;
+    if (UTP->isParameterPack())
+      HasPack = true;
+    else
+      ++Arity;
+  }
+  return true;
+}
+
 bool Sema::isTemplateTemplateParameterAtLeastAsSpecializedAs(
     TemplateParameterList *P, TemplateDecl *PArg, TemplateDecl *AArg,
     const DefaultArguments &DefaultArgs, SourceLocation ArgLoc,
     bool PartialOrdering, bool *StrictPackMatch) {
+  // A parameter list made up of universal template parameters accepts an
+  // argument of any kind in each position, so it is at least as specialized
+  // as any list of matching arity. The partial ordering rules below deduce
+  // one list from the other, which cannot work when the kinds are unknown.
+  {
+    bool HasPack;
+    unsigned Arity;
+    if (isUniversalParameterList(P, HasPack, Arity)) {
+      unsigned NumArgParams = AArg->getTemplateParameters()->size();
+      return HasPack ? NumArgParams >= Arity : NumArgParams == Arity;
+    }
+  }
   // C++1z [temp.arg.template]p4: (DR 150)
   //   A template template-parameter P is at least as specialized as a
   //   template template-argument A if, given the following rewrite to two

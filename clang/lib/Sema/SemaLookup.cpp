@@ -1725,6 +1725,10 @@ bool Sema::hasAcceptableDefaultArgument(
   if (auto *P = dyn_cast<NonTypeTemplateParmDecl>(D))
     return ::hasAcceptableDefaultArgument(*this, P, Modules, Kind);
 
+  // A universal template parameter cannot have a default argument yet.
+  if (isa<UniversalTemplateParmDecl>(D))
+    return false;
+
   return ::hasAcceptableDefaultArgument(
       *this, cast<TemplateTemplateParmDecl>(D), Modules, Kind);
 }
