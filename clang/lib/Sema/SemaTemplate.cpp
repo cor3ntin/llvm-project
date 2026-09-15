@@ -5669,6 +5669,19 @@ convertTypeTemplateArgumentToTemplate(ASTContext &Context, TypeLoc TLoc) {
                              TagLoc.getQualifierLoc(), TagLoc.getNameLoc());
 }
 
+/// Determine whether \p E, used as the argument for a universal template
+/// parameter, denotes the entity it names rather than its value. These are the
+/// forms for which 'decltype' yields the type of that entity rather than the
+/// type of the expression ([dcl.type.decltype]p1): an unparenthesized
+/// id-expression or class member access. The type of the constant template
+/// parameter such an argument is eventually bound to is deduced from the
+/// entity, not here.
+static bool isSymbolicTemplateArgument(const Expr *E) {
+  return isa<DeclRefExpr, MemberExpr, DependentScopeDeclRefExpr,
+             UnresolvedLookupExpr, CXXDependentScopeMemberExpr,
+             UnresolvedMemberExpr>(E);
+}
+
 bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
                                  NamedDecl *Template,
                                  SourceLocation TemplateLoc,
@@ -5873,6 +5886,25 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
   // A universal template parameter accepts an argument of any kind; what it
   // actually names is only determined once it has been substituted.
   if (isa<UniversalTemplateParmDecl>(Param)) {
+    // An id-expression denotes the entity it names, and the type of the
+    // constant template parameter it is eventually bound to is deduced from
+    // that entity rather than here. Any other expression is a value whose type
+    // is deduced now, as if the parameter were declared 'decltype(auto)'.
+    if (Arg.getKind() == TemplateArgument::Expression &&
+        !isSymbolicTemplateArgument(Arg.getAsExpr())) {
+      TemplateArgument SugaredResult, CanonicalResult;
+      ExprResult E = CheckTemplateArgument(
+          Param,
+          Context.getAutoType(DeducedKind::Undeduced, QualType(),
+                              AutoTypeKeyword::DecltypeAuto),
+          Arg.getAsExpr(), SugaredResult, CanonicalResult,
+          /*StrictCheck=*/CTAI.PartialOrdering, CTAK_Specified);
+      if (E.isInvalid())
+        return true;
+      CTAI.SugaredConverted.push_back(SugaredResult);
+      CTAI.CanonicalConverted.push_back(CanonicalResult);
+      return false;
+    }
     CTAI.SugaredConverted.push_back(Arg);
     CTAI.CanonicalConverted.push_back(Context.getCanonicalTemplateArgument(Arg));
     return false;
