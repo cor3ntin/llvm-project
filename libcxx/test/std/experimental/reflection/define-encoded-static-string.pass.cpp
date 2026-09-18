@@ -74,13 +74,14 @@ constexpr const char16_t* Grin16 = std::define_encoded_static_string<char16_t>(u
 static_assert(Grin16[0] == 0xD83D && Grin16[1] == 0xDE00 && Grin16[2] == 0);
 
 constexpr const wchar_t* GrinW = std::define_encoded_static_string<wchar_t>(u8"\U0001F600");
-constexpr bool grin_w_ok() {
-  if constexpr (sizeof(wchar_t) > 2)
-    return GrinW[0] == wchar_t(0x1F600) && GrinW[1] == 0;
+template <std::size_t WWidth>
+constexpr bool grin_w_ok(const wchar_t* S) {
+  if constexpr (WWidth > 2)
+    return S[0] == wchar_t(0x1F600) && S[1] == 0;
   else
-    return GrinW[0] == wchar_t(0xD83D) && GrinW[1] == wchar_t(0xDE00) && GrinW[2] == 0;
+    return S[0] == wchar_t(0xD83D) && S[1] == wchar_t(0xDE00) && S[2] == 0;
 }
-static_assert(grin_w_ok());
+static_assert(grin_w_ok<sizeof(wchar_t)>(GrinW));
 } // namespace unicode
 
 namespace empty_string {
