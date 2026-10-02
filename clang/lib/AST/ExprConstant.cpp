@@ -4948,6 +4948,19 @@ static CompleteObject findCompleteObject(EvalInfo &Info, const Expr *E,
 /// \param WantObjectRepresentation - If true, we're looking for the object
 ///               representation rather than the value, and in particular,
 ///               there is no requirement that the result be fully initialized.
+
+/// A code unit may be read through a character type of the same width but
+/// different signedness, which __builtin_char_cast allows. The stored value
+/// keeps the signedness of the type it was written with, so give it the
+/// signedness of the type it is being read through.
+static void resignReadIfNeeded(QualType Type, APValue &RVal) {
+  if (!RVal.isInt() || !Type->isIntegerType())
+    return;
+  bool WantSigned = Type->isSignedIntegerOrEnumerationType();
+  if (RVal.getInt().isSigned() != WantSigned)
+    RVal.getInt().setIsSigned(WantSigned);
+}
+
 static bool
 handleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv, QualType Type,
                                const LValue &LVal, APValue &RVal,
@@ -4983,12 +4996,16 @@ handleLValueToRValueConversion(EvalInfo &Info, const Expr *Conv, QualType Type,
       }
       uint64_t CharIndex = LVal.Designator.Entries[0].getAsArrayIndex();
       RVal = APValue(extractStringLiteralCharacter(Info, Base, CharIndex));
+      resignReadIfNeeded(Type, RVal);
       return true;
     }
   }
 
   CompleteObject Obj = findCompleteObject(Info, Conv, AK, LVal, Type);
-  return Obj && extractSubobject(Info, Conv, Obj, LVal.Designator, RVal, AK);
+  if (!Obj || !extractSubobject(Info, Conv, Obj, LVal.Designator, RVal, AK))
+    return false;
+  resignReadIfNeeded(Type, RVal);
+  return true;
 }
 
 static bool hlslElementwiseCastHelper(EvalInfo &Info, const Expr *E,
@@ -10704,6 +10721,8 @@ bool PointerExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
   case Builtin::BI__builtin_operator_new:
     return HandleOperatorNewCall(Info, E, Result);
   case Builtin::BI__builtin_launder:
+    return evaluatePointer(E->getArg(0), Result);
+  case Builtin::BI__builtin_char_cast:
     return evaluatePointer(E->getArg(0), Result);
   case Builtin::BIstrchr:
   case Builtin::BIwcschr:

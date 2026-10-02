@@ -1195,6 +1195,16 @@ def Launder : Builtin {
   let Prototype = "void*(void*)";
 }
 
+// Casts a pointer to a range of code units to a pointer to the same range
+// seen as a different character type, as proposed by P2626. The second
+// argument is only used for its type, which selects the target type; it is
+// not evaluated for its value.
+def CharCast : Builtin {
+  let Spellings = ["__builtin_char_cast"];
+  let Attributes = [NoThrow, CustomTypeChecking, Constexpr];
+  let Prototype = "void*(void*, void*)";
+}
+
 def IsConstantEvaluated : LangBuiltin<"CXX_LANG"> {
   let Spellings = ["__builtin_is_constant_evaluated"];
   let Attributes = [NoThrow, Constexpr];
