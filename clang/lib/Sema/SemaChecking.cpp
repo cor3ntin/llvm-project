@@ -2255,6 +2255,77 @@ static ExprResult BuiltinLaunder(Sema &S, CallExpr *TheCall) {
   return TheCall;
 }
 
+/// Checks __builtin_char_cast(From *from, To *), which reinterprets a range of
+/// code units as a different character type of the same width. Exactly one
+/// side has to be a UTF character type: the builtin serves both directions of
+/// the conversion proposed by P2626, from a legacy code unit type to charN_t
+/// and back.
+///
+/// The second argument is only there to carry the target type.
+static ExprResult BuiltinCharCast(Sema &S, CallExpr *TheCall) {
+  if (S.checkArgCount(TheCall, 2))
+    return ExprError();
+
+  ExprResult FromArg =
+      S.DefaultFunctionArrayLvalueConversion(TheCall->getArg(0));
+  if (FromArg.isInvalid())
+    return ExprError();
+  TheCall->setArg(0, FromArg.get());
+
+  ExprResult ToArg = S.DefaultFunctionArrayLvalueConversion(TheCall->getArg(1));
+  if (ToArg.isInvalid())
+    return ExprError();
+  TheCall->setArg(1, ToArg.get());
+
+  QualType FromPtrTy = FromArg.get()->getType();
+  QualType ToPtrTy = ToArg.get()->getType();
+
+  auto DiagnoseNotAPointer = [&](unsigned ArgIndex, QualType T) {
+    S.Diag(TheCall->getArg(ArgIndex)->getExprLoc(),
+           diag::err_builtin_char_cast_invalid_arg)
+        << ArgIndex + 1 << T << TheCall->getSourceRange();
+    return ExprError();
+  };
+
+  if (!FromPtrTy->isPointerType() || FromPtrTy->isVoidPointerType() ||
+      FromPtrTy->isFunctionPointerType())
+    return DiagnoseNotAPointer(0, FromPtrTy);
+  if (!ToPtrTy->isPointerType() || ToPtrTy->isVoidPointerType() ||
+      ToPtrTy->isFunctionPointerType())
+    return DiagnoseNotAPointer(1, ToPtrTy);
+
+  QualType FromTy = FromPtrTy->getPointeeType();
+  QualType ToTy = ToPtrTy->getPointeeType();
+
+  auto IsUTFCharType = [](QualType T) {
+    return T->isChar8Type() || T->isChar16Type() || T->isChar32Type();
+  };
+  auto IsCodeUnitType = [&](QualType T) {
+    return T->isIntegralType(S.Context) || T->isStdByteType();
+  };
+
+  // One side names UTF code units, the other the code units being adopted
+  // into, or extracted from, a UTF type.
+  if (IsUTFCharType(FromTy) == IsUTFCharType(ToTy) || !IsCodeUnitType(FromTy) ||
+      !IsCodeUnitType(ToTy)) {
+    S.Diag(TheCall->getBeginLoc(), diag::err_builtin_char_cast_invalid_types)
+        << FromTy << ToTy << TheCall->getSourceRange();
+    return ExprError();
+  }
+
+  // Only the type changes, not the object representation.
+  if (S.Context.getTypeSize(FromTy) != S.Context.getTypeSize(ToTy)) {
+    S.Diag(TheCall->getBeginLoc(), diag::err_builtin_char_cast_size_mismatch)
+        << FromTy << ToTy << TheCall->getSourceRange();
+    return ExprError();
+  }
+
+  // The result points to the same objects, so it keeps their qualifiers.
+  TheCall->setType(S.Context.getPointerType(S.Context.getQualifiedType(
+      ToTy.getUnqualifiedType(), FromTy.getQualifiers())));
+  return TheCall;
+}
+
 static ExprResult BuiltinIsWithinLifetime(Sema &S, CallExpr *TheCall) {
   if (S.checkArgCount(TheCall, 1))
     return ExprError();
@@ -3401,6 +3472,8 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
   }
   case Builtin::BI__builtin_launder:
     return BuiltinLaunder(*this, TheCall);
+  case Builtin::BI__builtin_char_cast:
+    return BuiltinCharCast(*this, TheCall);
   case Builtin::BI__builtin_is_within_lifetime:
     return BuiltinIsWithinLifetime(*this, TheCall);
   case Builtin::BI__builtin_trivially_relocate:

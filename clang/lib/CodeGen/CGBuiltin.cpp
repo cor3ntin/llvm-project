@@ -5294,6 +5294,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
 
     return RValue::get(Ptr);
   }
+  case Builtin::BI__builtin_char_cast:
+    // Only the type of the pointer changes; the second argument is there for
+    // its type alone and is not evaluated.
+    return RValue::get(EmitScalarExpr(E->getArg(0)));
   case Builtin::BI__builtin_clear_padding: {
     Address Src = EmitPointerWithAlignment(E->getArg(0));
     auto PointeeTy = E->getArg(0)->getType()->getPointeeType();
