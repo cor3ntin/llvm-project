@@ -114,3 +114,28 @@ struct NestedTemplate {
 };
 static_assert(__is_same(decltype(NestedTemplate<long>::I::a), long));
 } // namespace Templates
+
+namespace DeducedAtInstantiation {
+// The type is not deducible from the initializer until the template is
+// instantiated, even though the initializer is not type-dependent. The
+// initialization must not be checked against the placeholder in the pattern.
+template <typename... T>
+struct PackSize {
+  auto n = sizeof...(T);
+};
+static_assert(__is_same(decltype(PackSize<int, char>::n), decltype(sizeof(0))));
+constexpr bool readPackSize() {
+  PackSize<int, char> s;
+  return s.n == 2;
+}
+static_assert(readPackSize());
+
+// Likewise for an initializer that depends on 'this' rather than on T.
+template <typename T>
+struct AddressOfMember {
+  char b[4] = {};
+  auto *p = &b[0];
+};
+static_assert(__is_same(decltype(AddressOfMember<int>::p), char *));
+} // namespace DeducedAtInstantiation
+

@@ -11,8 +11,7 @@ struct S {
 namespace OwnClass {
 // The member's type cannot be the class being defined; it has no layout yet.
 struct S { // expected-note {{definition of 'OwnClass::S' is not complete until the closing '}'}}
-  auto x = S{}; // expected-error {{invalid use of incomplete type 'S'}} \
-                // expected-error {{no viable conversion from 'S' to 'auto'}}
+  auto x = S{}; // expected-error {{invalid use of incomplete type 'S'}}
 };
 
 struct T { // expected-note {{definition of 'OwnClass::T' is not complete until the closing '}'}}
