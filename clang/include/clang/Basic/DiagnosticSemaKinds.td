@@ -13419,6 +13419,16 @@ def err_builtin_is_within_lifetime_invalid_arg : Error<
   "%select{non-|function }0pointer argument to '__builtin_is_within_lifetime' "
   "is not allowed">;
 
+def err_builtin_char_cast_invalid_arg : Error<
+  "%ordinal0 argument to '__builtin_char_cast' must be a pointer to an object "
+  "type (was %1)">;
+def err_builtin_char_cast_invalid_types : Error<
+  "'__builtin_char_cast' casts between a UTF character type and an integral "
+  "or byte type; %0 and %1 are not such a pair">;
+def err_builtin_char_cast_size_mismatch : Error<
+  "'__builtin_char_cast' cannot change the size of a code unit; %0 and %1 have "
+  "different widths">;
+
 // A multi-component builtin type diagnostic. The first component broadly
 // selects a scalar or container type (scalar, vector or matrix). The second
 // component selects integer types and the third component selects
