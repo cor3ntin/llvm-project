@@ -3315,6 +3315,11 @@ def fexperimental_strict_floating_point : Flag<["-"], "fexperimental-strict-floa
   Group<f_clang_Group>, Visibility<[ClangOption, CC1Option]>,
   HelpText<"Enables the use of non-default rounding modes and non-default exception handling on targets that are not currently ready.">,
   MarshallingInfoFlag<LangOpts<"ExpStrictFP">>;
+def fexperimental_auto_nsdmi : Flag<["-"], "fexperimental-auto-nsdmi">,
+  Group<f_clang_Group>, Visibility<[ClangOption, CC1Option]>,
+  HelpText<"Allow a non-static data member to be declared with a deduced type, "
+           "deduced from its default member initializer">,
+  MarshallingInfoFlag<LangOpts<"AutoNSDMI">>;
 def finput_charset_EQ : Joined<["-"], "finput-charset=">,
   Visibility<[ClangOption, FlangOption, FC1Option]>, Group<f_Group>,
   HelpText<"Specify the default character set for source files">;

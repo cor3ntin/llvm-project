@@ -5638,6 +5638,73 @@ void Sema::DiagnoseAutoDeductionFailure(const VarDecl *VDecl,
       << Init->getSourceRange();
 }
 
+void Sema::DeduceAutoMemberTypeFromInitExpr(FieldDecl *Field, Expr *Init) {
+  assert(Field->getType()->isUndeducedType() &&
+         "data member type is already deduced");
+
+  auto Fail = [&] {
+    Field->setInvalidDecl();
+    // The class cannot be laid out without the member's type.
+    Field->getParent()->setInvalidDecl();
+  };
+
+  // A direct-initializer only deduces if it holds exactly one expression.
+  Expr *DeduceInit = Init;
+  if (auto *DirectInit = dyn_cast<ParenListExpr>(Init)) {
+    if (DirectInit->getNumExprs() == 0) {
+      Diag(DirectInit->getBeginLoc(), diag::err_auto_var_init_no_expression)
+          << Field->getDeclName() << Field->getType()
+          << Field->getSourceRange();
+      return Fail();
+    }
+    if (DirectInit->getNumExprs() > 1) {
+      Diag(DirectInit->getExpr(1)->getBeginLoc(),
+           diag::err_auto_var_init_multiple_expressions)
+          << Field->getDeclName() << Field->getType()
+          << Field->getSourceRange();
+      return Fail();
+    }
+    DeduceInit = DirectInit->getExpr(0);
+  }
+
+  // In a template, the type can only be deduced once the initializer has been
+  // substituted; leave it as a placeholder until then.
+  if (DeduceInit->isTypeDependent() || DeduceInit->isValueDependent())
+    return;
+
+  QualType DeducedType;
+  TemplateDeductionInfo Info(DeduceInit->getExprLoc());
+  TemplateDeductionResult Result = DeduceAutoType(
+      Field->getTypeSourceInfo()->getTypeLoc(), DeduceInit, DeducedType, Info);
+  if (Result != TemplateDeductionResult::Success &&
+      Result != TemplateDeductionResult::AlreadyDiagnosed) {
+    if (isa<InitListExpr>(Init))
+      Diag(Field->getLocation(),
+           diag::err_auto_var_deduction_failure_from_init_list)
+          << Field->getDeclName() << Field->getType() << Init->getSourceRange();
+    else
+      Diag(Field->getLocation(), diag::err_auto_var_deduction_failure)
+          << Field->getDeclName() << Field->getType() << Init->getType()
+          << Init->getSourceRange();
+  }
+  if (DeducedType.isNull())
+    return Fail();
+
+  // The member cannot be of the type of a class whose own members are still
+  // being deduced; that class has no layout yet.
+  if (isClassTypeUndergoingNSDMIParsing(DeducedType)) {
+    Diag(Field->getLocation(), diag::err_auto_member_deduced_to_enclosing_class)
+        << Field->getDeclName() << DeducedType;
+    return Fail();
+  }
+
+  Field->setType(DeducedType);
+
+  if (RequireCompleteSizedType(Field->getLocation(), DeducedType,
+                               diag::err_field_incomplete_or_sizeless))
+    return Fail();
+}
+
 bool Sema::DeduceReturnType(FunctionDecl *FD, SourceLocation Loc,
                             bool Diagnose) {
   assert(FD->getReturnType()->isUndeducedType());

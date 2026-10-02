@@ -4534,6 +4534,15 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(Expr *E,
   ExprTy = E->getType();
   assert(!ExprTy->isReferenceType());
 
+  // The type of a data member declared with a placeholder type is not known
+  // until its default member initializer has been parsed.
+  if (ExprTy->isUndeducedType()) {
+    Diag(E->getExprLoc(), diag::err_sizeof_alignof_incomplete_or_sizeless_type)
+        << getTraitSpelling(ExprKind) << /*incomplete*/ 0 << ExprTy
+        << E->getSourceRange();
+    return true;
+  }
+
   if (ExprTy->isFunctionType()) {
     Diag(E->getExprLoc(), diag::err_sizeof_alignof_function_type)
         << getTraitSpelling(ExprKind) << E->getSourceRange();

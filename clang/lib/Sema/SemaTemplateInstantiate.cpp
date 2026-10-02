@@ -3942,6 +3942,13 @@ bool Sema::InstantiateInClassInitializer(
                                         /*CXXDirectInit=*/false);
   Expr *Init = NewInit.get();
   assert((!Init || !isa<ParenListExpr>(Init)) && "call-style init in class");
+
+  // A data member declared with a placeholder type takes its type from the
+  // instantiated initializer. This has to happen before the initialization is
+  // checked against the member's type.
+  if (Init && Instantiation->getType()->isUndeducedType())
+    DeduceAutoMemberTypeFromInitExpr(Instantiation, Init);
+
   ActOnFinishCXXInClassMemberInitializer(
       Instantiation, Init ? Init->getBeginLoc() : SourceLocation(), Init);
 
