@@ -4301,7 +4301,12 @@ void Sema::ActOnFinishCXXInClassMemberInitializer(Decl *D,
     return;
   }
 
-  if (!FD->getType()->isDependentType() && !InitExpr.get()->isTypeDependent()) {
+  // A member declared with a placeholder type whose initializer could not be
+  // deduced from yet, in a template, has no type to check the initialization
+  // against; that happens when the member is instantiated. The initializer is
+  // still attached below, so the pattern has one to substitute.
+  if (!FD->getType()->isDependentType() && !FD->getType()->isUndeducedType() &&
+      !InitExpr.get()->isTypeDependent()) {
     InitExpr = ConvertMemberDefaultInitExpression(FD, InitExpr.get(), InitLoc);
     // C++11 [class.base.init]p7:
     //   The initialization of each base and member constitutes a

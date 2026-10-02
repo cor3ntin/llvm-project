@@ -3969,6 +3969,12 @@ bool Sema::InstantiateInClassInitializer(
   if (!Pattern->hasInClassInitializer())
     return false;
 
+  // For a member whose type had to be deduced from it, the initializer was
+  // already instantiated when the field was created, rather than waiting for
+  // it to be needed.
+  if (Instantiation->getInClassInitializer())
+    return false;
+
   assert(Instantiation->getInClassInitStyle() ==
              Pattern->getInClassInitStyle() &&
          "pattern and instantiation disagree about init style");
@@ -4021,6 +4027,13 @@ bool Sema::InstantiateInClassInitializer(
                                         /*CXXDirectInit=*/false);
   Expr *Init = NewInit.get();
   assert((!Init || !isa<ParenListExpr>(Init)) && "call-style init in class");
+
+  // A data member declared with a placeholder type takes its type from the
+  // instantiated initializer. This has to happen before the initialization is
+  // checked against the member's type.
+  if (Init && Instantiation->getType()->isUndeducedType())
+    DeduceAutoMemberTypeFromInitExpr(Instantiation, Init);
+
   ActOnFinishCXXInClassMemberInitializer(
       Instantiation, Init ? Init->getBeginLoc() : SourceLocation(), Init);
 
