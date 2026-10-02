@@ -229,8 +229,15 @@ void Parser::ParseCXXNonStaticMemberInitializer(Decl *VarD) {
   assert(Tok.isOneOf(tok::l_brace, tok::equal) &&
          "Current token not a '{' or '='!");
 
+  // A member declared with a placeholder type needs its initializer parsed
+  // early, at the closing brace of its own class, so that its type - and
+  // hence the layout of the class - is known. VarD can be null, for instance
+  // when parsing a variable member template.
+  auto *ValD = dyn_cast_or_null<ValueDecl>(VarD);
   LateParsedMemberInitializer *MI =
-    new LateParsedMemberInitializer(this, VarD);
+      ValD && ValD->getType()->getContainedAutoType()
+          ? new LateParsedAutoMemberInitializer(this, VarD)
+          : new LateParsedMemberInitializer(this, VarD);
   getCurrentClass().LateParsedDeclarations.push_back(MI);
   CachedTokens &Toks = MI->Toks;
 
@@ -265,6 +272,7 @@ void Parser::ParseCXXNonStaticMemberInitializer(Decl *VarD) {
 LateParsedDeclaration::~LateParsedDeclaration() {}
 void LateParsedDeclaration::ParseLexedMethodDeclarations() {}
 void LateParsedDeclaration::ParseLexedMemberInitializers() {}
+void LateParsedDeclaration::ParseLexedAutoMemberInitializers() {}
 void LateParsedDeclaration::ParseLexedMethodDefs() {}
 void LateParsedDeclaration::ParseLexedAttributes() {}
 void LateParsedDeclaration::ParseLexedPragmas() {}
@@ -282,6 +290,10 @@ void Parser::LateParsedClass::ParseLexedMethodDeclarations() {
 
 void Parser::LateParsedClass::ParseLexedMemberInitializers() {
   Self->ParseLexedMemberInitializers(*Class);
+}
+
+void Parser::LateParsedClass::ParseLexedAutoMemberInitializers() {
+  Self->ParseLexedAutoMemberInitializers(*Class);
 }
 
 void Parser::LateParsedClass::ParseLexedMethodDefs() {
@@ -306,6 +318,15 @@ void Parser::LexedMethod::ParseLexedMethodDefs() {
 
 void Parser::LateParsedMemberInitializer::ParseLexedMemberInitializers() {
   Self->ParseLexedMemberInitializer(*this);
+}
+
+void Parser::LateParsedAutoMemberInitializer::ParseLexedMemberInitializers() {
+  Self->ParseDeducedAutoMemberInitializer(*this);
+}
+
+void Parser::LateParsedAutoMemberInitializer::
+    ParseLexedAutoMemberInitializers() {
+  Self->ParseLexedAutoMemberInitializer(*this);
 }
 
 void LateParsedAttribute::ParseLexedAttributes() {
@@ -692,6 +713,108 @@ void Parser::ParseLexedMemberInitializer(LateParsedMemberInitializer &MI) {
   // Make sure this is *our* artificial EOF token.
   if (Tok.getEofData() == MI.Field)
     ConsumeAnyToken();
+}
+
+/// We reached the closing brace of a class, possibly a nested one. Parse the
+/// default member initializers of its data members declared with a
+/// placeholder type and deduce their types, so that the class can be laid out.
+void Parser::ParseLexedAutoMemberInitializers(ParsingClass &Class) {
+  if (Class.LateParsedDeclarations.empty())
+    return;
+
+  // Unlike the other delayed parsing, this runs at the closing brace of the
+  // class that declares the members, so we are still inside its scope and
+  // must not re-enter it. When the outermost class is completed this is
+  // reached again for any nested class, but by then every initializer has
+  // already been parsed and the visit does nothing.
+
+  CXXRecordDecl *Record;
+  if (auto *Template = dyn_cast<ClassTemplateDecl>(Class.TagOrTemplate))
+    Record = Template->getTemplatedDecl();
+  else
+    Record = cast<CXXRecordDecl>(Class.TagOrTemplate);
+
+  // 'this' is available in a default member initializer even though we are not
+  // inside a member function.
+  Sema::CXXThisScopeRAII ThisScope(Actions, Class.TagOrTemplate, Qualifiers());
+
+  // Deducing a member's type to this very class would require its layout.
+  Sema::ClassUndergoingNSDMIParsingRAII ParsingRecord(Actions, Record);
+
+  for (LateParsedDeclaration *D : Class.LateParsedDeclarations)
+    D->ParseLexedAutoMemberInitializers();
+}
+
+void Parser::ParseLexedAutoMemberInitializer(
+    LateParsedAutoMemberInitializer &MI) {
+  if (!MI.Field || MI.Field->isInvalidDecl())
+    return;
+
+  // A nested class is reached again when the outermost class is completed, but
+  // its members were already deduced at its own closing brace. The remaining
+  // analysis of the initializer happens later, in
+  // ParseDeducedAutoMemberInitializer.
+  if (MI.InitExpr)
+    return;
+
+  ParenBraceBracketBalancer BalancerRAIIObj(*this);
+
+  // Append the current token at the end of the new token stream so that it
+  // doesn't get lost.
+  MI.Toks.push_back(Tok);
+  PP.EnterTokenStream(MI.Toks, true, /*IsReinject*/ true);
+
+  // Consume the previously pushed token.
+  ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
+
+  // The initializer isn't actually potentially evaluated unless it is used.
+  EnterExpressionEvaluationContext Eval(
+      Actions, Sema::ExpressionEvaluationContext::PotentiallyEvaluatedIfUsed);
+
+  ExprResult Init =
+      ParseCXXMemberInitializer(MI.Field, /*IsFunction=*/false, MI.EqualLoc);
+
+  // The next token should be our artificial terminating EOF token.
+  if (Tok.isNot(tok::eof)) {
+    if (!Init.isInvalid()) {
+      SourceLocation EndLoc = PP.getLocForEndOfToken(PrevTokLocation);
+      if (!EndLoc.isValid())
+        EndLoc = Tok.getLocation();
+      // No fixit; we can't recover as if there were a semicolon here.
+      Diag(EndLoc, diag::err_expected_semi_decl_list);
+    }
+
+    // Consume tokens until we hit the artificial EOF.
+    while (Tok.isNot(tok::eof))
+      ConsumeAnyToken();
+  }
+  // Make sure this is *our* artificial EOF token.
+  if (Tok.getEofData() == MI.Field)
+    ConsumeAnyToken();
+
+  auto *Field = cast<FieldDecl>(MI.Field);
+  if (Init.isInvalid() || !Init.get()) {
+    Field->setInvalidDecl();
+    // Without the member's type the class cannot be laid out.
+    Field->getParent()->setInvalidDecl();
+    return;
+  }
+
+  MI.InitExpr = Init.get();
+  Actions.DeduceAutoMemberTypeFromInitExpr(Field, MI.InitExpr);
+}
+
+/// The member's type has been deduced and the names in its initializer are
+/// bound; finish the semantic analysis of the initializer along with the
+/// ordinary ones, once the outermost class is complete.
+void Parser::ParseDeducedAutoMemberInitializer(
+    LateParsedAutoMemberInitializer &MI) {
+  if (!MI.Field || MI.Field->isInvalidDecl() || !MI.InitExpr)
+    return;
+
+  Actions.ActOnStartCXXInClassMemberInitializer();
+  Actions.ActOnFinishCXXInClassMemberInitializer(MI.Field, MI.EqualLoc,
+                                                 MI.InitExpr);
 }
 
 void Parser::ParseLexedAttributes(ParsingClass &Class) {

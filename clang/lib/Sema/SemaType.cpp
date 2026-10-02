@@ -3344,17 +3344,23 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
       if (isa<ObjCContainerDecl>(SemaRef.CurContext)) {
         Error = 6; // Interface member.
       } else {
+        // A data member may be declared with a deduced type, deduced from its
+        // default member initializer, when that experiment is enabled.
+        bool AutoNSDMI = SemaRef.getLangOpts().AutoNSDMI;
         switch (cast<TagDecl>(SemaRef.CurContext)->getTagKind()) {
         case TagTypeKind::Enum:
           llvm_unreachable("unhandled tag kind");
         case TagTypeKind::Struct:
-          Error = Cxx ? 1 : 2; /* Struct member */
+          if (!AutoNSDMI)
+            Error = Cxx ? 1 : 2; /* Struct member */
           break;
         case TagTypeKind::Union:
-          Error = Cxx ? 3 : 4; /* Union member */
+          if (!AutoNSDMI)
+            Error = Cxx ? 3 : 4; /* Union member */
           break;
         case TagTypeKind::Class:
-          Error = 5; /* Class member */
+          if (!AutoNSDMI)
+            Error = 5; /* Class member */
           break;
         case TagTypeKind::Interface:
           Error = 6; /* Interface member */
