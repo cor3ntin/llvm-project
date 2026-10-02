@@ -3890,6 +3890,12 @@ bool Sema::InstantiateInClassInitializer(
   if (!Pattern->hasInClassInitializer())
     return false;
 
+  // For a member whose type had to be deduced from it, the initializer was
+  // already instantiated when the field was created, rather than waiting for
+  // it to be needed.
+  if (Instantiation->getInClassInitializer())
+    return false;
+
   assert(Instantiation->getInClassInitStyle() ==
              Pattern->getInClassInitStyle() &&
          "pattern and instantiation disagree about init style");
