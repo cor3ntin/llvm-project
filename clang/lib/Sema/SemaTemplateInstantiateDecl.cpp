@@ -2067,6 +2067,14 @@ Decl *TemplateDeclInstantiator::VisitFieldDecl(FieldDecl *D) {
   Field->setAccess(D->getAccess());
   Owner->addDecl(Field);
 
+  // A member declared with a placeholder type takes its type from its default
+  // member initializer, so that initializer has to be instantiated now rather
+  // than when it is first needed: the class cannot be laid out without it.
+  if (!Invalid && Field->getType()->isUndeducedType() &&
+      SemaRef.InstantiateInClassInitializer(Field->getLocation(), Field, D,
+                                            TemplateArgs))
+    Field->setInvalidDecl();
+
   return Field;
 }
 

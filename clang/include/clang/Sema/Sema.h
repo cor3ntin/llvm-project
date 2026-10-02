@@ -5948,6 +5948,42 @@ public:
                            Expr *BitfieldWidth, const VirtSpecifiers &VS,
                            InClassInitStyle InitStyle);
 
+  /// The classes whose default member initializers are currently being parsed
+  /// in order to deduce the type of a data member declared with a placeholder
+  /// type. Used to reject a member whose deduced type would be its own class,
+  /// which cannot be laid out.
+  SmallVector<CXXRecordDecl *, 8> ClassesUndergoingNSDMIParsing;
+
+  /// Whether \p RD is a class whose default member initializers are currently
+  /// being parsed to deduce a data member's type.
+  bool isClassUndergoingNSDMIParsing(const CXXRecordDecl *RD) const {
+    return llvm::is_contained(ClassesUndergoingNSDMIParsing,
+                              RD->getCanonicalDecl());
+  }
+
+  /// Whether \p T is the type of such a class.
+  bool isClassTypeUndergoingNSDMIParsing(QualType T) const {
+    if (const CXXRecordDecl *RD = T->getAsCXXRecordDecl())
+      return isClassUndergoingNSDMIParsing(RD);
+    return false;
+  }
+
+  class ClassUndergoingNSDMIParsingRAII {
+    Sema &S;
+
+  public:
+    ClassUndergoingNSDMIParsingRAII(Sema &S, CXXRecordDecl *RD) : S(S) {
+      S.ClassesUndergoingNSDMIParsing.push_back(RD->getCanonicalDecl());
+    }
+    ~ClassUndergoingNSDMIParsingRAII() {
+      S.ClassesUndergoingNSDMIParsing.pop_back();
+    }
+  };
+
+  /// Deduce the type of the data member \p Field from \p Init, its default
+  /// member initializer, and record it on the declaration.
+  void DeduceAutoMemberTypeFromInitExpr(FieldDecl *Field, Expr *Init);
+
   /// Enter a new C++ default initializer scope. After calling this, the
   /// caller must call \ref ActOnFinishCXXInClassMemberInitializer, even if
   /// parsing or instantiating the initializer failed.

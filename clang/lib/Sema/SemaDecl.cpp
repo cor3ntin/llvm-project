@@ -20223,7 +20223,17 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
     //   shall not be a member of a structure or an element of an
     //   array.
     bool IsLastField = (i + 1 == Fields.end());
-    if (FDTy->isFunctionType()) {
+    if (FDTy->isUndeducedType() && !FD->hasInClassInitializer()) {
+      // A data member declared with a placeholder type is deduced from its
+      // default member initializer, so it must have one. With an initializer
+      // present, the type may still be a placeholder here if we are in a
+      // template, in which case it is deduced on instantiation.
+      Diag(FD->getLocation(), diag::err_auto_var_requires_init)
+          << FD->getDeclName() << FD->getType();
+      FD->setInvalidDecl();
+      EnclosingDecl->setInvalidDecl();
+      continue;
+    } else if (FDTy->isFunctionType()) {
       // Field declared as a function.
       Diag(FD->getLocation(), diag::err_field_declared_as_function)
         << FD->getDeclName();

@@ -2774,6 +2774,9 @@ def err_trailing_return_in_parens : Error<
   "trailing return type may not be nested within parentheses">;
 def err_auto_var_deduction_failure : Error<
   "variable %0 with type %1 has incompatible initializer of type %2">;
+def err_auto_member_deduced_to_enclosing_class : Error<
+  "data member %0 cannot have deduced type %1, which is the class whose "
+  "definition it appears in">;
 def err_auto_var_deduction_failure_from_init_list : Error<
   "cannot deduce actual type for variable %0 with type %1 from initializer list">;
 def err_auto_expr_deduction_failure : Error<

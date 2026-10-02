@@ -3772,10 +3772,18 @@ void Parser::ParseCXXMemberSpecification(SourceLocation RecordLoc,
   ParsedAttributes attrs(AttrFactory);
   MaybeParseGNUAttributes(attrs);
 
-  if (TagDecl)
+  if (TagDecl) {
+    // A data member declared with a placeholder type must have its type
+    // deduced before the class is complete, so that it can be laid out. This
+    // happens at the closing brace of the class that declares it, rather than
+    // that of the outermost class like other delayed parsing.
+    if (getLangOpts().AutoNSDMI)
+      ParseLexedAutoMemberInitializers(getCurrentClass());
+
     Actions.ActOnFinishCXXMemberSpecification(getCurScope(), RecordLoc, TagDecl,
                                               T.getOpenLocation(),
                                               T.getCloseLocation(), attrs);
+  }
 
   // C++11 [class.mem]p2:
   //   Within the class member-specification, the class is regarded as complete

@@ -178,6 +178,7 @@ public:
 
   virtual void ParseLexedMethodDeclarations();
   virtual void ParseLexedMemberInitializers();
+  virtual void ParseLexedAutoMemberInitializers();
   virtual void ParseLexedMethodDefs();
   virtual void ParseLexedAttributes();
   virtual void ParseLexedPragmas();
@@ -1232,6 +1233,7 @@ private:
 
     void ParseLexedMethodDeclarations() override;
     void ParseLexedMemberInitializers() override;
+    void ParseLexedAutoMemberInitializers() override;
     void ParseLexedMethodDefs() override;
     void ParseLexedAttributes() override;
     void ParseLexedPragmas() override;
@@ -1342,6 +1344,29 @@ private:
     CachedTokens Toks;
   };
 
+  /// LateParsedAutoMemberInitializer - A default member initializer for a
+  /// non-static data member declared with a placeholder type, such as 'auto'
+  /// (experimental).
+  ///
+  /// Unlike an ordinary initializer, this one cannot wait until the outermost
+  /// class is complete: the member's type, and therefore the layout of its
+  /// class, is not known until the initializer has been parsed. It is instead
+  /// parsed and deduced at the closing brace of its own class, and the
+  /// remaining semantic analysis of the initializer is deferred as usual.
+  struct LateParsedAutoMemberInitializer : public LateParsedMemberInitializer {
+    LateParsedAutoMemberInitializer(Parser *P, Decl *FD)
+        : LateParsedMemberInitializer(P, FD) {}
+
+    void ParseLexedMemberInitializers() override;
+    void ParseLexedAutoMemberInitializers() override;
+
+    /// The parsed initializer, once the member's type has been deduced from it.
+    Expr *InitExpr = nullptr;
+
+    /// The location of the '=', if the initializer used one.
+    SourceLocation EqualLoc;
+  };
+
   /// LateParsedDeclarationsContainer - During parsing of a top (non-nested)
   /// C++ class, its method declarations that contain parts that won't be
   /// parsed until after the definition is completed (C++ [class.mem]p2),
@@ -1420,6 +1445,9 @@ private:
   /// parse them all.
   void ParseLexedMemberInitializers(ParsingClass &Class);
   void ParseLexedMemberInitializer(LateParsedMemberInitializer &MI);
+  void ParseLexedAutoMemberInitializers(ParsingClass &Class);
+  void ParseLexedAutoMemberInitializer(LateParsedAutoMemberInitializer &MI);
+  void ParseDeducedAutoMemberInitializer(LateParsedAutoMemberInitializer &MI);
 
   ///@}
 
