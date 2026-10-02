@@ -328,6 +328,7 @@ public:
   RedeclarableResult VisitTypedefNameDecl(TypedefNameDecl *TD);
   void VisitTypedefDecl(TypedefDecl *TD);
   void VisitTypeAliasDecl(TypeAliasDecl *TD);
+  void VisitTypeAliasPackDecl(TypeAliasPackDecl *D);
   void VisitUnresolvedUsingTypenameDecl(UnresolvedUsingTypenameDecl *D);
   void VisitUnresolvedUsingIfExistsDecl(UnresolvedUsingIfExistsDecl *D);
   RedeclarableResult VisitTagDecl(TagDecl *TD);
@@ -731,11 +732,20 @@ void ASTDeclReader::VisitTypedefDecl(TypedefDecl *TD) {
 
 void ASTDeclReader::VisitTypeAliasDecl(TypeAliasDecl *TD) {
   RedeclarableResult Redecl = VisitTypedefNameDecl(TD);
+  TD->setEllipsisLoc(readSourceLocation());
   if (auto *Template = readDeclAs<TypeAliasTemplateDecl>())
     // Merged when we merge the template.
     TD->setDescribedAliasTemplate(Template);
   else
     mergeRedeclarable(TD, Redecl);
+}
+
+void ASTDeclReader::VisitTypeAliasPackDecl(TypeAliasPackDecl *D) {
+  VisitTypedefNameDecl(D);
+  D->InstantiatedFrom = readDeclAs<TypedefNameDecl>();
+  auto **Expansions = D->getTrailingObjects();
+  for (unsigned I = 0; I != D->NumExpansions; ++I)
+    Expansions[I] = readDeclAs<TypedefNameDecl>();
 }
 
 RedeclarableResult ASTDeclReader::VisitTagDecl(TagDecl *TD) {
@@ -4074,6 +4084,9 @@ Decl *ASTReader::ReadDeclRecord(GlobalDeclID ID) {
     break;
   case DECL_TYPEALIAS:
     D = TypeAliasDecl::CreateDeserialized(Context, ID);
+    break;
+  case DECL_TYPEALIAS_PACK:
+    D = TypeAliasPackDecl::CreateDeserialized(Context, ID, Record.readInt());
     break;
   case DECL_ENUM:
     D = EnumDecl::CreateDeserialized(Context, ID);

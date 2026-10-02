@@ -2104,6 +2104,18 @@ protected:
 
   enum { NumTypeWithKeywordBits = NumTypeBits + 8 };
 
+  class DependentNameTypeBitfields {
+    friend class DependentNameType;
+
+    LLVM_PREFERRED_TYPE(KeywordWrapperBitfields)
+    unsigned : NumTypeWithKeywordBits;
+
+    /// Whether the name is introduced by an ellipsis and therefore names an
+    /// alias pack, as in `typename T::...name`.
+    LLVM_PREFERRED_TYPE(bool)
+    unsigned IsPack : 1;
+  };
+
   class TagTypeBitfields {
     friend class TagType;
 
@@ -2388,6 +2400,7 @@ protected:
     ObjCObjectTypeBitfields ObjCObjectTypeBits;
     ReferenceTypeBitfields ReferenceTypeBits;
     KeywordWrapperBitfields KeywordWrapperBits;
+    DependentNameTypeBitfields DependentNameTypeBits;
     TagTypeBitfields TagTypeBits;
     VectorTypeBitfields VectorTypeBits;
     TemplateTypeParmTypeBitfields TemplateTypeParmTypeBits;
@@ -7592,13 +7605,16 @@ class DependentNameType : public TypeWithKeyword, public llvm::FoldingSetNode {
   const IdentifierInfo *Name;
 
   DependentNameType(ElaboratedTypeKeyword Keyword, NestedNameSpecifier NNS,
-                    const IdentifierInfo *Name, QualType CanonType)
+                    bool IsPack, const IdentifierInfo *Name, QualType CanonType)
       : TypeWithKeyword(Keyword, DependentName, CanonType,
                         TypeDependence::DependentInstantiation |
+                            (IsPack ? TypeDependence::UnexpandedPack
+                                    : TypeDependence::None) |
                             (NNS ? toTypeDependence(NNS.getDependence())
                                  : TypeDependence::Dependent)),
         NNS(NNS), Name(Name) {
     assert(Name);
+    DependentNameTypeBits.IsPack = IsPack;
   }
 
 public:
@@ -7611,17 +7627,23 @@ public:
     return Name;
   }
 
+  /// Whether the name was written with a preceding ellipsis, as in
+  /// `typename T::...name`, and therefore denotes an alias pack.
+  bool isPack() const { return DependentNameTypeBits.IsPack; }
+
   bool isSugared() const { return false; }
   QualType desugar() const { return QualType(this, 0); }
 
   void Profile(llvm::FoldingSetNodeID &ID) {
-    Profile(ID, getKeyword(), NNS, Name);
+    Profile(ID, getKeyword(), NNS, isPack(), Name);
   }
 
   static void Profile(llvm::FoldingSetNodeID &ID, ElaboratedTypeKeyword Keyword,
-                      NestedNameSpecifier NNS, const IdentifierInfo *Name) {
+                      NestedNameSpecifier NNS, bool IsPack,
+                      const IdentifierInfo *Name) {
     ID.AddInteger(llvm::to_underlying(Keyword));
     NNS.Profile(ID);
+    ID.AddBoolean(IsPack);
     ID.AddPointer(Name);
   }
 

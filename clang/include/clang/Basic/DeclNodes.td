@@ -24,6 +24,7 @@ def Named : DeclNode<Decl, "named declarations", 1>;
     def TypedefName : DeclNode<Type, "typedefs", 1>;
       def Typedef : DeclNode<TypedefName>;
       def TypeAlias : DeclNode<TypedefName>;
+      def TypeAliasPack : DeclNode<TypedefName>;
       def ObjCTypeParam : DeclNode<TypedefName>;
     def UnresolvedUsingTypename : DeclNode<Type>;
     def Tag : DeclNode<Type, "tag types", 1>, DeclContext;

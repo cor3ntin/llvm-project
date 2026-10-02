@@ -911,10 +911,11 @@ let Class = DependentNameType in {
   def : Property<"qualifier", NestedNameSpecifier> {
     let Read = [{ node->getQualifier() }];
   }
+  def : Property<"isPack", Bool> { let Read = [{ node->isPack() }]; }
   def : Property<"name", Identifier> { let Read = [{ node->getIdentifier() }]; }
 
   def : Creator<[{
-    return ctx.getDependentNameType(keyword, qualifier, name);
+    return ctx.getDependentNameType(keyword, qualifier, isPack, name);
   }]>;
 }
 

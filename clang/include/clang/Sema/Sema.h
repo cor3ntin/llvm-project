@@ -238,7 +238,8 @@ void threadSafetyCleanup(BeforeSet *Cache);
 // TemplateTypeParmDecls, so we have this horrible PointerUnion.
 typedef std::pair<llvm::PointerUnion<const TemplateTypeParmType *, NamedDecl *,
                                      const TemplateSpecializationType *,
-                                     const SubstBuiltinTemplatePackType *>,
+                                     const SubstBuiltinTemplatePackType *,
+                                     const DependentNameType *>,
                   SourceLocation>
     UnexpandedParameterPack;
 
@@ -3367,6 +3368,10 @@ public:
     /// The location of the '::'.
     SourceLocation CCLoc;
 
+    /// The location of the ellipsis preceding the identifier, if this names a
+    /// dependent alias pack, as in `T::...name::`.
+    SourceLocation DependentPackEllipsisLoc;
+
     /// Creates info object for the most typical case.
     NestedNameSpecInfo(IdentifierInfo *II, SourceLocation IdLoc,
                        SourceLocation ColonColonLoc,
@@ -3378,6 +3383,12 @@ public:
                        SourceLocation ColonColonLoc, QualType ObjectType)
         : ObjectType(ParsedType::make(ObjectType)), Identifier(II),
           IdentifierLoc(IdLoc), CCLoc(ColonColonLoc) {}
+
+    NestedNameSpecInfo(IdentifierInfo *II, SourceLocation EllipsisLoc,
+                       SourceLocation IdLoc, SourceLocation ColonColonLoc,
+                       ParsedType ObjectType = ParsedType())
+        : ObjectType(ObjectType), Identifier(II), IdentifierLoc(IdLoc),
+          CCLoc(ColonColonLoc), DependentPackEllipsisLoc(EllipsisLoc) {}
   };
 
   /// Build a new nested-name-specifier for "identifier::", as described
@@ -5539,9 +5550,15 @@ public:
                                   const CXXScopeSpec &SS);
   Decl *ActOnAliasDeclaration(Scope *CurScope, AccessSpecifier AS,
                               MultiTemplateParamsArg TemplateParams,
-                              SourceLocation UsingLoc, UnqualifiedId &Name,
+                              SourceLocation UsingLoc,
+                              SourceLocation EllipsisLoc, UnqualifiedId &Name,
                               const ParsedAttributesView &AttrList,
                               TypeResult Type, Decl *DeclFromDeclSpec);
+
+  /// Build the \c TypeAliasPackDecl that results from expanding the alias pack
+  /// \p InstantiatedFrom into \p Expansions.
+  Decl *BuildAliasPackDeclaration(TypedefNameDecl *InstantiatedFrom,
+                                  ArrayRef<TypedefNameDecl *> Expansions);
 
   /// BuildCXXConstructExpr - Creates a complete call to a constructor,
   /// including handling of its default argument expressions.
@@ -12443,7 +12460,8 @@ public:
   TypeResult ActOnTypenameType(
       Scope *S, SourceLocation TypenameLoc, const CXXScopeSpec &SS,
       const IdentifierInfo &II, SourceLocation IdLoc,
-      ImplicitTypenameContext IsImplicitTypename = ImplicitTypenameContext::No);
+      ImplicitTypenameContext IsImplicitTypename = ImplicitTypenameContext::No,
+      SourceLocation EllipsisLoc = SourceLocation());
 
   /// Called when the parser has parsed a C++ typename
   /// specifier that ends in a template-id, e.g.,
@@ -12469,12 +12487,14 @@ public:
   QualType CheckTypenameType(ElaboratedTypeKeyword Keyword,
                              SourceLocation KeywordLoc,
                              NestedNameSpecifierLoc QualifierLoc,
+                             SourceLocation EllipsisLoc,
                              const IdentifierInfo &II, SourceLocation IILoc,
                              TypeSourceInfo **TSI, bool DeducedTSTContext);
 
   QualType CheckTypenameType(ElaboratedTypeKeyword Keyword,
                              SourceLocation KeywordLoc,
                              NestedNameSpecifierLoc QualifierLoc,
+                             SourceLocation EllipsisLoc,
                              const IdentifierInfo &II, SourceLocation IILoc,
                              bool DeducedTSTContext = true);
 

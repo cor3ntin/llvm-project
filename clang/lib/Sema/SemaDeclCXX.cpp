@@ -4560,7 +4560,8 @@ Sema::BuildMemInitializer(Decl *ConstructorD,
           // specialization, we take it as a type name.
           BaseType = CheckTypenameType(
               ElaboratedTypeKeyword::None, SourceLocation(),
-              SS.getWithLocInContext(Context), *MemberOrBase, IdLoc);
+              SS.getWithLocInContext(Context),
+              /*EllipsisLoc=*/SourceLocation(), *MemberOrBase, IdLoc);
           if (BaseType.isNull())
             return true;
 
@@ -13864,7 +13865,9 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc, bool HasTypename,
 
 Decl *Sema::ActOnAliasDeclaration(Scope *S, AccessSpecifier AS,
                                   MultiTemplateParamsArg TemplateParamLists,
-                                  SourceLocation UsingLoc, UnqualifiedId &Name,
+                                  SourceLocation UsingLoc,
+                                  SourceLocation EllipsisLoc,
+                                  UnqualifiedId &Name,
                                   const ParsedAttributesView &AttrList,
                                   TypeResult Type, Decl *DeclFromDeclSpec) {
 
@@ -13879,8 +13882,17 @@ Decl *Sema::ActOnAliasDeclaration(Scope *S, AccessSpecifier AS,
   if (DiagnoseClassNameShadow(CurContext, NameInfo))
     return nullptr;
 
-  if (DiagnoseUnexpandedParameterPack(Name.StartLocation, TInfo,
-                                      UPPC_DeclarationType)) {
+  if (EllipsisLoc.isValid()) {
+    // The defining-type-id of an alias pack declaration is a pattern, so it
+    // must contain a pack for the declaration to expand over.
+    if (!TInfo->getType()->containsUnexpandedParameterPack()) {
+      Diag(Name.StartLocation, diag::err_alias_pack_without_parameter_packs)
+          << TInfo->getType() << TInfo->getTypeLoc().getSourceRange();
+      Invalid = true;
+      EllipsisLoc = SourceLocation();
+    }
+  } else if (DiagnoseUnexpandedParameterPack(Name.StartLocation, TInfo,
+                                             UPPC_DeclarationType)) {
     Invalid = true;
     TInfo = Context.getTrivialTypeSourceInfo(Context.IntTy,
                                              TInfo->getTypeLoc().getBeginLoc());
@@ -13901,9 +13913,9 @@ Decl *Sema::ActOnAliasDeclaration(Scope *S, AccessSpecifier AS,
 
   assert(Name.getKind() == UnqualifiedIdKind::IK_Identifier &&
          "name in alias declaration must be an identifier");
-  TypeAliasDecl *NewTD = TypeAliasDecl::Create(Context, CurContext, UsingLoc,
-                                               Name.StartLocation,
-                                               Name.Identifier, TInfo);
+  TypeAliasDecl *NewTD =
+      TypeAliasDecl::Create(Context, CurContext, UsingLoc, Name.StartLocation,
+                            Name.Identifier, TInfo, EllipsisLoc);
 
   NewTD->setAccess(AS);
 
@@ -14025,6 +14037,17 @@ Decl *Sema::ActOnAliasDeclaration(Scope *S, AccessSpecifier AS,
   PushOnScopeChains(NewND, S);
   ActOnDocumentableDecl(NewND);
   return NewND;
+}
+
+Decl *Sema::BuildAliasPackDeclaration(TypedefNameDecl *InstantiatedFrom,
+                                      ArrayRef<TypedefNameDecl *> Expansions) {
+  assert((isa<TypeAliasDecl, TypeAliasPackDecl>(InstantiatedFrom)) &&
+         "an alias pack can only be built from an alias declaration");
+
+  auto *D = TypeAliasPackDecl::Create(Context, CurContext, InstantiatedFrom,
+                                      Expansions);
+  D->setAccess(InstantiatedFrom->getAccess());
+  return D;
 }
 
 Decl *Sema::ActOnNamespaceAliasDef(Scope *S, SourceLocation NamespaceLoc,
@@ -18346,7 +18369,8 @@ DeclResult Sema::ActOnTemplatedFriendTag(
     TypeSourceInfo *TSI = nullptr;
     ElaboratedTypeKeyword Keyword =
         TypeWithKeyword::getKeywordForTagTypeKind(Kind);
-    QualType T = CheckTypenameType(Keyword, TagLoc, QualifierLoc, *Name,
+    QualType T = CheckTypenameType(Keyword, TagLoc, QualifierLoc,
+                                   /*EllipsisLoc=*/SourceLocation(), *Name,
                                    NameLoc, &TSI, /*DeducedTSTContext=*/true);
     if (T.isNull())
       return true;
@@ -18381,7 +18405,8 @@ DeclResult Sema::ActOnTemplatedFriendTag(
     GetTypeFromParser(ParsedType.get(), &TSI);
   } else {
     ElaboratedTypeKeyword ETK = TypeWithKeyword::getKeywordForTagTypeKind(Kind);
-    QualType T = Context.getDependentNameType(ETK, SS.getScopeRep(), Name);
+    QualType T = Context.getDependentNameType(ETK, SS.getScopeRep(),
+                                              /*IsPack=*/false, Name);
     TSI = Context.CreateTypeSourceInfo(T);
 
     DependentNameTypeLoc TL = TSI->getTypeLoc().castAs<DependentNameTypeLoc>();

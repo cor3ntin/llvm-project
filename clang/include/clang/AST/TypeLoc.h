@@ -2598,6 +2598,7 @@ struct ElaboratedLocInfo {
 // type is some sort of TypeDeclTypeLoc.
 struct DependentNameLocInfo : ElaboratedLocInfo {
   SourceLocation NameLoc;
+  SourceLocation EllipsisLoc;
 };
 
 class DependentNameTypeLoc : public ConcreteTypeLoc<UnqualTypeLoc,
@@ -2631,6 +2632,16 @@ public:
 
   void setNameLoc(SourceLocation Loc) {
     this->getLocalData()->NameLoc = Loc;
+  }
+
+  /// The location of the ellipsis of a dependent alias pack name, as in
+  /// `typename T::...name`.
+  SourceLocation getEllipsisLoc() const {
+    return this->getLocalData()->EllipsisLoc;
+  }
+
+  void setEllipsisLoc(SourceLocation Loc) {
+    this->getLocalData()->EllipsisLoc = Loc;
   }
 
   SourceRange getLocalSourceRange() const {

@@ -259,8 +259,8 @@ static ParsedType recoverFromTypeInKnownDependentBase(Sema &S,
 
   ASTContext &Context = S.Context;
   NestedNameSpecifier NNS(Context.getCanonicalTagType(RD).getTypePtr());
-  QualType T =
-      Context.getDependentNameType(ElaboratedTypeKeyword::None, NNS, &II);
+  QualType T = Context.getDependentNameType(ElaboratedTypeKeyword::None, NNS,
+                                            /*IsPack=*/false, &II);
 
   CXXScopeSpec SS;
   SS.MakeTrivial(Context, NNS, SourceRange(NameLoc));
@@ -316,7 +316,8 @@ ParsedType Sema::getTypeName(const IdentifierInfo &II, SourceLocation NameLoc,
           // FIXME: Defer the diagnostic after we build the type and use it.
           auto DB = DiagCompat(QualifiedLoc, diag_compat::implicit_typename)
                     << Context.getDependentNameType(ElaboratedTypeKeyword::None,
-                                                    SS->getScopeRep(), &II);
+                                                    SS->getScopeRep(),
+                                                    /*IsPack=*/false, &II);
           if (!getLangOpts().CPlusPlus20)
             DB << FixItHint::CreateInsertion(QualifiedLoc, "typename ");
         }
@@ -332,7 +333,8 @@ ParsedType Sema::getTypeName(const IdentifierInfo &II, SourceLocation NameLoc,
         QualType T = CheckTypenameType(
             IsImplicitTypename ? ElaboratedTypeKeyword::Typename
                                : ElaboratedTypeKeyword::None,
-            SourceLocation(), QualifierLoc, II, NameLoc);
+            SourceLocation(), QualifierLoc, /*EllipsisLoc=*/SourceLocation(),
+            II, NameLoc);
         return ParsedType::make(T);
       }
 
@@ -430,7 +432,8 @@ ParsedType Sema::getTypeName(const IdentifierInfo &II, SourceLocation NameLoc,
   case LookupResultKind::NotFoundInCurrentInstantiation:
     if (AllowImplicitTypename == ImplicitTypenameContext::Yes) {
       QualType T = Context.getDependentNameType(ElaboratedTypeKeyword::None,
-                                                SS->getScopeRep(), &II);
+                                                SS->getScopeRep(),
+                                                /*IsPack=*/false, &II);
       TypeLocBuilder TLB;
       DependentNameTypeLoc TL = TLB.push<DependentNameTypeLoc>(T);
       TL.setElaboratedKeywordLoc(SourceLocation());
@@ -669,8 +672,8 @@ ParsedType Sema::ActOnMSVCUnknownTypeName(const IdentifierInfo &II,
     return ParsedType();
   }
 
-  QualType T =
-      Context.getDependentNameType(ElaboratedTypeKeyword::None, NNS, &II);
+  QualType T = Context.getDependentNameType(ElaboratedTypeKeyword::None, NNS,
+                                            /*IsPack=*/false, &II);
 
   // Build type location information.  We synthesized the qualifier, so we have
   // to build a fake NestedNameSpecifierLoc.

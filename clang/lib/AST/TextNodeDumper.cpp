@@ -2787,11 +2787,18 @@ void TextNodeDumper::VisitNamespaceAliasDecl(const NamespaceAliasDecl *D) {
 void TextNodeDumper::VisitTypeAliasDecl(const TypeAliasDecl *D) {
   dumpName(D);
   dumpType(D->getUnderlyingType());
+  if (D->isPack())
+    OS << " pack";
 
   const TagDecl *TD = D->getUnderlyingType()->getAsTagDecl();
   if (TD && TD->getTypedefNameForAnonDecl()) {
     dumpLinkageAndVisibility(D);
   }
+}
+
+void TextNodeDumper::VisitTypeAliasPackDecl(const TypeAliasPackDecl *D) {
+  dumpName(D);
+  dumpType(D->getPattern());
 }
 
 void TextNodeDumper::VisitTypeAliasTemplateDecl(

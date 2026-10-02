@@ -1584,10 +1584,17 @@ Decl *TemplateDeclInstantiator::InstantiateTypedefNameDecl(TypedefNameDecl *D,
 
   // Create the new typedef
   TypedefNameDecl *Typedef;
-  if (IsTypeAlias)
+  if (IsTypeAlias) {
+    // While substituting one element of an alias pack, the result is a plain
+    // alias; it is only still a pack if we could not expand it.
+    SourceLocation EllipsisLoc;
+    if (!SemaRef.ArgPackSubstIndex)
+      if (auto *Alias = dyn_cast<TypeAliasDecl>(D))
+        EllipsisLoc = Alias->getEllipsisLoc();
     Typedef = TypeAliasDecl::Create(SemaRef.Context, Owner, D->getBeginLoc(),
-                                    D->getLocation(), D->getIdentifier(), TSI);
-  else
+                                    D->getLocation(), D->getIdentifier(), TSI,
+                                    EllipsisLoc);
+  } else
     Typedef = TypedefDecl::Create(SemaRef.Context, Owner, D->getBeginLoc(),
                                   D->getLocation(), D->getIdentifier(), TSI);
   if (Invalid)
@@ -1637,10 +1644,136 @@ Decl *TemplateDeclInstantiator::VisitTypedefDecl(TypedefDecl *D) {
 }
 
 Decl *TemplateDeclInstantiator::VisitTypeAliasDecl(TypeAliasDecl *D) {
-  Decl *Typedef = InstantiateTypedefNameDecl(D, /*IsTypeAlias=*/true);
+  Decl *Typedef = D->isPack()
+                      ? InstantiateAliasPackDecl(D)
+                      : InstantiateTypedefNameDecl(D,
+                                                   /*IsTypeAlias=*/true);
   if (Typedef)
     Owner->addDecl(Typedef);
   return Typedef;
+}
+
+/// Instantiate an alias pack declaration, substituting its pattern once per
+/// element of the packs it expands and collecting the results into a
+/// \c TypeAliasPackDecl.
+Decl *TemplateDeclInstantiator::InstantiateAliasPackDecl(TypeAliasDecl *D) {
+  assert(D->isPack() && "expected an alias pack");
+
+  bool Expand = true;
+  bool RetainExpansion = false;
+  UnsignedOrNone NumExpansions = std::nullopt;
+
+  // Returns true on error.
+  auto TryExpand = [&](TypeSourceInfo *Pattern, bool IsLateExpansionAttempt) {
+    SmallVector<UnexpandedParameterPack, 2> Unexpanded;
+    SemaRef.collectUnexpandedParameterPacks(Pattern->getTypeLoc(), Unexpanded);
+    if (IsLateExpansionAttempt) {
+      // Only retry when substitution has produced a pack that can now report
+      // its size.
+      if (llvm::none_of(Unexpanded, [](UnexpandedParameterPack P) {
+            return isa<const SubstBuiltinTemplatePackType *>(P.first);
+          })) {
+        Expand = false;
+        return false;
+      }
+    }
+    Expand = true;
+    RetainExpansion = false;
+    NumExpansions = std::nullopt;
+    return SemaRef.CheckParameterPacksForExpansion(
+        D->getEllipsisLoc(), D->getSourceRange(), Unexpanded, TemplateArgs,
+        /*FailOnPackProducingTemplates=*/false, Expand, RetainExpansion,
+        NumExpansions);
+  };
+
+  if (TryExpand(D->getTypeSourceInfo(), /*IsLateExpansionAttempt=*/false))
+    return nullptr;
+
+  // Packs produced by a builtin such as `__builtin_dedup_pack` only learn
+  // their size once the pattern has been substituted. Substitute once without
+  // selecting an element and try again; the elements are then expanded from
+  // the substituted pattern, whose template parameters are already replaced.
+  TypeSourceInfo *SubstitutedPattern = nullptr;
+  if (!Expand) {
+    TypeSourceInfo *Substituted;
+    {
+      Sema::ArgPackSubstIndexRAII SubstIndex(SemaRef, std::nullopt);
+      Substituted = SemaRef.SubstType(D->getTypeSourceInfo(), TemplateArgs,
+                                      D->getLocation(), D->getDeclName());
+    }
+    if (Substituted &&
+        Substituted->getType()->containsUnexpandedParameterPack()) {
+      if (TryExpand(Substituted, /*IsLateExpansionAttempt=*/true))
+        return nullptr;
+      if (Expand)
+        SubstitutedPattern = Substituted;
+    }
+  }
+
+  // An alias pack declaration cannot appear in a function template signature,
+  // so there is never a partially substituted pack to retain.
+  assert(!RetainExpansion &&
+         "should never need to retain an expansion for an alias pack");
+
+  if (!Expand) {
+    // We don't know the size of the pack yet. Substitute into the pattern and
+    // keep this a pack.
+    Sema::ArgPackSubstIndexRAII SubstIndex(SemaRef, std::nullopt);
+    return InstantiateTypedefNameDecl(D, /*IsTypeAlias=*/true);
+  }
+
+  SmallVector<TypedefNameDecl *, 8> Expansions;
+  MultiLevelTemplateArgumentList AlreadySubstituted;
+  for (unsigned I = 0; I != *NumExpansions; ++I) {
+    Sema::ArgPackSubstIndexRAII SubstIndex(SemaRef, I);
+    TypedefNameDecl *Elem;
+    if (SubstitutedPattern) {
+      TypeSourceInfo *TSI =
+          SemaRef.SubstType(SubstitutedPattern, AlreadySubstituted,
+                            D->getLocation(), D->getDeclName());
+      if (!TSI)
+        return nullptr;
+      Elem = TypeAliasDecl::Create(SemaRef.Context, Owner, D->getBeginLoc(),
+                                   D->getLocation(), D->getIdentifier(), TSI);
+      SemaRef.InstantiateAttrs(TemplateArgs, D, Elem);
+      Elem->setAccess(D->getAccess());
+      Elem->setReferenced(D->isReferenced());
+    } else {
+      Elem = cast_or_null<TypedefNameDecl>(
+          InstantiateTypedefNameDecl(D, /*IsTypeAlias=*/true));
+      if (!Elem)
+        return nullptr;
+    }
+    Expansions.push_back(Elem);
+  }
+
+  Decl *NewD = SemaRef.BuildAliasPackDeclaration(D, Expansions);
+  if (isDeclWithinFunction(D))
+    SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, NewD);
+  return NewD;
+}
+
+Decl *TemplateDeclInstantiator::VisitTypeAliasPackDecl(TypeAliasPackDecl *D) {
+  // The expansions are plain aliases that were created by expanding this pack;
+  // instantiate each of them into the new context. They cannot be looked up in
+  // the local instantiation scope, as a block-scope alias pack is
+  // reinstantiated in a scope of its own, for instance inside a nested
+  // expansion statement.
+  SmallVector<TypedefNameDecl *, 8> Expansions;
+  for (TypedefNameDecl *Old : D->expansions()) {
+    auto *New = cast_or_null<TypedefNameDecl>(
+        InstantiateTypedefNameDecl(Old, /*IsTypeAlias=*/true));
+    if (!New)
+      return nullptr;
+    Expansions.push_back(New);
+  }
+
+  Decl *NewD = SemaRef.BuildAliasPackDeclaration(
+      D->getInstantiatedFromAliasDecl(), Expansions);
+  Owner->addDecl(NewD);
+  if (isDeclWithinFunction(D))
+    SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, NewD);
+  return NewD;
 }
 
 Decl *TemplateDeclInstantiator::InstantiateTypeAliasTemplateDecl(
@@ -7157,6 +7290,12 @@ static bool isInstantiationOf(ASTContext &Ctx, NamedDecl *D, Decl *Other) {
 
   if (auto *UUD = dyn_cast<UnresolvedUsingValueDecl>(D))
     return isInstantiationOfUnresolvedUsingDecl(UUD, Other, Ctx);
+
+  // An alias pack declaration instantiates to a TypeAliasPackDecl, so the
+  // kinds do not match.
+  if (auto *Alias = dyn_cast<TypeAliasDecl>(D); Alias && Alias->isPack())
+    return isa<TypeAliasDecl, TypeAliasPackDecl>(Other) &&
+           Alias->getDeclName() == cast<NamedDecl>(Other)->getDeclName();
 
   if (D->getKind() != Other->getKind())
     return false;

@@ -1951,6 +1951,12 @@ bool Parser::TryAnnotateTypeOrScopeToken(
       TemplateKWPresent = true;
     }
 
+    // `typename T::...name` names a dependent alias pack.
+    SourceLocation EllipsisLoc;
+    if (getLangOpts().CPlusPlus26 && !TemplateKWPresent &&
+        Tok.is(tok::ellipsis) && NextToken().is(tok::identifier))
+      EllipsisLoc = ConsumeToken();
+
     TypeResult Ty;
     if (Tok.is(tok::identifier)) {
       if (TemplateKWPresent && NextToken().isNot(tok::less)) {
@@ -1958,9 +1964,9 @@ bool Parser::TryAnnotateTypeOrScopeToken(
              diag::missing_template_arg_list_after_template_kw);
         return true;
       }
-      Ty = Actions.ActOnTypenameType(getCurScope(), TypenameLoc, SS,
-                                     *Tok.getIdentifierInfo(),
-                                     Tok.getLocation());
+      Ty = Actions.ActOnTypenameType(
+          getCurScope(), TypenameLoc, SS, *Tok.getIdentifierInfo(),
+          Tok.getLocation(), ImplicitTypenameContext::No, EllipsisLoc);
     } else if (Tok.is(tok::annot_template_id)) {
       TemplateIdAnnotation *TemplateId = takeTemplateIdAnnotation(Tok);
       if (!TemplateId->mightBeType()) {

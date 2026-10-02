@@ -2174,6 +2174,8 @@ DEF_TRAVERSE_DECL(TypeAliasDecl, {
   // source.
 })
 
+DEF_TRAVERSE_DECL(TypeAliasPackDecl, {})
+
 DEF_TRAVERSE_DECL(TypeAliasTemplateDecl, {
   TRY_TO(TraverseDecl(D->getTemplatedDecl()));
   TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters()));

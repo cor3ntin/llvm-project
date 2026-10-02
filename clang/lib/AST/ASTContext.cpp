@@ -5404,7 +5404,7 @@ QualType ASTContext::getTypeDeclType(const TypeDecl *Decl) const {
   if (const auto *TD = dyn_cast<TagDecl>(Decl))
     return getCanonicalTagType(TD);
   if (const auto *TD = dyn_cast<TypedefNameDecl>(Decl);
-      isa_and_nonnull<TypedefDecl, TypeAliasDecl>(TD))
+      isa_and_nonnull<TypedefDecl, TypeAliasDecl, TypeAliasPackDecl>(TD))
     return getTypedefType(ElaboratedTypeKeyword::None,
                           /*Qualifier=*/std::nullopt, TD);
   if (const auto *Using = dyn_cast<UnresolvedUsingTypenameDecl>(Decl))
@@ -6288,10 +6288,10 @@ ASTContext::getMacroQualifiedType(QualType UnderlyingTy,
 }
 
 QualType ASTContext::getDependentNameType(ElaboratedTypeKeyword Keyword,
-                                          NestedNameSpecifier NNS,
+                                          NestedNameSpecifier NNS, bool IsPack,
                                           const IdentifierInfo *Name) const {
   llvm::FoldingSetNodeID ID;
-  DependentNameType::Profile(ID, Keyword, NNS, Name);
+  DependentNameType::Profile(ID, Keyword, NNS, IsPack, Name);
 
   llvm::FoldingSetInsertToken Token;
   if (DependentNameType *T = DependentNameTypes.lookup(ID, Token))
@@ -6303,7 +6303,7 @@ QualType ASTContext::getDependentNameType(ElaboratedTypeKeyword Keyword,
 
   QualType Canon;
   if (CanonKeyword != Keyword || CanonNNS != NNS) {
-    Canon = getDependentNameType(CanonKeyword, CanonNNS, Name);
+    Canon = getDependentNameType(CanonKeyword, CanonNNS, IsPack, Name);
     [[maybe_unused]] DependentNameType *T =
         DependentNameTypes.lookup(ID, Token);
     assert(!T && "broken canonicalization");
@@ -6311,7 +6311,7 @@ QualType ASTContext::getDependentNameType(ElaboratedTypeKeyword Keyword,
   }
 
   DependentNameType *T = new (*this, alignof(DependentNameType))
-      DependentNameType(Keyword, NNS, Name, Canon);
+      DependentNameType(Keyword, NNS, IsPack, Name, Canon);
   Types.push_back(T);
   DependentNameTypes.insert(T, Token);
   return QualType(T, 0);
@@ -14763,7 +14763,8 @@ static QualType getCommonNonSugarTypeNode(const ASTContext &Ctx, const Type *X,
     assert(NX->getIdentifier() == NY->getIdentifier());
     return Ctx.getDependentNameType(
         getCommonTypeKeyword(NX, NY, /*IsSame=*/true),
-        getCommonQualifier(Ctx, NX, NY, /*IsSame=*/true), NX->getIdentifier());
+        getCommonQualifier(Ctx, NX, NY, /*IsSame=*/true), NX->isPack(),
+        NX->getIdentifier());
   }
   case Type::OverflowBehavior: {
     const auto *NX = cast<OverflowBehaviorType>(X),

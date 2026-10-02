@@ -51,12 +51,20 @@ class CollectUnexpandedParameterPacksVisitor
         auto *FTD = FD ? FD->getDescribedFunctionTemplate() : nullptr;
         if (FTD && FTD->getTemplateParameters()->getDepth() >= DepthLimit)
           return;
+      } else if (isa<TypeAliasDecl, TypeAliasPackDecl>(ND)) {
+        // Alias packs are not template parameters, so they have no depth to
+        // compare against the limit.
       } else if (ND->isTemplateParameterPack() &&
                  getDepthAndIndex(ND).first >= DepthLimit) {
         return;
       }
 
       Unexpanded.push_back({ND, Loc});
+    }
+
+    void addUnexpanded(const DependentNameType *T,
+                       SourceLocation Loc = SourceLocation()) {
+      Unexpanded.push_back({T, Loc});
     }
 
     void addUnexpanded(const TemplateTypeParmType *T,
@@ -130,6 +138,42 @@ class CollectUnexpandedParameterPacksVisitor
       if (T->isParameterPack())
         addUnexpanded(T);
 
+      return true;
+    }
+
+    /// Record references to alias packs, either still unexpanded
+    /// (\c TypeAliasDecl) or already expanded (\c TypeAliasPackDecl).
+    static TypedefNameDecl *getReferencedAliasPack(TypedefNameDecl *D) {
+      if (auto *Alias = dyn_cast<TypeAliasDecl>(D); Alias && Alias->isPack())
+        return Alias;
+      if (isa<TypeAliasPackDecl>(D))
+        return D;
+      return nullptr;
+    }
+
+    bool VisitTypedefTypeLoc(TypedefTypeLoc TL) override {
+      if (auto *D = getReferencedAliasPack(TL.getTypePtr()->getDecl()))
+        addUnexpanded(D, TL.getNameLoc());
+      return true;
+    }
+
+    bool VisitTypedefType(TypedefType *T) override {
+      if (auto *D = getReferencedAliasPack(T->getDecl()))
+        addUnexpanded(D);
+      return true;
+    }
+
+    /// Record occurrences of `T::...name`, which names an alias pack whose
+    /// declaration is not known yet.
+    bool VisitDependentNameTypeLoc(DependentNameTypeLoc TL) override {
+      if (TL.getTypePtr()->isPack())
+        addUnexpanded(TL.getTypePtr(), TL.getEllipsisLoc());
+      return true;
+    }
+
+    bool VisitDependentNameType(DependentNameType *T) override {
+      if (T->isPack())
+        addUnexpanded(T);
       return true;
     }
 
@@ -529,6 +573,9 @@ Sema::DiagnoseUnexpandedParameterPacks(SourceLocation Loc,
       Name = TTP->getIdentifier();
     else if (NamedDecl *ND = dyn_cast<NamedDecl *>(Unexpanded[I].first))
       Name = ND->getIdentifier();
+    else if (const auto *DNT =
+                 dyn_cast<const DependentNameType *>(Unexpanded[I].first))
+      Name = const_cast<IdentifierInfo *>(DNT->getIdentifier());
 
     if (Name && NamesKnown.insert(Name).second)
       Names.push_back(Name);
@@ -898,6 +945,76 @@ ExprResult Sema::CheckPackExpansion(Expr *Pattern, SourceLocation EllipsisLoc,
   return new (Context) PackExpansionExpr(Pattern, EllipsisLoc, NumExpansions);
 }
 
+/// Find the alias pack named by a type, looking through the sugar that a
+/// substituted alias pack reference can be wrapped in.
+static TypedefNameDecl *getReferencedAliasPackDecl(const Type *T) {
+  if (const auto *TT = T->getAs<TypedefType>()) {
+    if (auto *Alias = dyn_cast<TypeAliasPackDecl>(TT->getDecl()))
+      return Alias;
+    if (auto *Alias = dyn_cast<TypeAliasDecl>(TT->getDecl());
+        Alias && Alias->isPack())
+      return Alias;
+  }
+  return nullptr;
+}
+
+/// Map an alias pack declaration written in a template to the
+/// \c TypeAliasPackDecl it was instantiated as, so that its size is known.
+///
+/// Returns null if the enclosing template has not been instantiated yet, in
+/// which case the pack cannot be expanded.
+static TypeAliasPackDecl *
+findInstantiatedAliasPack(Sema &S, TypedefNameDecl *D,
+                          const MultiLevelTemplateArgumentList &TemplateArgs) {
+  if (auto *Pack = dyn_cast<TypeAliasPackDecl>(D))
+    return Pack;
+  if (!S.CurrentInstantiationScope)
+    return nullptr;
+  Sema::ArgPackSubstIndexRAII SubstIndex(S, std::nullopt);
+  // A block-scope alias pack is only reachable through the local instantiation
+  // scope it was created in. Nested template regions, such as an expansion
+  // statement inside another one, are instantiated in their own scope, where
+  // there may be no entry for it yet.
+  if (D->getDeclContext()->isFunctionOrMethod()) {
+    auto *Found = S.CurrentInstantiationScope->getInstantiationOfIfExists(D);
+    if (!Found)
+      return nullptr;
+    return dyn_cast_or_null<TypeAliasPackDecl>(
+        dyn_cast_if_present<Decl *>(*Found));
+  }
+  return dyn_cast_or_null<TypeAliasPackDecl>(
+      S.FindInstantiatedDecl(D->getLocation(), D, TemplateArgs));
+}
+
+/// A `T::...name` pack reference does not name its alias pack declaration
+/// until the qualifier has been substituted. Substitute it here so that the
+/// caller can tell how many elements the pack has.
+///
+/// Returns the alias pack this resolves to, or null if it is not known yet.
+static TypeAliasPackDecl *
+resolveDependentAliasPack(Sema &S, const DependentNameType *T,
+                          const MultiLevelTemplateArgumentList &TemplateArgs,
+                          SourceLocation Loc) {
+  if (!S.CurrentInstantiationScope)
+    return nullptr;
+
+  // Substitute without selecting an expansion, so that we see the whole pack.
+  Sema::ArgPackSubstIndexRAII SubstIndex(S, std::nullopt);
+  TypeSourceInfo *Pattern =
+      S.Context.getTrivialTypeSourceInfo(QualType(T, 0), Loc);
+  TypeSourceInfo *Substituted =
+      S.SubstType(Pattern->getTypeLoc(), TemplateArgs, Loc, DeclarationName());
+  if (!Substituted)
+    return nullptr;
+
+  TypedefNameDecl *Pack =
+      getReferencedAliasPackDecl(Substituted->getType().getTypePtr());
+  if (!Pack)
+    return nullptr;
+
+  return findInstantiatedAliasPack(S, Pack, TemplateArgs);
+}
+
 bool Sema::CheckParameterPacksForExpansion(
     SourceLocation EllipsisLoc, SourceRange PatternRange,
     ArrayRef<UnexpandedParameterPack> Unexpanded,
@@ -919,6 +1036,31 @@ bool Sema::CheckParameterPacksForExpansion(
     bool IsVarDeclPack = false;
     FunctionParmPackExpr *BindingPack = nullptr;
     std::optional<unsigned> NumPrecomputedArguments;
+
+    // An alias pack only knows its size once the template that declares it
+    // has been instantiated. Resolve the reference to the instantiated
+    // TypeAliasPackDecl, which is handled below.
+    if (auto *DNT = dyn_cast<const DependentNameType *>(ParmPack.first)) {
+      // `T::...name` does not even name its declaration until the qualifier
+      // has been substituted.
+      if (TypeAliasPackDecl *Pack = resolveDependentAliasPack(
+              *this, DNT, TemplateArgs, ParmPack.second)) {
+        ParmPack.first = Pack;
+      } else {
+        ShouldExpand = false;
+        continue;
+      }
+    } else if (auto *Alias = dyn_cast_if_present<TypeAliasDecl>(
+                   dyn_cast<NamedDecl *>(ParmPack.first));
+               Alias && Alias->isPack()) {
+      if (TypeAliasPackDecl *Pack =
+              findInstantiatedAliasPack(*this, Alias, TemplateArgs)) {
+        ParmPack.first = Pack;
+      } else {
+        ShouldExpand = false;
+        continue;
+      }
+    }
 
     if (auto *TTP = dyn_cast<const TemplateTypeParmType *>(ParmPack.first)) {
       Depth = TTP->getDepth();
@@ -944,6 +1086,11 @@ bool Sema::CheckParameterPacksForExpansion(
                    ParmPack.first)) {
       Name = nullptr;
       NumPrecomputedArguments = S->getNumArgs();
+    } else if (auto *Alias = dyn_cast_if_present<TypeAliasPackDecl>(
+                   dyn_cast<NamedDecl *>(ParmPack.first))) {
+      // An alias pack that has been expanded already knows its size.
+      Name = Alias->getIdentifier();
+      NumPrecomputedArguments = Alias->expansions().size();
     } else {
       NamedDecl *ND = cast<NamedDecl *>(ParmPack.first);
       if (isa<VarDecl>(ND))
@@ -1025,7 +1172,11 @@ bool Sema::CheckParameterPacksForExpansion(
     //   Template argument deduction can extend the sequence of template
     //   arguments corresponding to a template parameter pack, even when the
     //   sequence contains explicitly specified template arguments.
-    if (!IsVarDeclPack && CurrentInstantiationScope) {
+    //
+    // This only concerns template parameter packs, and Depth/Index are
+    // meaningless for packs whose size we already know.
+    if (!IsVarDeclPack && !NumPrecomputedArguments &&
+        CurrentInstantiationScope) {
       if (NamedDecl *PartialPack =
               CurrentInstantiationScope->getPartiallySubstitutedPack()) {
         unsigned PartialDepth, PartialIndex;
@@ -1146,6 +1297,20 @@ UnsignedOrNone Sema::getNumArgumentsInExpansionFromUnexpanded(
              "inconsistent pack sizes");
       Result = PST->getNumArgs();
       continue;
+    } else if (dyn_cast<const DependentNameType *>(Unexpanded[I].first)) {
+      // The alias pack this names is not known yet.
+      return std::nullopt;
+    } else if (auto *Alias = dyn_cast_if_present<TypeAliasPackDecl>(
+                   dyn_cast<NamedDecl *>(Unexpanded[I].first))) {
+      unsigned Size = Alias->expansions().size();
+      assert((!Result || *Result == Size) && "inconsistent pack sizes");
+      Result = Size;
+      continue;
+    } else if (auto *Alias = dyn_cast_if_present<TypeAliasDecl>(
+                   dyn_cast<NamedDecl *>(Unexpanded[I].first));
+               Alias && Alias->isPack()) {
+      // Not expanded yet; we're not ready to expand this pack.
+      return std::nullopt;
     } else {
       NamedDecl *ND = cast<NamedDecl *>(Unexpanded[I].first);
       if (isa<VarDecl>(ND)) {
@@ -1368,7 +1533,17 @@ ExprResult Sema::ActOnSizeofParameterPackExpr(Scope *S,
     return ExprError();
   }
 
-  if (!ParameterPack || !ParameterPack->isParameterPack()) {
+  auto IsPack = [](const NamedDecl *D) {
+    if (!D)
+      return false;
+    if (D->isParameterPack())
+      return true;
+    if (const auto *Alias = dyn_cast<TypeAliasDecl>(D))
+      return Alias->isPack();
+    return isa<TypeAliasPackDecl>(D);
+  };
+
+  if (!IsPack(ParameterPack)) {
     Diag(NameLoc, diag::err_expected_name_of_pack) << &Name;
     return ExprError();
   }
@@ -1590,6 +1765,9 @@ UnsignedOrNone Sema::getFullyPackExpandedSize(TemplateArgument Arg) {
   case TemplateArgument::Type:
     if (auto *Subst = Arg.getAsType()->getAs<SubstTemplateTypeParmPackType>())
       Pack = Subst->getArgumentPack();
+    else if (auto *Alias = dyn_cast_if_present<TypeAliasPackDecl>(
+                 getReferencedAliasPackDecl(Arg.getAsType().getTypePtr())))
+      return Alias->expansions().size();
     else
       return std::nullopt;
     break;
