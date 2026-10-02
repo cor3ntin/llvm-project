@@ -6328,6 +6328,8 @@ def err_unexpanded_parameter_pack : Error<
 
 def err_pack_expansion_without_parameter_packs : Error<
   "pack expansion does not contain any unexpanded parameter packs">;
+def err_alias_pack_without_parameter_packs : Error<
+  "%0 does not contain an unexpanded pack">;
 def err_pack_expansion_length_conflict : Error<
   "pack expansion contains parameter packs %0 and %1 that have different "
   "lengths (%2 vs. %select{|at least }3%4)">;

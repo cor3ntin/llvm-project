@@ -1209,6 +1209,7 @@ public:
   QualType RebuildDependentNameType(ElaboratedTypeKeyword Keyword,
                                     SourceLocation KeywordLoc,
                                     NestedNameSpecifierLoc QualifierLoc,
+                                    bool IsPack, SourceLocation EllipsisLoc,
                                     const IdentifierInfo *Id,
                                     SourceLocation IdLoc,
                                     bool DeducedTSTContext) {
@@ -1218,14 +1219,14 @@ public:
     if (QualifierLoc.getNestedNameSpecifier().isDependent()) {
       // If the name is still dependent, just build a new dependent name type.
       if (!SemaRef.computeDeclContext(SS))
-        return SemaRef.Context.getDependentNameType(Keyword,
-                                          QualifierLoc.getNestedNameSpecifier(),
-                                                    Id);
+        return SemaRef.Context.getDependentNameType(
+            Keyword, QualifierLoc.getNestedNameSpecifier(), IsPack, Id);
     }
 
     if (Keyword == ElaboratedTypeKeyword::None ||
         Keyword == ElaboratedTypeKeyword::Typename) {
       return SemaRef.CheckTypenameType(Keyword, KeywordLoc, QualifierLoc,
+                                       IsPack ? EllipsisLoc : SourceLocation(),
                                        *Id, IdLoc, DeducedTSTContext);
     }
 
@@ -7214,6 +7215,15 @@ QualType TreeTransform<Derived>::TransformTypedefType(TypeLocBuilder &TLB,
       getDerived().TransformDecl(TL.getNameLoc(), T->getDecl()));
   if (!Typedef)
     return QualType();
+
+  // A reference to an alias pack resolves to one of its expansions while we
+  // are substituting the pattern of the enclosing pack expansion. The
+  // expansions belong to the same instantiation as the pack, so they must not
+  // be transformed again.
+  if (auto *Pack = dyn_cast<TypeAliasPackDecl>(Typedef);
+      Pack && SemaRef.ArgPackSubstIndex)
+    Typedef = Pack->expansions()[*SemaRef.ArgPackSubstIndex];
+
   Changed |= Typedef != T->getDecl();
 
   // FIXME: Transform the UnderlyingType if different from decl.
@@ -8183,15 +8193,27 @@ QualType TreeTransform<Derived>::TransformDependentNameType(
            "must be transformed by TransformNestedNameSpecifierLoc");
   }
 
-  QualType Result
-    = getDerived().RebuildDependentNameType(T->getKeyword(),
-                                            TL.getElaboratedKeywordLoc(),
-                                            QualifierLoc,
-                                            T->getIdentifier(),
-                                            TL.getNameLoc(),
-                                            DeducedTSTContext);
+  // A dependent alias pack name stays a pack as long as we are not selecting
+  // one of its expansions.
+  bool IsPack = T->isPack() && !SemaRef.ArgPackSubstIndex;
+
+  QualType Result = getDerived().RebuildDependentNameType(
+      T->getKeyword(), TL.getElaboratedKeywordLoc(), QualifierLoc, IsPack,
+      TL.getEllipsisLoc(), T->getIdentifier(), TL.getNameLoc(),
+      DeducedTSTContext);
   if (Result.isNull())
     return QualType();
+
+  // The name resolved to an alias pack and we are substituting one of its
+  // expansions; select it.
+  if (T->isPack() && SemaRef.ArgPackSubstIndex) {
+    if (const auto *TT = Result->getAs<TypedefType>()) {
+      if (auto *Pack = dyn_cast<TypeAliasPackDecl>(TT->getDecl())) {
+        Result = SemaRef.Context.getTypeDeclType(
+            Pack->expansions()[*SemaRef.ArgPackSubstIndex]);
+      }
+    }
+  }
 
   if (isa<TagType>(Result)) {
     auto NewTL = TLB.push<TagTypeLoc>(Result);
@@ -8214,6 +8236,7 @@ QualType TreeTransform<Derived>::TransformDependentNameType(
     NewTL.setElaboratedKeywordLoc(TL.getElaboratedKeywordLoc());
     NewTL.setQualifierLoc(QualifierLoc);
     NewTL.setNameLoc(TL.getNameLoc());
+    NewTL.setEllipsisLoc(TL.getEllipsisLoc());
   }
   return Result;
 }
@@ -17149,6 +17172,10 @@ TreeTransform<Derived>::TransformSizeOfPackExpr(SizeOfPackExpr *E) {
       if (auto *TTPD = dyn_cast<TemplateTypeParmDecl>(Pack)) {
         ArgStorage = getSema().Context.getPackExpansionType(
             getSema().Context.getTypeDeclType(TTPD), std::nullopt);
+      } else if (isa<TypeAliasDecl, TypeAliasPackDecl>(Pack)) {
+        ArgStorage = getSema().Context.getPackExpansionType(
+            getSema().Context.getTypeDeclType(cast<TypeDecl>(Pack)),
+            std::nullopt);
       } else if (auto *TTPD = dyn_cast<TemplateTemplateParmDecl>(Pack)) {
         ArgStorage = TemplateArgument(TemplateName(TTPD), std::nullopt);
       } else {

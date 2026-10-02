@@ -80,8 +80,8 @@ ParsedType Sema::getConstructorName(const IdentifierInfo &II,
   // friend declaration or an inherited constructor declaration), form an
   // unresolved "typename" type.
   if (CurClass->isDependentContext() && !EnteringContext && SS.getScopeRep()) {
-    QualType T = Context.getDependentNameType(ElaboratedTypeKeyword::None,
-                                              SS.getScopeRep(), &II);
+    QualType T = Context.getDependentNameType(
+        ElaboratedTypeKeyword::None, SS.getScopeRep(), /*IsPack=*/false, &II);
     return ParsedType::make(T);
   }
 
@@ -353,7 +353,8 @@ ParsedType Sema::getDestructorName(const IdentifierInfo &II,
     TypeSourceInfo *TSI = nullptr;
     QualType T =
         CheckTypenameType(ElaboratedTypeKeyword::None, SourceLocation(),
-                          SS.getWithLocInContext(Context), II, NameLoc, &TSI,
+                          SS.getWithLocInContext(Context),
+                          /*EllipsisLoc=*/SourceLocation(), II, NameLoc, &TSI,
                           /*DeducedTSTContext=*/true);
     if (T.isNull())
       return ParsedType();
@@ -8020,7 +8021,8 @@ concepts::Requirement *Sema::ActOnTypeRequirement(
   if (TypeName) {
     QualType T =
         CheckTypenameType(ElaboratedTypeKeyword::Typename, TypenameKWLoc,
-                          SS.getWithLocInContext(Context), *TypeName, NameLoc,
+                          SS.getWithLocInContext(Context),
+                          /*EllipsisLoc=*/SourceLocation(), *TypeName, NameLoc,
                           &TSI, /*DeducedTSTContext=*/false);
     if (T.isNull())
       return nullptr;

@@ -747,6 +747,7 @@ enum class TemplateSubstitutionKind : char {
     bool InstantiateFriendPackExpansion(FriendDecl *D);
 
     Decl *InstantiateTypedefNameDecl(TypedefNameDecl *D, bool IsTypeAlias);
+    Decl *InstantiateAliasPackDecl(TypeAliasDecl *D);
     Decl *InstantiateTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     ClassTemplatePartialSpecializationDecl *
     InstantiateClassTemplatePartialSpecialization(

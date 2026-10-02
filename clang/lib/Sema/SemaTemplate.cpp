@@ -4139,7 +4139,8 @@ TypeResult Sema::ActOnTemplateIdType(
     if (!LookupCtx && isDependentScopeSpecifier(SS)) {
       // C++2a relaxes some of those restrictions in [temp.res]p5.
       QualType DNT = Context.getDependentNameType(ElaboratedTypeKeyword::None,
-                                                  SS.getScopeRep(), TemplateII);
+                                                  SS.getScopeRep(),
+                                                  /*IsPack=*/false, TemplateII);
       NestedNameSpecifier NNS(DNT.getTypePtr());
       if (AllowImplicitTypename == ImplicitTypenameContext::Yes) {
         auto DB = DiagCompat(SS.getBeginLoc(), diag_compat::implicit_typename)
@@ -5395,7 +5396,8 @@ bool Sema::CheckTemplateTypeArgument(
         // Recover by synthesizing a type using the location information that we
         // already have.
         ArgType = Context.getDependentNameType(ElaboratedTypeKeyword::None,
-                                               SS.getScopeRep(), II);
+                                               SS.getScopeRep(),
+                                               /*IsPack=*/false, II);
         TypeLocBuilder TLB;
         DependentNameTypeLoc TL = TLB.push<DependentNameTypeLoc>(ArgType);
         TL.setElaboratedKeywordLoc(SourceLocation(/*synthesized*/));
@@ -11534,7 +11536,8 @@ TypeResult Sema::ActOnDependentTag(Scope *S, unsigned TagSpec, TagUseKind TUK,
 
   // Create the resulting type.
   ElaboratedTypeKeyword Kwd = TypeWithKeyword::getKeywordForTagTypeKind(Kind);
-  QualType Result = Context.getDependentNameType(Kwd, NNS, Name);
+  QualType Result =
+      Context.getDependentNameType(Kwd, NNS, /*IsPack=*/false, Name);
 
   // Create type-source location information for this type.
   TypeLocBuilder TLB;
@@ -11549,7 +11552,8 @@ TypeResult Sema::ActOnTypenameType(Scope *S, SourceLocation TypenameLoc,
                                    const CXXScopeSpec &SS,
                                    const IdentifierInfo &II,
                                    SourceLocation IdLoc,
-                                   ImplicitTypenameContext IsImplicitTypename) {
+                                   ImplicitTypenameContext IsImplicitTypename,
+                                   SourceLocation EllipsisLoc) {
   if (SS.isInvalid())
     return true;
 
@@ -11562,7 +11566,7 @@ TypeResult Sema::ActOnTypenameType(Scope *S, SourceLocation TypenameLoc,
   QualType T =
       CheckTypenameType(TypenameLoc.isValid() ? ElaboratedTypeKeyword::Typename
                                               : ElaboratedTypeKeyword::None,
-                        TypenameLoc, QualifierLoc, II, IdLoc, &TSI,
+                        TypenameLoc, QualifierLoc, EllipsisLoc, II, IdLoc, &TSI,
                         /*DeducedTSTContext=*/true);
   if (T.isNull())
     return true;
@@ -11666,16 +11670,14 @@ static bool isEnableIf(NestedNameSpecifierLoc NNS, const IdentifierInfo &II,
   return true;
 }
 
-QualType
-Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
-                        SourceLocation KeywordLoc,
-                        NestedNameSpecifierLoc QualifierLoc,
-                        const IdentifierInfo &II,
-                        SourceLocation IILoc,
-                        TypeSourceInfo **TSI,
-                        bool DeducedTSTContext) {
-  QualType T = CheckTypenameType(Keyword, KeywordLoc, QualifierLoc, II, IILoc,
-                                 DeducedTSTContext);
+QualType Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
+                                 SourceLocation KeywordLoc,
+                                 NestedNameSpecifierLoc QualifierLoc,
+                                 SourceLocation EllipsisLoc,
+                                 const IdentifierInfo &II, SourceLocation IILoc,
+                                 TypeSourceInfo **TSI, bool DeducedTSTContext) {
+  QualType T = CheckTypenameType(Keyword, KeywordLoc, QualifierLoc, EllipsisLoc,
+                                 II, IILoc, DeducedTSTContext);
   if (T.isNull())
     return QualType();
 
@@ -11685,6 +11687,7 @@ Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
     TL.setElaboratedKeywordLoc(KeywordLoc);
     TL.setQualifierLoc(QualifierLoc);
     TL.setNameLoc(IILoc);
+    TL.setEllipsisLoc(EllipsisLoc);
   } else if (isa<DeducedTemplateSpecializationType>(T)) {
     auto TL = TLB.push<DeducedTemplateSpecializationTypeLoc>(T);
     TL.setElaboratedKeywordLoc(KeywordLoc);
@@ -11711,12 +11714,12 @@ Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
 
 /// Build the type that describes a C++ typename specifier,
 /// e.g., "typename T::type".
-QualType
-Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
-                        SourceLocation KeywordLoc,
-                        NestedNameSpecifierLoc QualifierLoc,
-                        const IdentifierInfo &II,
-                        SourceLocation IILoc, bool DeducedTSTContext) {
+QualType Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
+                                 SourceLocation KeywordLoc,
+                                 NestedNameSpecifierLoc QualifierLoc,
+                                 SourceLocation EllipsisLoc,
+                                 const IdentifierInfo &II, SourceLocation IILoc,
+                                 bool DeducedTSTContext) {
   assert((Keyword != ElaboratedTypeKeyword::None) == KeywordLoc.isValid());
 
   CXXScopeSpec SS;
@@ -11731,7 +11734,7 @@ Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
       assert(QualifierLoc.getNestedNameSpecifier().isDependent());
       return Context.getDependentNameType(Keyword,
                                           QualifierLoc.getNestedNameSpecifier(),
-                                          &II);
+                                          EllipsisLoc.isValid(), &II);
     }
 
     // If the nested-name-specifier refers to the current instantiation,
@@ -11807,7 +11810,7 @@ Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
     // Okay, it's a member of an unknown instantiation.
     return Context.getDependentNameType(Keyword,
                                         QualifierLoc.getNestedNameSpecifier(),
-                                        &II);
+                                        EllipsisLoc.isValid(), &II);
 
   case LookupResultKind::Found:
     // FXIME: Missing support for UsingShadowDecl on this path?

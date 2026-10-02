@@ -545,7 +545,8 @@ bool Sema::BuildCXXNestedNameSpecifier(Scope *S, NestedNameSpecInfo &IdInfo,
     TypeLocBuilder TLB;
 
     QualType DTN = Context.getDependentNameType(
-        ElaboratedTypeKeyword::None, SS.getScopeRep(), IdInfo.Identifier);
+        ElaboratedTypeKeyword::None, SS.getScopeRep(),
+        IdInfo.DependentPackEllipsisLoc.isValid(), IdInfo.Identifier);
     auto DTNL = TLB.push<DependentNameTypeLoc>(DTN);
     DTNL.setElaboratedKeywordLoc(SourceLocation());
     DTNL.setNameLoc(IdInfo.IdentifierLoc);
@@ -764,7 +765,8 @@ bool Sema::BuildCXXNestedNameSpecifier(Scope *S, NestedNameSpecInfo &IdInfo,
 
         // Form a DependentNameType.
         QualType DTN = Context.getDependentNameType(
-            ElaboratedTypeKeyword::None, SS.getScopeRep(), IdInfo.Identifier);
+            ElaboratedTypeKeyword::None, SS.getScopeRep(),
+            IdInfo.DependentPackEllipsisLoc.isValid(), IdInfo.Identifier);
         auto DTNL = TLB.push<DependentNameTypeLoc>(DTN);
         DTNL.setElaboratedKeywordLoc(SourceLocation());
         DTNL.setNameLoc(IdInfo.IdentifierLoc);

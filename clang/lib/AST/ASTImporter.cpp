@@ -527,6 +527,7 @@ namespace clang {
     ExpectedDecl VisitTypedefNameDecl(TypedefNameDecl *D, bool IsAlias);
     ExpectedDecl VisitTypedefDecl(TypedefDecl *D);
     ExpectedDecl VisitTypeAliasDecl(TypeAliasDecl *D);
+    ExpectedDecl VisitTypeAliasPackDecl(TypeAliasPackDecl *D);
     ExpectedDecl VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     ExpectedDecl VisitLabelDecl(LabelDecl *D);
     ExpectedDecl VisitEnumDecl(EnumDecl *D);
@@ -1963,8 +1964,8 @@ ASTNodeImporter::VisitDependentNameType(const DependentNameType *T) {
     return ToQualifierOrErr.takeError();
 
   IdentifierInfo *Name = Importer.Import(T->getIdentifier());
-  return Importer.getToContext().getDependentNameType(T->getKeyword(),
-                                                      *ToQualifierOrErr, Name);
+  return Importer.getToContext().getDependentNameType(
+      T->getKeyword(), *ToQualifierOrErr, T->isPack(), Name);
 }
 
 ExpectedType
@@ -3201,6 +3202,35 @@ ExpectedDecl ASTNodeImporter::VisitTypedefDecl(TypedefDecl *D) {
 
 ExpectedDecl ASTNodeImporter::VisitTypeAliasDecl(TypeAliasDecl *D) {
   return VisitTypedefNameDecl(D, /*IsAlias=*/true);
+}
+
+ExpectedDecl ASTNodeImporter::VisitTypeAliasPackDecl(TypeAliasPackDecl *D) {
+  DeclContext *DC, *LexicalDC;
+  DeclarationName Name;
+  SourceLocation Loc;
+  NamedDecl *ToD = nullptr;
+  if (Error Err = ImportDeclParts(D, DC, LexicalDC, Name, ToD, Loc))
+    return std::move(Err);
+  if (ToD)
+    return ToD;
+
+  auto ToInstantiatedFromOrErr =
+      Importer.Import(D->getInstantiatedFromAliasDecl());
+  if (!ToInstantiatedFromOrErr)
+    return ToInstantiatedFromOrErr.takeError();
+  SmallVector<TypedefNameDecl *, 4> Expansions(D->expansions().size());
+  if (Error Err = ImportArrayChecked(D->expansions(), Expansions.begin()))
+    return std::move(Err);
+
+  TypeAliasPackDecl *ToAliasPack;
+  if (GetImportedOrCreateDecl(ToAliasPack, D, Importer.getToContext(), DC,
+                              cast<TypedefNameDecl>(*ToInstantiatedFromOrErr),
+                              Expansions))
+    return ToAliasPack;
+
+  addDeclToContexts(D, ToAliasPack);
+
+  return ToAliasPack;
 }
 
 ExpectedDecl

@@ -3824,16 +3824,20 @@ class TypeAliasDecl : public TypedefNameDecl {
   /// The template for which this is the pattern, if any.
   TypeAliasTemplateDecl *Template;
 
+  /// The location of the ellipsis of an alias pack declaration, if any.
+  SourceLocation EllipsisLoc;
+
   TypeAliasDecl(ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
                 SourceLocation IdLoc, const IdentifierInfo *Id,
-                TypeSourceInfo *TInfo)
+                TypeSourceInfo *TInfo, SourceLocation EllipsisLoc)
       : TypedefNameDecl(TypeAlias, C, DC, StartLoc, IdLoc, Id, TInfo),
-        Template(nullptr) {}
+        Template(nullptr), EllipsisLoc(EllipsisLoc) {}
 
 public:
   static TypeAliasDecl *Create(ASTContext &C, DeclContext *DC,
                                SourceLocation StartLoc, SourceLocation IdLoc,
-                               const IdentifierInfo *Id, TypeSourceInfo *TInfo);
+                               const IdentifierInfo *Id, TypeSourceInfo *TInfo,
+                               SourceLocation EllipsisLoc = SourceLocation());
   static TypeAliasDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
 
   SourceRange getSourceRange() const override LLVM_READONLY;
@@ -3841,9 +3845,92 @@ public:
   TypeAliasTemplateDecl *getDescribedAliasTemplate() const { return Template; }
   void setDescribedAliasTemplate(TypeAliasTemplateDecl *TAT) { Template = TAT; }
 
+  SourceLocation getEllipsisLoc() const { return EllipsisLoc; }
+  void setEllipsisLoc(SourceLocation Loc) { EllipsisLoc = Loc; }
+
+  /// Whether this declares an alias pack, i.e. `using ...name = type;`.
+  bool isPack() const { return EllipsisLoc.isValid(); }
+
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K == TypeAlias; }
+};
+
+/// Represents an alias pack that has been expanded into a known number of
+/// alias declarations.
+///
+/// When the template enclosing an alias pack declaration is instantiated, the
+/// pack pattern is substituted once per element of the packs it expands, and
+/// the resulting \c TypeAliasDecl are collected here:
+///
+/// \code
+///   template <typename... T>
+///   struct S {
+///     using ...alias = T*;   // TypeAliasDecl, isPack()
+///   };
+///   // S<int, char>::alias is a TypeAliasPackDecl holding
+///   // { using alias = int*; , using alias = char*; }
+/// \endcode
+class TypeAliasPackDecl final
+    : public TypedefNameDecl,
+      private llvm::TrailingObjects<TypeAliasPackDecl, TypedefNameDecl *> {
+  /// The alias pack declaration this was instantiated from. This is either the
+  /// \c TypeAliasDecl written in the template, or, for a nested instantiation,
+  /// another \c TypeAliasPackDecl.
+  TypedefNameDecl *InstantiatedFrom;
+
+  unsigned NumExpansions;
+
+  TypeAliasPackDecl(ASTContext &C, DeclContext *DC,
+                    TypedefNameDecl *InstantiatedFrom,
+                    ArrayRef<TypedefNameDecl *> Expansions)
+      : TypedefNameDecl(
+            TypeAliasPack, C, DC,
+            InstantiatedFrom ? InstantiatedFrom->getBeginLoc()
+                             : SourceLocation(),
+            InstantiatedFrom ? InstantiatedFrom->getLocation()
+                             : SourceLocation(),
+            InstantiatedFrom ? InstantiatedFrom->getIdentifier() : nullptr,
+            InstantiatedFrom ? InstantiatedFrom->getTypeSourceInfo() : nullptr),
+        InstantiatedFrom(InstantiatedFrom), NumExpansions(Expansions.size()) {
+    llvm::uninitialized_copy(Expansions, getTrailingObjects());
+  }
+
+  void anchor() override;
+
+public:
+  friend class ASTDeclReader;
+  friend class ASTDeclWriter;
+  friend TrailingObjects;
+
+  static TypeAliasPackDecl *Create(ASTContext &C, DeclContext *DC,
+                                   TypedefNameDecl *InstantiatedFrom,
+                                   ArrayRef<TypedefNameDecl *> Expansions);
+  static TypeAliasPackDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID,
+                                               unsigned NumExpansions);
+
+  TypedefNameDecl *getInstantiatedFromAliasDecl() const {
+    return InstantiatedFrom;
+  }
+
+  /// The type the alias pack was declared with, before substitution.
+  QualType getPattern() const {
+    if (auto *Inner = dyn_cast<TypeAliasPackDecl>(InstantiatedFrom))
+      return Inner->getPattern();
+    return cast<TypeAliasDecl>(InstantiatedFrom)->getUnderlyingType();
+  }
+
+  ArrayRef<TypedefNameDecl *> expansions() const {
+    return getTrailingObjects(NumExpansions);
+  }
+
+  SourceRange getSourceRange() const override LLVM_READONLY {
+    return InstantiatedFrom->getSourceRange();
+  }
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classofKind(Kind K) { return K == TypeAliasPack; }
 };
 
 /// Represents the declaration of a struct/union/class/enum.

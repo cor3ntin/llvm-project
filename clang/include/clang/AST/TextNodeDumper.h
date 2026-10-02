@@ -384,6 +384,7 @@ public:
   void VisitUsingDirectiveDecl(const UsingDirectiveDecl *D);
   void VisitNamespaceAliasDecl(const NamespaceAliasDecl *D);
   void VisitTypeAliasDecl(const TypeAliasDecl *D);
+  void VisitTypeAliasPackDecl(const TypeAliasPackDecl *D);
   void VisitTypeAliasTemplateDecl(const TypeAliasTemplateDecl *D);
   void VisitCXXRecordDecl(const CXXRecordDecl *D);
   void VisitFunctionTemplateDecl(const FunctionTemplateDecl *D);

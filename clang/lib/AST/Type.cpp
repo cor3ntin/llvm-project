@@ -4354,6 +4354,16 @@ StringRef CountAttributedType::getAttributeName(bool WithMacroPrefix) const {
 #undef ENUMERATE_ATTRS
 }
 
+/// A reference to an alias pack is an unexpanded pack, whether the alias has
+/// been expanded into its elements yet or not.
+static TypeDependence getAliasPackDependence(const TypedefNameDecl *D) {
+  if (const auto *Alias = dyn_cast<TypeAliasDecl>(D); Alias && Alias->isPack())
+    return TypeDependence::UnexpandedPack;
+  if (isa<TypeAliasPackDecl>(D))
+    return TypeDependence::UnexpandedPack;
+  return TypeDependence::None;
+}
+
 TypedefType::TypedefType(TypeClass TC, ElaboratedTypeKeyword Keyword,
                          NestedNameSpecifier Qualifier,
                          const TypedefNameDecl *D, QualType UnderlyingType,
@@ -4364,7 +4374,8 @@ TypedefType::TypedefType(TypeClass TC, ElaboratedTypeKeyword Keyword,
               (Qualifier
                    ? toTypeDependence(Qualifier.getDependence() &
                                       ~NestedNameSpecifierDependence::Dependent)
-                   : TypeDependence{})),
+                   : TypeDependence{}) |
+              getAliasPackDependence(D)),
       Decl(const_cast<TypedefNameDecl *>(D)) {
   if ((TypedefBits.hasQualifier = !!Qualifier))
     *getTrailingObjects<NestedNameSpecifier>() = Qualifier;

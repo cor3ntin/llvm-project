@@ -398,6 +398,15 @@ bool Parser::ParseOptionalCXXScopeSpecifier(
       break;
     }
 
+    // An ellipsis introduces the name of a dependent alias pack, as in
+    // `T::...name::`. Consume it so the identifier below is handled as usual,
+    // and remember that the name denotes a pack.
+    SourceLocation DependentPackEllipsisLoc;
+    if (getLangOpts().CPlusPlus26 && HasScopeSpecifier &&
+        Tok.is(tok::ellipsis) && NextToken().is(tok::identifier) &&
+        GetLookAheadToken(2).is(tok::coloncolon))
+      DependentPackEllipsisLoc = ConsumeToken();
+
     // The rest of the nested-name-specifier possibilities start with
     // tok::identifier.
     if (Tok.isNot(tok::identifier))
@@ -410,7 +419,8 @@ bool Parser::ParseOptionalCXXScopeSpecifier(
     //   namespace-name '::'
     //   nested-name-specifier identifier '::'
     Token Next = NextToken();
-    Sema::NestedNameSpecInfo IdInfo(&II, Tok.getLocation(), Next.getLocation(),
+    Sema::NestedNameSpecInfo IdInfo(&II, DependentPackEllipsisLoc,
+                                    Tok.getLocation(), Next.getLocation(),
                                     ObjectType);
 
     // If we get foo:bar, this is almost certainly a typo for foo::bar.  Recover

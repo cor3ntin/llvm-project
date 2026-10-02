@@ -673,6 +673,11 @@ public:
     Visit(D->getUnderlyingType());
   }
 
+  void VisitTypeAliasPackDecl(const TypeAliasPackDecl *D) {
+    for (const auto *E : D->expansions())
+      Visit(E);
+  }
+
   void VisitTypeAliasTemplateDecl(const TypeAliasTemplateDecl *D) {
     dumpTemplateParameters(D->getTemplateParameters());
     Visit(D->getTemplatedDecl());

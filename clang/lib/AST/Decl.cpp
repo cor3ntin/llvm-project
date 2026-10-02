@@ -5901,18 +5901,41 @@ TypedefDecl *TypedefDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID) {
                                  nullptr, nullptr);
 }
 
-TypeAliasDecl *TypeAliasDecl::Create(ASTContext &C, DeclContext *DC,
-                                     SourceLocation StartLoc,
-                                     SourceLocation IdLoc,
-                                     const IdentifierInfo *Id,
-                                     TypeSourceInfo *TInfo) {
-  return new (C, DC) TypeAliasDecl(C, DC, StartLoc, IdLoc, Id, TInfo);
+TypeAliasDecl *
+TypeAliasDecl::Create(ASTContext &C, DeclContext *DC, SourceLocation StartLoc,
+                      SourceLocation IdLoc, const IdentifierInfo *Id,
+                      TypeSourceInfo *TInfo, SourceLocation EllipsisLoc) {
+  return new (C, DC)
+      TypeAliasDecl(C, DC, StartLoc, IdLoc, Id, TInfo, EllipsisLoc);
 }
 
 TypeAliasDecl *TypeAliasDecl::CreateDeserialized(ASTContext &C,
                                                  GlobalDeclID ID) {
-  return new (C, ID) TypeAliasDecl(C, nullptr, SourceLocation(),
-                                   SourceLocation(), nullptr, nullptr);
+  return new (C, ID)
+      TypeAliasDecl(C, nullptr, SourceLocation(), SourceLocation(), nullptr,
+                    nullptr, SourceLocation());
+}
+
+void TypeAliasPackDecl::anchor() {}
+
+TypeAliasPackDecl *
+TypeAliasPackDecl::Create(ASTContext &C, DeclContext *DC,
+                          TypedefNameDecl *InstantiatedFrom,
+                          ArrayRef<TypedefNameDecl *> Expansions) {
+  size_t Extra = additionalSizeToAlloc<TypedefNameDecl *>(Expansions.size());
+  return new (C, DC, Extra)
+      TypeAliasPackDecl(C, DC, InstantiatedFrom, Expansions);
+}
+
+TypeAliasPackDecl *
+TypeAliasPackDecl::CreateDeserialized(ASTContext &C, GlobalDeclID ID,
+                                      unsigned NumExpansions) {
+  size_t Extra = additionalSizeToAlloc<TypedefNameDecl *>(NumExpansions);
+  auto *Result = new (C, ID, Extra) TypeAliasPackDecl(C, nullptr, nullptr, {});
+  Result->NumExpansions = NumExpansions;
+  std::uninitialized_fill_n(Result->getTrailingObjects(), NumExpansions,
+                            nullptr);
+  return Result;
 }
 
 SourceRange TypedefDecl::getSourceRange() const {

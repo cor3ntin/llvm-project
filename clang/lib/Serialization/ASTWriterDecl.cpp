@@ -132,6 +132,7 @@ namespace clang {
     void VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     void VisitUsingDecl(UsingDecl *D);
     void VisitUsingEnumDecl(UsingEnumDecl *D);
+    void VisitTypeAliasPackDecl(TypeAliasPackDecl *D);
     void VisitUsingPackDecl(UsingPackDecl *D);
     void VisitUsingShadowDecl(UsingShadowDecl *D);
     void VisitConstructorUsingShadowDecl(ConstructorUsingShadowDecl *D);
@@ -621,8 +622,18 @@ void ASTDeclWriter::VisitTypedefDecl(TypedefDecl *D) {
 
 void ASTDeclWriter::VisitTypeAliasDecl(TypeAliasDecl *D) {
   VisitTypedefNameDecl(D);
+  Record.AddSourceLocation(D->getEllipsisLoc());
   Record.AddDeclRef(D->getDescribedAliasTemplate());
   Code = serialization::DECL_TYPEALIAS;
+}
+
+void ASTDeclWriter::VisitTypeAliasPackDecl(TypeAliasPackDecl *D) {
+  Record.push_back(D->NumExpansions);
+  VisitTypedefNameDecl(D);
+  Record.AddDeclRef(D->getInstantiatedFromAliasDecl());
+  for (auto *E : D->expansions())
+    Record.AddDeclRef(E);
+  Code = serialization::DECL_TYPEALIAS_PACK;
 }
 
 void ASTDeclWriter::VisitTagDecl(TagDecl *D) {

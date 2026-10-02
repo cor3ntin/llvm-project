@@ -2142,7 +2142,7 @@ public:
                                  const IdentifierInfo *MacroII) const;
 
   QualType getDependentNameType(ElaboratedTypeKeyword Keyword,
-                                NestedNameSpecifier NNS,
+                                NestedNameSpecifier NNS, bool IsPack,
                                 const IdentifierInfo *Name) const;
 
   TemplateArgument getInjectedTemplateArg(NamedDecl *ParamDecl) const;

@@ -3666,6 +3666,26 @@ void Parser::ParseDeclarationSpecifiers(
         continue;
       }
 
+      // `S<Ts...>::...name` names a dependent alias pack. The qualifier is
+      // necessarily dependent, so this is always a typename-specifier.
+      if (getLangOpts().CPlusPlus26 && Next.is(tok::ellipsis) &&
+          GetLookAheadToken(2).is(tok::identifier)) {
+        DS.getTypeSpecScope() = SS;
+        ConsumeAnnotationToken(); // The C++ scope.
+        SourceLocation EllipsisLoc = ConsumeToken();
+        TypeResult T = Actions.ActOnTypenameType(
+            getCurScope(), /*TypenameLoc=*/SourceLocation(), SS,
+            *Tok.getIdentifierInfo(), Tok.getLocation(),
+            ImplicitTypenameContext::Yes, EllipsisLoc);
+        isInvalid = DS.SetTypeSpecType(DeclSpec::TST_typename, Loc, PrevSpec,
+                                       DiagID, T, Policy);
+        if (isInvalid)
+          break;
+        DS.SetRangeEnd(Tok.getLocation());
+        ConsumeToken(); // The name.
+        continue;
+      }
+
       if (Next.isNot(tok::identifier))
         goto DoneWithDeclSpec;
 

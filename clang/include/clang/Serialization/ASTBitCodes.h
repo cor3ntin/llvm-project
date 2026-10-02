@@ -1561,7 +1561,10 @@ enum DeclCode {
   /// An ExplicitInstantiationDecl record.
   DECL_EXPLICIT_INSTANTIATION,
 
-  DECL_LAST = DECL_EXPLICIT_INSTANTIATION
+  /// A TypeAliasPackDecl record.
+  DECL_TYPEALIAS_PACK,
+
+  DECL_LAST = DECL_TYPEALIAS_PACK
 };
 
 /// Record codes for each kind of statement or expression.
