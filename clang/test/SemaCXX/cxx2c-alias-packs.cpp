@@ -37,6 +37,29 @@ struct ok {
     using ...b = S<Ts...>::...types::a;
 };
 
+namespace InstantiateThroughDependentQualifier {
+// Instantiating an alias pack reached through a dependent qualifier has to
+// keep the qualifier on the selected expansion, which the type's source
+// location is built with.
+template <typename...> struct TypeList;
+template <typename T> struct Inner { using a = T *; };
+
+template <typename... Ts>
+struct Through {
+    using ...a = S<Ts...>::...types;
+    using list = TypeList<a...>;
+};
+static_assert(__is_same(Through<int, long>::list, TypeList<int, long>));
+
+template <typename... Ts>
+struct ThroughTwice {
+    using ...b = S<Ts...>::...types::a;
+    using list = TypeList<b...>;
+};
+static_assert(__is_same(ThroughTwice<Inner<int>, Inner<char>>::list,
+                        TypeList<int *, char *>));
+} // namespace InstantiateThroughDependentQualifier
+
 namespace DependentNNS {
 
 template <typename...Ts>

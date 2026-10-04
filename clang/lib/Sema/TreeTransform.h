@@ -8205,11 +8205,13 @@ QualType TreeTransform<Derived>::TransformDependentNameType(
     return QualType();
 
   // The name resolved to an alias pack and we are substituting one of its
-  // expansions; select it.
+  // expansions; select it. Keep the keyword and the qualifier, since the
+  // TypeLoc pushed below is built with them.
   if (T->isPack() && SemaRef.ArgPackSubstIndex) {
     if (const auto *TT = Result->getAs<TypedefType>()) {
       if (auto *Pack = dyn_cast<TypeAliasPackDecl>(TT->getDecl())) {
         Result = SemaRef.Context.getTypeDeclType(
+            T->getKeyword(), QualifierLoc.getNestedNameSpecifier(),
             Pack->expansions()[*SemaRef.ArgPackSubstIndex]);
       }
     }
