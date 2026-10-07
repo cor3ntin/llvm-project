@@ -56,6 +56,11 @@ class TemplateDeductionInfo {
   /// allowed?
   bool StrictPackMatch = false;
 
+  /// Are we deducing the template parameters of a template template argument
+  /// from the template-head of the template template parameter it is matched
+  /// against?
+  bool MatchingTTP = false;
+
   /// The template parameter depth for which we're performing deduction.
   unsigned DeducedDepth;
 
@@ -78,7 +83,8 @@ public:
   /// against a base class of an argument's type.
   TemplateDeductionInfo(ForBaseTag, const TemplateDeductionInfo &Info)
       : DeducedSugared(Info.DeducedSugared), Loc(Info.Loc),
-        DeducedDepth(Info.DeducedDepth), ExplicitArgs(Info.ExplicitArgs) {}
+        MatchingTTP(Info.MatchingTTP), DeducedDepth(Info.DeducedDepth),
+        ExplicitArgs(Info.ExplicitArgs) {}
 
   /// Returns the location at which template argument is
   /// occurring.
@@ -95,6 +101,10 @@ public:
   bool hasStrictPackMatch() const { return StrictPackMatch; }
 
   void setStrictPackMatch() { StrictPackMatch = true; }
+
+  bool isMatchingTTP() const { return MatchingTTP; }
+
+  void setMatchingTTP() { MatchingTTP = true; }
 
   /// Get the number of explicitly-specified arguments.
   unsigned getNumExplicitArgs() const {

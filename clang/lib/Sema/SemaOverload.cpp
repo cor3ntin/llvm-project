@@ -12510,6 +12510,8 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
     ParamD = dyn_cast_if_present<NonTypeTemplateParmDecl *>(Param);
   if (!ParamD)
     ParamD = dyn_cast_if_present<TemplateTemplateParmDecl *>(Param);
+  if (!ParamD)
+    ParamD = dyn_cast_if_present<UniversalTemplateParmDecl *>(Param);
   switch (DeductionFailure.getResult()) {
   case TemplateDeductionResult::Success:
     llvm_unreachable(
@@ -12589,8 +12591,10 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
       }
 
       which = 1;
-    } else {
+    } else if (isa<TemplateTemplateParmDecl>(ParamD)) {
       which = 2;
+    } else {
+      which = 4;
     }
 
     // Tweak the diagnostic if the problem is that we deduced packs of

@@ -466,11 +466,35 @@ public:
       Sema::ArgPackSubstIndexRAII _1(SemaRef, std::nullopt);
       llvm::SaveAndRestore<UnsignedOrNone> _2(OuterPackSubstIndex,
                                               std::nullopt);
-      return inherited::TraverseTemplateArgument(Arg);
+      return traverseTemplateArgumentImpl(Arg);
     }
 
     Sema::ArgPackSubstIndexRAII _1(SemaRef, OuterPackSubstIndex);
-    return inherited::TraverseTemplateArgument(Arg);
+    return traverseTemplateArgumentImpl(Arg);
+  }
+
+  bool traverseTemplateArgumentImpl(const TemplateArgument &Arg) {
+    if (Arg.getKind() != TemplateArgument::Universal &&
+        Arg.getKind() != TemplateArgument::UniversalExpansion)
+      return inherited::TraverseTemplateArgument(Arg);
+
+    // The argument names a universal template parameter rather than
+    // containing it, so profile what the parameter is substituted with.
+    const UniversalTemplateParmDecl *UTP =
+        Arg.getAsUniversalTemplateParameterOrPattern()->getDecl();
+    if (UTP->getDepth() >= TemplateArgs.getNumLevels() ||
+        !TemplateArgs.hasTemplateArgument(UTP->getDepth(), UTP->getIndex()))
+      return true;
+
+    TemplateArgument Substituted =
+        TemplateArgs(UTP->getDepth(), UTP->getIndex());
+    if (UTP->isParameterPack() && SemaRef.ArgPackSubstIndex &&
+        Substituted.getKind() == TemplateArgument::Pack)
+      Substituted = SemaRef.getPackSubstitutedTemplateArgument(Substituted);
+
+    UsedTemplateArgs.push_back(
+        SemaRef.Context.getCanonicalTemplateArgument(Substituted));
+    return true;
   }
 
   bool TraverseSizeOfPackExpr(SizeOfPackExpr *SOPE) {

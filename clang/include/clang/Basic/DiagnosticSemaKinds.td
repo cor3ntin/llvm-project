@@ -5307,8 +5307,8 @@ def note_ovl_candidate_incomplete_deduction_pack : Note<
     "expanded parameter in deduced argument pack %2">;
 def note_ovl_candidate_inconsistent_deduction : Note<
     "candidate template ignored: deduced %select{conflicting types|"
-    "conflicting values|conflicting templates|packs of different lengths}0 "
-    "for parameter %1%diff{ ($ vs. $)|}2,3">;
+    "conflicting values|conflicting templates|packs of different lengths|"
+    "conflicting arguments}0 for parameter %1%diff{ ($ vs. $)|}2,3">;
 def note_ovl_candidate_inconsistent_deduction_types : Note<
     "candidate template ignored: deduced values %diff{"
     "of conflicting types for parameter %0 (%1 of type $ vs. %3 of type $)|"
@@ -5737,6 +5737,11 @@ def err_template_arg_must_be_template
             "template|concept}0">;
 def err_cxx2c_universal_template_params : Error<
   "universal template parameters are a C++2c extension">;
+def err_universal_template_param_in_concept : Error<
+  "a concept cannot have a universal template parameter">;
+def err_universal_template_arg_overload_set : Error<
+  "%select{overload set|function template}0 %1 cannot be the argument of a "
+  "universal template parameter">;
 def err_partial_concept_valid_template : Error<
   "name of template argument does not refer to concept, or concept "
   "template parameter">;
@@ -6308,16 +6313,18 @@ def err_template_param_pack_must_be_last_template_parameter : Error<
   "template parameter pack must be the last template parameter">;
 
 def err_template_parameter_pack_non_pack : Error<
-  "%select{template type|non-type template|template template}0 parameter"
-  "%select{| pack}1 conflicts with previous %select{template type|"
-  "non-type template|template template}0 parameter%select{ pack|}1">;
+  "%select{template type|non-type template|template template|universal "
+  "template}0 parameter%select{| pack}1 conflicts with previous "
+  "%select{template type|non-type template|template template|universal "
+  "template}0 parameter%select{ pack|}1">;
 def note_template_parameter_pack_non_pack : Note<
-  "%select{template type|non-type template|template template}0 parameter"
-  "%select{| pack}1 does not match %select{template type|non-type template"
-  "|template template}0 parameter%select{ pack|}1 in template argument">;
+  "%select{template type|non-type template|template template|universal "
+  "template}0 parameter%select{| pack}1 does not match %select{template type|"
+  "non-type template|template template|universal template}0 "
+  "parameter%select{ pack|}1 in template argument">;
 def note_template_parameter_pack_here : Note<
-  "previous %select{template type|non-type template|template template}0 "
-  "parameter%select{| pack}1 declared here">;
+  "previous %select{template type|non-type template|template template|"
+  "universal template}0 parameter%select{| pack}1 declared here">;
 
 def err_unexpanded_parameter_pack : Error<
   "%select{expression|base type|declaration type|data member type|bit-field "
