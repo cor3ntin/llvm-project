@@ -602,6 +602,7 @@ private:
   void mangleTemplateArg(TemplateArgManglingInfo &Info, unsigned Index,
                          TemplateArgument A);
   void mangleTemplateArg(TemplateArgument A, bool NeedExactType);
+  void mangleUniversalTemplateArg(TemplateArgument A);
   void mangleTemplateArgExpr(const Expr *E);
   void mangleValueInTemplateArg(QualType T, const APValue &V, bool TopLevel,
                                 bool NeedExactType = false);
@@ -2089,6 +2090,12 @@ void CXXNameMangler::mangleTemplateParamDecl(const NamedDecl *Decl) {
         Out << "Tp";
       mangleTemplateParameterList(Tt->getTemplateParameters());
     }
+  } else if (auto *Tu = dyn_cast<UniversalTemplateParmDecl>(Decl)) {
+    // FIXME: The mangling of a universal template parameter is not yet
+    // specified.
+    if (Tu->isParameterPack())
+      Out << "Tp";
+    Out << "Tu";
   }
 }
 
@@ -6194,6 +6201,8 @@ struct CXXNameMangler::TemplateArgManglingInfo {
     /// If we need to prefix the mangling with a mangling of the template
     /// parameter, the corresponding parameter.
     const NamedDecl *TemplateParameterToMangle;
+    /// Is the argument that of a universal template parameter?
+    bool ForUniversalParameter = false;
   };
 
   /// Determine whether the resolved template might be overloaded on its
@@ -6222,6 +6231,11 @@ struct CXXNameMangler::TemplateArgManglingInfo {
     // The actual parameter might be constrained.
     if (auto *TTP = dyn_cast<TemplateTypeParmDecl>(Param))
       return TTP->hasTypeConstraint();
+
+    // No argument has a universal template parameter as its natural
+    // parameter.
+    if (isa<UniversalTemplateParmDecl>(Param))
+      return true;
 
     if (Arg.getKind() == TemplateArgument::Pack) {
       // For an empty pack, the natural parameter is `typename...`.
@@ -6315,21 +6329,25 @@ struct CXXNameMangler::TemplateArgManglingInfo {
       return {true, nullptr};
     }
 
+    bool ForUniversal = isa<UniversalTemplateParmDecl>(Param);
+
     // We need exact types for arguments of a template that might be overloaded
     // on template parameter type.
     if (isOverloadable())
-      return {true, needToMangleTemplateParam(Param, Arg) ? Param : nullptr};
+      return {true, needToMangleTemplateParam(Param, Arg) ? Param : nullptr,
+              ForUniversal};
 
     // Otherwise, we only need a correct type if the parameter has a deduced
-    // type.
+    // type, which includes a universal template parameter.
     //
     // Note: for an expanded parameter pack, getType() returns the type prior
     // to expansion. We could ask for the expanded type with getExpansionType(),
     // but it doesn't matter because substitution and expansion don't affect
     // whether a deduced type appears in the type.
     auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(Param);
-    bool NeedExactType = NTTP && NTTP->getType()->getContainedDeducedType();
-    return {NeedExactType, nullptr};
+    bool NeedExactType =
+        ForUniversal || (NTTP && NTTP->getType()->getContainedDeducedType());
+    return {NeedExactType, nullptr, ForUniversal};
   }
 
   /// Determine if we should mangle a requires-clause after the template
@@ -6394,7 +6412,32 @@ void CXXNameMangler::mangleTemplateArg(TemplateArgManglingInfo &Info,
     mangleTemplateParamDecl(ArgInfo.TemplateParameterToMangle);
   }
 
-  mangleTemplateArg(A, ArgInfo.NeedExactType);
+  if (ArgInfo.ForUniversalParameter)
+    mangleUniversalTemplateArg(A);
+  else
+    mangleTemplateArg(A, ArgInfo.NeedExactType);
+}
+
+void CXXNameMangler::mangleUniversalTemplateArg(TemplateArgument A) {
+  // FIXME: The mangling of a universal template argument is not yet specified.
+  // An id-expression bound to a universal template parameter names an entity
+  // rather than a value, so it must not be mangled as an <expr-primary> that
+  // could also denote a reference to that entity.
+  if (A.getKind() == TemplateArgument::Expression &&
+      !A.isInstantiationDependent()) {
+    Out << 'X';
+    mangleExpression(A.getAsExpr()->IgnoreParenImpCasts());
+    Out << 'E';
+    return;
+  }
+  if (A.getKind() == TemplateArgument::Pack) {
+    Out << 'J';
+    for (const TemplateArgument &P : A.pack_elements())
+      mangleUniversalTemplateArg(P);
+    Out << 'E';
+    return;
+  }
+  mangleTemplateArg(A, /*NeedExactType=*/true);
 }
 
 void CXXNameMangler::mangleTemplateArg(TemplateArgument A, bool NeedExactType) {

@@ -2621,6 +2621,59 @@ static TemplateDeductionResult DeduceTemplateArgumentsByTypeMatch(
   llvm_unreachable("Invalid Type Class!");
 }
 
+/// When matching a template template argument against a template template
+/// parameter ([temp.arg.template]), the template parameters of the argument
+/// are deduced from the template-head of the parameter. A universal template
+/// parameter of that template-head stands in for a template parameter of any
+/// kind, so the template parameter of the argument it corresponds to is
+/// deduced to it, whatever its kind.
+static std::optional<TemplateDeductionResult>
+DeduceFromUniversalTemplateHeadParameter(
+    Sema &S, TemplateParameterList *TemplateParams, const TemplateArgument &P,
+    const TemplateArgument &A, TemplateDeductionInfo &Info,
+    SmallVectorImpl<DeducedTemplateArgument> &Deduced,
+    bool *HasDeducedAnyParam) {
+  if (!Info.isMatchingTTP() || A.getKind() != TemplateArgument::Universal)
+    return std::nullopt;
+
+  std::optional<unsigned> Index;
+  switch (P.getKind()) {
+  case TemplateArgument::Type:
+    if (const auto *TTP = P.getAsType()->getAs<TemplateTypeParmType>();
+        TTP && TTP->getDepth() == Info.getDeducedDepth())
+      Index = TTP->getIndex();
+    break;
+  case TemplateArgument::Expression:
+    if (NonTypeOrVarTemplateParmDecl NTTP =
+            getDeducedNTTParameterFromExpr(Info, P.getAsExpr()))
+      Index = NTTP.getIndex();
+    break;
+  case TemplateArgument::Template:
+    if (const auto *TTP = dyn_cast_or_null<TemplateTemplateParmDecl>(
+            P.getAsTemplate().getAsTemplateDecl());
+        TTP && TTP->getDepth() == Info.getDeducedDepth())
+      Index = TTP->getIndex();
+    break;
+  default:
+    break;
+  }
+  if (!Index)
+    return std::nullopt;
+
+  DeducedTemplateArgument Result = checkDeducedTemplateArguments(
+      S.Context, Deduced[*Index], DeducedTemplateArgument(A));
+  if (Result.isNull()) {
+    Info.Param = makeTemplateParameter(TemplateParams->getParam(*Index));
+    Info.FirstArg = Deduced[*Index];
+    Info.SecondArg = A;
+    return TemplateDeductionResult::Inconsistent;
+  }
+  Deduced[*Index] = Result;
+  if (HasDeducedAnyParam)
+    *HasDeducedAnyParam = true;
+  return TemplateDeductionResult::Success;
+}
+
 static TemplateDeductionResult
 DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
                         const TemplateArgument &P, TemplateArgument A,
@@ -2632,6 +2685,11 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
   // partial ordering.
   if (A.isPackExpansion())
     A = A.getPackExpansionPattern();
+
+  if (std::optional<TemplateDeductionResult> Result =
+          DeduceFromUniversalTemplateHeadParameter(
+              S, TemplateParams, P, A, Info, Deduced, HasDeducedAnyParam))
+    return *Result;
 
   switch (P.getKind()) {
   case TemplateArgument::Null:
@@ -3317,21 +3375,141 @@ CheckDeducedArgumentConstraints(Sema &S, NamedDecl *Template,
   return TemplateDeductionResult::Success;
 }
 
+/// C++ [temp.deduct.type]: If P has a form that contains <i>, deduction fails
+/// unless the type of i is the same as that of the corresponding template
+/// parameter in the specialization. For a universal template parameter, that
+/// is the type of the constant it is bound to, which is part of the argument.
+static std::optional<std::pair<TemplateArgument, TemplateArgument>>
+findUniversalConstantTypeMismatch(ASTContext &Context,
+                                  const TemplateParameterList *TPL,
+                                  ArrayRef<TemplateArgument> Ps,
+                                  ArrayRef<TemplateArgument> As) {
+  for (size_t I = 0, N = std::min<size_t>({TPL->size(), Ps.size(), As.size()});
+       I != N; ++I) {
+    if (!isa<UniversalTemplateParmDecl>(TPL->getParam(I)))
+      continue;
+    ArrayRef<TemplateArgument> PElements =
+        Ps[I].getKind() == TemplateArgument::Pack ? Ps[I].getPackAsArray()
+                                                  : ArrayRef(Ps[I]);
+    ArrayRef<TemplateArgument> AElements =
+        As[I].getKind() == TemplateArgument::Pack ? As[I].getPackAsArray()
+                                                  : ArrayRef(As[I]);
+    if (PElements.size() != AElements.size())
+      continue;
+    for (auto [P, A] : llvm::zip_equal(PElements, AElements)) {
+      if (P.getKind() != A.getKind())
+        continue;
+      switch (P.getKind()) {
+      case TemplateArgument::Integral:
+      case TemplateArgument::Declaration:
+      case TemplateArgument::NullPtr:
+      case TemplateArgument::StructuralValue:
+        if (!Context.hasSameType(P.getNonTypeTemplateArgumentType(),
+                                 A.getNonTypeTemplateArgumentType()))
+          return std::make_pair(P, A);
+        break;
+      default:
+        break;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+/// Determine whether \p Arg is an id-expression bound to a universal template
+/// parameter, whose meaning is only determined by the template parameter it
+/// is eventually bound to ([temp.arg.universal]).
+static bool isDeferredUniversalArgument(const TemplateArgument &Arg) {
+  return Arg.getKind() == TemplateArgument::Expression &&
+         !Arg.getAsExpr()->isValueDependent();
+}
+
+/// A constant template parameter of a partial specialization deduced from a
+/// deferred argument is deduced as if that argument had been written as its
+/// template argument. A template argument of the partial specialization that
+/// names this template parameter therefore stands for the deferred argument
+/// itself rather than for the value it was converted to. If \p P is such a
+/// template argument, append the template arguments it stands for to \p Out.
+static bool
+appendDeferredUniversalArguments(Sema &S, const TemplateArgumentLoc &P,
+                                 unsigned Depth,
+                                 ArrayRef<DeducedTemplateArgument> Deduced,
+                                 const MultiLevelTemplateArgumentList &MLTAL,
+                                 TemplateArgumentListInfo &Out) {
+  if (P.getArgument().getKind() != TemplateArgument::Expression)
+    return false;
+  const Expr *E = P.getArgument().getAsExpr();
+  const auto *Expansion = dyn_cast<PackExpansionExpr>(E);
+  if (Expansion)
+    E = Expansion->getPattern();
+  const auto *DRE = dyn_cast<DeclRefExpr>(E);
+  const auto *NTTP =
+      DRE ? dyn_cast<NonTypeTemplateParmDecl>(DRE->getDecl()) : nullptr;
+  if (!NTTP || NTTP->getDepth() != Depth ||
+      NTTP->getIndex() >= Deduced.size() ||
+      NTTP->isParameterPack() != bool(Expansion))
+    return false;
+
+  const DeducedTemplateArgument &Arg = Deduced[NTTP->getIndex()];
+  if (!Expansion) {
+    if (!isDeferredUniversalArgument(Arg))
+      return false;
+    Out.addArgument(TemplateArgumentLoc(Arg, Arg.getAsExpr()));
+    return true;
+  }
+
+  const TemplateArgument &Converted = MLTAL(Depth, NTTP->getIndex());
+  if (Arg.getKind() != TemplateArgument::Pack ||
+      Converted.getKind() != TemplateArgument::Pack ||
+      Arg.pack_size() != Converted.pack_size() ||
+      llvm::none_of(Arg.pack_elements(), isDeferredUniversalArgument))
+    return false;
+  for (auto [Element, ConvertedElement] :
+       llvm::zip_equal(Arg.pack_elements(), Converted.pack_elements())) {
+    if (isDeferredUniversalArgument(Element)) {
+      Out.addArgument(TemplateArgumentLoc(Element, Element.getAsExpr()));
+      continue;
+    }
+    // Keep the converted value itself as the argument: rebuilding it from an
+    // expression could turn it back into an id-expression.
+    TemplateArgumentLoc Trivial = S.getTrivialTemplateArgumentLoc(
+        ConvertedElement, QualType(), P.getLocation());
+    Out.addArgument(
+        TemplateArgumentLoc(ConvertedElement, Trivial.getSourceExpression()));
+  }
+  return true;
+}
+
 static TemplateDeductionResult CheckDeducedTemplateArgumentList(
     Sema &S, TemplateDecl *Template, ArrayRef<TemplateArgumentLoc> Ps,
     ArrayRef<TemplateArgument> As, const MultiLevelTemplateArgumentList &MLTAL,
-    TemplateDeductionInfo &Info) {
+    TemplateDeductionInfo &Info,
+    ArrayRef<DeducedTemplateArgument> DeducedFromDeferred = {},
+    unsigned DeducedDepth = 0) {
   TemplateParameterList *TPL = Template->getTemplateParameters();
   TemplateArgumentListInfo InstArgs(TPL->getLAngleLoc(), TPL->getRAngleLoc());
-  if (S.SubstTemplateArguments(Ps, MLTAL, InstArgs)) {
-    unsigned ArgIdx = InstArgs.size(), ParamIdx = ArgIdx;
+  auto SubstitutionFailure = [&](const TemplateArgumentLoc &P) {
+    unsigned ParamIdx = InstArgs.size();
     if (ParamIdx >= TPL->size())
       ParamIdx = TPL->size() - 1;
 
     Decl *Param = TPL->getParam(ParamIdx);
     Info.Param = makeTemplateParameter(Param);
-    Info.FirstArg = Ps[ArgIdx].getArgument();
+    Info.FirstArg = P.getArgument();
     return TemplateDeductionResult::SubstitutionFailure;
+  };
+  if (DeducedFromDeferred.empty()) {
+    if (S.SubstTemplateArguments(Ps, MLTAL, InstArgs))
+      return SubstitutionFailure(
+          Ps[std::min<size_t>(InstArgs.size(), Ps.size() - 1)]);
+  } else {
+    for (const TemplateArgumentLoc &P : Ps) {
+      if (appendDeferredUniversalArguments(
+              S, P, DeducedDepth, DeducedFromDeferred, MLTAL, InstArgs))
+        continue;
+      if (S.SubstTemplateArguments(P, MLTAL, InstArgs))
+        return SubstitutionFailure(P);
+    }
   }
 
   bool ConstraintsNotSatisfied;
@@ -3398,6 +3576,13 @@ static TemplateDeductionResult CheckDeducedTemplateArgumentList(
   }
   assert(PsStack.empty());
   assert(AsStack.empty());
+
+  if (auto Mismatch = findUniversalConstantTypeMismatch(
+          S.Context, TPL, InstCTAI.SugaredConverted, As)) {
+    Info.FirstArg = Mismatch->first;
+    Info.SecondArg = Mismatch->second;
+    return TemplateDeductionResult::NonDeducedMismatch;
+  }
   return TemplateDeductionResult::Success;
 }
 
@@ -3434,8 +3619,14 @@ static TemplateDeductionResult FinishTemplateArgumentDeduction(
   MultiLevelTemplateArgumentList MLTAL(Entity, CTAI.SugaredConverted,
                                        /*Final=*/true);
   MLTAL.addOuterRetainedLevels(Template->getTemplateParameters()->getDepth());
-  if (auto Result =
-          CheckDeducedTemplateArgumentList(S, Template, Ps, As, MLTAL, Info);
+  bool IsPartialSpecializationMatch =
+      !PartialOrdering && isa<ClassTemplatePartialSpecializationDecl,
+                              VarTemplatePartialSpecializationDecl>(Entity);
+  if (auto Result = CheckDeducedTemplateArgumentList(
+          S, Template, Ps, As, MLTAL, Info,
+          IsPartialSpecializationMatch ? ArrayRef(Deduced)
+                                       : ArrayRef<DeducedTemplateArgument>(),
+          EntityTPL->getDepth());
       Result != TemplateDeductionResult::Success)
     return Result;
 
@@ -6759,43 +6950,10 @@ bool Sema::isMoreSpecializedThanPrimary(
   return MaybeSpec;
 }
 
-/// Determine whether every parameter of \p P is a universal template
-/// parameter, and if so how many arguments such a list accepts: \p Arity
-/// non-pack parameters, plus any number more when it contains a pack.
-static bool isUniversalParameterList(const TemplateParameterList *P,
-                                     bool &HasPack, unsigned &Arity) {
-  HasPack = false;
-  Arity = 0;
-  if (P->size() == 0)
-    return false;
-  for (const NamedDecl *Param : *P) {
-    const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(Param);
-    if (!UTP)
-      return false;
-    if (UTP->isParameterPack())
-      HasPack = true;
-    else
-      ++Arity;
-  }
-  return true;
-}
-
 bool Sema::isTemplateTemplateParameterAtLeastAsSpecializedAs(
     TemplateParameterList *P, TemplateDecl *PArg, TemplateDecl *AArg,
     const DefaultArguments &DefaultArgs, SourceLocation ArgLoc,
     bool PartialOrdering, bool *StrictPackMatch) {
-  // A parameter list made up of universal template parameters accepts an
-  // argument of any kind in each position, so it is at least as specialized
-  // as any list of matching arity. The partial ordering rules below deduce
-  // one list from the other, which cannot work when the kinds are unknown.
-  {
-    bool HasPack;
-    unsigned Arity;
-    if (isUniversalParameterList(P, HasPack, Arity)) {
-      unsigned NumArgParams = AArg->getTemplateParameters()->size();
-      return HasPack ? NumArgParams >= Arity : NumArgParams == Arity;
-    }
-  }
   // C++1z [temp.arg.template]p4: (DR 150)
   //   A template template-parameter P is at least as specialized as a
   //   template template-argument A if, given the following rewrite to two
@@ -6861,6 +7019,7 @@ bool Sema::isTemplateTemplateParameterAtLeastAsSpecializedAs(
 
   // Determine whether P1 is at least as specialized as P2.
   TemplateDeductionInfo Info(ArgLoc, A->getDepth());
+  Info.setMatchingTTP();
   SmallVector<DeducedTemplateArgument, 4> Deduced;
   Deduced.resize(A->size());
 

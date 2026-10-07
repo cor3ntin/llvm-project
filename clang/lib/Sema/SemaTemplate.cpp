@@ -4228,9 +4228,14 @@ static bool isTemplateArgumentTemplateParameter(const TemplateArgument &Arg,
   case TemplateArgument::TemplateExpansion:
   case TemplateArgument::Concept:
   case TemplateArgument::ConceptExpansion:
-  case TemplateArgument::Universal:
   case TemplateArgument::UniversalExpansion:
     return false;
+
+  case TemplateArgument::Universal: {
+    const UniversalTemplateParmDecl *UTP =
+        Arg.getAsUniversalTemplateParameterName()->getDecl();
+    return UTP->getDepth() == Depth && UTP->getIndex() == Index;
+  }
 
   case TemplateArgument::Type: {
     QualType Type = Arg.getAsType();
@@ -4279,6 +4284,11 @@ static bool isSameAsPrimaryTemplate(TemplateParameterList *Params,
     }
 
     if (!isTemplateArgumentTemplateParameter(Arg, Depth, I))
+      return false;
+
+    // A parameter of a different kind than the corresponding universal
+    // template parameter of the primary template specializes it.
+    if (Params->getParam(I)->getKind() != SpecParams->getParam(I)->getKind())
       return false;
 
     // For NTTPs further specialization is allowed via deduced types, so
@@ -5904,6 +5914,20 @@ bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,
       CTAI.SugaredConverted.push_back(SugaredResult);
       CTAI.CanonicalConverted.push_back(CanonicalResult);
       return false;
+    }
+    // An overload set or a function template does not denote a single entity.
+    if (Arg.getKind() == TemplateArgument::Expression) {
+      if (const auto *OE = dyn_cast<OverloadExpr>(Arg.getAsExpr());
+          OE && OE->getNumDecls() && !OE->hasExplicitTemplateArgs()) {
+        bool IsFunctionTemplate =
+            OE->getNumDecls() == 1 &&
+            isa<FunctionTemplateDecl>(
+                (*OE->decls_begin())->getUnderlyingDecl());
+        Diag(OE->getExprLoc(), diag::err_universal_template_arg_overload_set)
+            << IsFunctionTemplate << OE->getName() << OE->getSourceRange();
+        NoteTemplateParameterLocation(*Param);
+        return true;
+      }
     }
     CTAI.SugaredConverted.push_back(Arg);
     CTAI.CanonicalConverted.push_back(Context.getCanonicalTemplateArgument(Arg));
@@ -8481,13 +8505,7 @@ static bool MatchTemplateParameterKind(
     const Sema::TemplateCompareNewDeclInfo &NewInstFrom, NamedDecl *Old,
     const NamedDecl *OldInstFrom, bool Complain,
     Sema::TemplateParameterListEqualKind Kind, SourceLocation TemplateArgLoc) {
-  // A universal template parameter stands in for a parameter of any kind, so
-  // it matches whatever the other side declares.
-  if (isa<UniversalTemplateParmDecl>(Old) ||
-      isa<UniversalTemplateParmDecl>(New))
-    return true;
-
-  // Check the actual kind (type, non-type, template).
+  // Check the actual kind (type, non-type, template, universal).
   if (Old->getKind() != New->getKind()) {
     if (Complain) {
       unsigned NextDiag = diag::err_template_param_different_kind;
@@ -8517,9 +8535,10 @@ static bool MatchTemplateParameterKind(
         NextDiag = diag::note_template_parameter_pack_non_pack;
       }
 
-      unsigned ParamKind = isa<TemplateTypeParmDecl>(New)? 0
-                      : isa<NonTypeTemplateParmDecl>(New)? 1
-                      : 2;
+      unsigned ParamKind = isa<TemplateTypeParmDecl>(New)       ? 0
+                           : isa<NonTypeTemplateParmDecl>(New)  ? 1
+                           : isa<TemplateTemplateParmDecl>(New) ? 2
+                                                                : 3;
       S.Diag(New->getLocation(), NextDiag)
         << ParamKind << New->isParameterPack();
       S.Diag(Old->getLocation(), diag::note_template_parameter_pack_here)
@@ -8582,9 +8601,10 @@ static bool MatchTemplateParameterKind(
       return false;
   }
 
+  // Universal template parameters cannot be constrained.
   if (Kind != Sema::TPL_TemplateParamsEquivalent &&
       Kind != Sema::TPL_TemplateTemplateParmMatch &&
-      !isa<TemplateTemplateParmDecl>(Old)) {
+      !isa<TemplateTemplateParmDecl, UniversalTemplateParmDecl>(Old)) {
     const Expr *NewC = nullptr, *OldC = nullptr;
 
     if (isa<TemplateTypeParmDecl>(New)) {
@@ -9453,6 +9473,13 @@ ConceptDecl *Sema::ActOnStartConceptDefinition(
   if (Params->size() == 0) {
     Diag(NameLoc, diag::err_concept_no_parameters);
     return nullptr;
+  }
+
+  for (const NamedDecl *Param : *Params) {
+    if (isa<UniversalTemplateParmDecl>(Param)) {
+      Diag(Param->getLocation(), diag::err_universal_template_param_in_concept);
+      return nullptr;
+    }
   }
 
   // Ensure that the parameter pack, if present, is the last parameter in the

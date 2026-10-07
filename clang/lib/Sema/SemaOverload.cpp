@@ -12426,9 +12426,10 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
                                      TemplateSpecCandidateSetKind::Normal) {
   TemplateParameter Param = DeductionFailure.getTemplateParameter();
   NamedDecl *ParamD;
-  (ParamD = Param.dyn_cast<TemplateTypeParmDecl*>()) ||
-  (ParamD = Param.dyn_cast<NonTypeTemplateParmDecl*>()) ||
-  (ParamD = Param.dyn_cast<TemplateTemplateParmDecl*>());
+  (ParamD = Param.dyn_cast<TemplateTypeParmDecl *>()) ||
+      (ParamD = Param.dyn_cast<NonTypeTemplateParmDecl *>()) ||
+      (ParamD = Param.dyn_cast<TemplateTemplateParmDecl *>()) ||
+      (ParamD = Param.dyn_cast<UniversalTemplateParmDecl *>());
   switch (DeductionFailure.getResult()) {
   case TemplateDeductionResult::Success:
     llvm_unreachable(
@@ -12508,8 +12509,10 @@ static void DiagnoseBadDeduction(Sema &S, NamedDecl *Found, Decl *Templated,
       }
 
       which = 1;
-    } else {
+    } else if (isa<TemplateTemplateParmDecl>(ParamD)) {
       which = 2;
+    } else {
+      which = 4;
     }
 
     // Tweak the diagnostic if the problem is that we deduced packs of

@@ -1507,6 +1507,9 @@ namespace {
     bool TransformUniversalTemplateArgument(const TemplateArgumentLoc &Input,
                                             TemplateArgumentLoc &Output);
 
+    bool TransformTemplateParameterToUniversalArgument(
+        const TemplateArgumentLoc &Input, TemplateArgumentLoc &Output);
+
     void transformAttrs(Decl *Old, Decl *New) {
       SemaRef.InstantiateAttrs(TemplateArgs, Old, New);
     }
@@ -2082,6 +2085,66 @@ bool TemplateInstantiator::TransformUniversalTemplateArgument(
   return false;
 }
 
+bool TemplateInstantiator::TransformTemplateParameterToUniversalArgument(
+    const TemplateArgumentLoc &Input, TemplateArgumentLoc &Output) {
+  const TemplateArgument &InputArg = Input.getArgument();
+  unsigned Depth, Index;
+  bool IsPack;
+  switch (InputArg.getKind()) {
+  case TemplateArgument::Type: {
+    QualType T = InputArg.getAsType();
+    const auto *TTPT = dyn_cast<TemplateTypeParmType>(T.getTypePtr());
+    if (!TTPT || T.hasLocalQualifiers())
+      return false;
+    Depth = TTPT->getDepth();
+    Index = TTPT->getIndex();
+    IsPack = TTPT->isParameterPack();
+    break;
+  }
+  case TemplateArgument::Expression: {
+    const auto *DRE = dyn_cast<DeclRefExpr>(InputArg.getAsExpr());
+    const auto *NTTP =
+        DRE ? dyn_cast<NonTypeTemplateParmDecl>(DRE->getDecl()) : nullptr;
+    if (!NTTP)
+      return false;
+    Depth = NTTP->getDepth();
+    Index = NTTP->getIndex();
+    IsPack = NTTP->isParameterPack();
+    break;
+  }
+  case TemplateArgument::Template: {
+    const auto *TTP = dyn_cast_or_null<TemplateTemplateParmDecl>(
+        InputArg.getAsTemplate().getAsTemplateDecl());
+    if (!TTP)
+      return false;
+    Depth = TTP->getDepth();
+    Index = TTP->getIndex();
+    IsPack = TTP->isParameterPack();
+    break;
+  }
+  default:
+    return false;
+  }
+
+  if (Depth >= TemplateArgs.getNumLevels() ||
+      !TemplateArgs.hasTemplateArgument(Depth, Index))
+    return false;
+
+  TemplateArgument Arg = TemplateArgs(Depth, Index);
+  if (Arg.getKind() == TemplateArgument::Pack) {
+    if (!IsPack || !getSema().ArgPackSubstIndex)
+      return false;
+    Arg = getSema().getPackSubstitutedTemplateArgument(Arg);
+  }
+  if (Arg.getKind() != TemplateArgument::Universal &&
+      Arg.getKind() != TemplateArgument::UniversalExpansion)
+    return false;
+
+  Output = getSema().getTrivialTemplateArgumentLoc(Arg, QualType(),
+                                                   Input.getLocation());
+  return true;
+}
+
 bool TemplateInstantiator::InjectBoundConceptArguments(
     TemplateName Name, TemplateArgumentListInfo &Outputs) {
   auto *TTP = Name.getAsTemplateTemplateParmDecl();
@@ -2242,6 +2305,12 @@ TemplateName TemplateInstantiator::TransformTemplateName(
         Arg = SemaRef.getPackSubstitutedTemplateArgument(Arg);
       }
 
+      // A template argument naming a universal template parameter does not
+      // name a template; the name stays dependent on it.
+      if (Arg.getKind() == TemplateArgument::Universal ||
+          Arg.getKind() == TemplateArgument::UniversalExpansion)
+        return Name;
+
       // As in TransformDecl, a partially applied concept substitutes as the
       // concept it names.
       TemplateName Template =
@@ -2345,6 +2414,13 @@ TemplateInstantiator::TransformTemplateParmRefExpr(DeclRefExpr *E,
     PackIndex = SemaRef.getPackIndex(Arg);
     Arg = SemaRef.getPackSubstitutedTemplateArgument(Arg);
   }
+
+  // A template argument naming a universal template parameter has no value;
+  // the expression stays dependent on it.
+  if (Arg.getKind() == TemplateArgument::Universal ||
+      Arg.getKind() == TemplateArgument::UniversalExpansion)
+    return E;
+
   return SemaRef.BuildSubstNonTypeTemplateParmExpr(
       AssociatedDecl, NTTP->getPosition(), ParamType, E->getLocation(), Arg,
       PackIndex, Final);
@@ -2685,6 +2761,16 @@ TemplateInstantiator::TransformTemplateTypeParmType(TypeLocBuilder &TLB,
       // PackIndex starts from last element.
       PackIndex = SemaRef.getPackIndex(Arg);
       Arg = SemaRef.getPackSubstitutedTemplateArgument(Arg);
+    }
+
+    // A template argument naming a universal template parameter has no type;
+    // the type stays dependent on it.
+    if (Arg.getKind() == TemplateArgument::Universal ||
+        Arg.getKind() == TemplateArgument::UniversalExpansion) {
+      TemplateTypeParmTypeLoc NewTL =
+          TLB.push<TemplateTypeParmTypeLoc>(TL.getType());
+      NewTL.setNameLoc(TL.getNameLoc());
+      return TL.getType();
     }
 
     assert(Arg.getKind() == TemplateArgument::Type &&

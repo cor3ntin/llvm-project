@@ -668,6 +668,18 @@ public:
     return false;
   }
 
+  /// If \p Input is a template argument naming a template parameter that is
+  /// being substituted with a template argument naming a universal template
+  /// parameter, set \p Output to the latter and return true. Such a template
+  /// argument is neither a type, an expression, nor a template, so it can
+  /// only replace the template parameter as a whole.
+  ///
+  /// By default, there is no substitution to perform.
+  bool TransformTemplateParameterToUniversalArgument(
+      const TemplateArgumentLoc &Input, TemplateArgumentLoc &Output) {
+    return false;
+  }
+
   /// If \p Name refers to a concept template parameter that is being
   /// substituted with a partially applied concept, append the arguments bound
   /// by that partial application to \p Outputs. They precede the arguments
@@ -5182,6 +5194,9 @@ template <typename Derived>
 bool TreeTransform<Derived>::TransformTemplateArgument(
     const TemplateArgumentLoc &Input, TemplateArgumentLoc &Output,
     bool Uneval) {
+  if (getDerived().TransformTemplateParameterToUniversalArgument(Input, Output))
+    return false;
+
   const TemplateArgument &Arg = Input.getArgument();
   switch (Arg.getKind()) {
   case TemplateArgument::Null:
@@ -17083,6 +17098,12 @@ TreeTransform<Derived>::TransformSizeOfPackExpr(SizeOfPackExpr *E) {
             getSema().Context.getTypeDeclType(TTPD), std::nullopt);
       } else if (auto *TTPD = dyn_cast<TemplateTemplateParmDecl>(Pack)) {
         ArgStorage = TemplateArgument(TemplateName(TTPD), std::nullopt);
+      } else if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(Pack)) {
+        ArgStorage = TemplateArgument(
+            getSema().Context.getUniversalTemplateParameterName(
+                E->getPackLoc(),
+                DeclarationNameInfo(UTP->getDeclName(), E->getPackLoc()), UTP),
+            /*NumExpansions=*/std::nullopt);
       } else {
         auto *VD = cast<ValueDecl>(Pack);
         ExprResult DRE = getSema().BuildDeclRefExpr(
