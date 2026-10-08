@@ -5711,16 +5711,18 @@ convertTypeTemplateArgumentToTemplate(ASTContext &Context, TypeLoc TLoc) {
 }
 
 /// Determine whether \p E, used as the argument for a universal template
-/// parameter, denotes the entity it names rather than its value. These are the
-/// forms for which 'decltype' yields the type of that entity rather than the
-/// type of the expression ([dcl.type.decltype]p1): an unparenthesized
-/// id-expression or class member access. The type of the constant template
-/// parameter such an argument is eventually bound to is deduced from the
-/// entity, not here.
+/// parameter, is an id-expression (including a concept-id) or a class member
+/// access. The type of the constant template parameter such an argument is
+/// eventually bound to is deduced there, as if the argument had been written
+/// in its place, not here.
+///
+/// Once substituted, the name of a constant template parameter is replaced by
+/// the constant it denotes, which binds the same way; keeping it as a deferred
+/// argument would make `S<N>` a different type from `S<1>` for `N == 1`.
 static bool isSymbolicTemplateArgument(const Expr *E) {
   return isa<DeclRefExpr, MemberExpr, DependentScopeDeclRefExpr,
              UnresolvedLookupExpr, CXXDependentScopeMemberExpr,
-             UnresolvedMemberExpr>(E);
+             UnresolvedMemberExpr, ConceptSpecializationExpr>(E);
 }
 
 bool Sema::CheckTemplateArgument(NamedDecl *Param, TemplateArgumentLoc &ArgLoc,

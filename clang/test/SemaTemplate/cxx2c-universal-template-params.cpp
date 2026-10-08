@@ -474,6 +474,79 @@ static_assert(Pair<int, c>::v == 0);
 
 } // namespace DeferredMatching
 
+namespace IdExpressions {
+
+// Every id-expression is deferred: it matches a partial specialization for a
+// constant of another type, as if it had been written as its argument, while
+// a constant must already have that type.
+template <universal template> struct D { static constexpr int v = 0; };
+template <long L> struct D<L> { static constexpr int v = 1; };
+
+constexpr int c = 1;
+enum E { e1 = 7 };
+template <class T> constexpr int vt = 3;
+template <class T> concept IsInt = __is_same(T, int);
+struct St { static constexpr int sc = 4; };
+struct HasValue { static constexpr int value = 6; };
+template <class T> struct Dep { static constexpr int v = D<T::value>::v; };
+
+static_assert(D<c>::v == 1);
+static_assert(D<e1>::v == 1);
+static_assert(D<E::e1>::v == 1);
+static_assert(D<vt<int>>::v == 1);
+static_assert(D<St::sc>::v == 1);
+static_assert(D<IsInt<int>>::v == 1);
+static_assert(Dep<HasValue>::v == 1);
+void f() {
+  template for (constexpr int i : {1})
+    static_assert(D<i>::v == 1);
+}
+
+// Anything else is a constant.
+static_assert(D<(c)>::v == 0);
+static_assert(D<1>::v == 0);
+static_assert(D<true>::v == 0);
+
+template <universal template U> struct S {};
+static_assert(!__is_same(S<IsInt<int>>, S<true>));
+static_assert(__is_same(S<IsInt<int>>, S<IsInt<int>>));
+
+// Once substituted, the name of a constant template parameter is the constant
+// it denotes, so that a specialization formed inside a template is the one
+// formed outside of it.
+template <int V> struct Fwd {
+  using type = S<V>;
+  static constexpr int v = D<V>::v;
+};
+static_assert(__is_same(Fwd<1>::type, S<1>));
+static_assert(Fwd<1>::v == 0);
+
+template <int N> constexpr int g(S<N>) { return N; }
+static_assert(g(S<2>{}) == 2);
+static_assert(g(Fwd<3>::type{}) == 3);
+
+// That constant binds like the name of the template parameter would.
+template <template <universal template> class Z, universal template U>
+using Apply = Z<U>;
+template <long L> struct Long { static constexpr long v = L; };
+template <decltype(auto) X> struct DeclTypeOf { using type = decltype(X); };
+struct Lit { int v; };
+template <const Lit &R> struct LitRef { static constexpr int v = R.v; };
+
+template <int V> struct ByValue {
+  static_assert(Apply<Long, V>::v == V);
+  static_assert(__is_same(typename Apply<DeclTypeOf, V>::type, int));
+};
+template struct ByValue<5>;
+
+template <Lit L> struct ByClass {
+  static_assert(Apply<LitRef, L>::v == L.v);
+  static_assert(__is_same(typename Apply<DeclTypeOf, L>::type, Lit));
+};
+template struct ByClass<Lit{6}>;
+
+} // namespace IdExpressions
+
 namespace InconsistentDeduction {
 
 template <universal template U> struct S {};
