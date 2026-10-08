@@ -18,6 +18,8 @@ struct Extract<TT<U>> { using type = S<U>; };
 template <universal template U> int f() { return 0; }
 template <typename T> int f() { return 1; }
 
+template <typename T> concept IsInt = __is_same(T, int);
+
 void test() {
   // CHECK-DAG: define {{.*}} @_Z3useI1SIiEEvT_(
   use(S<int>{});
@@ -42,6 +44,12 @@ void test() {
 
   // CHECK-DAG: define {{.*}} @_Z3useI1PIJiXL_Z1xEEL_Z1xELi42EEEEvT_(
   use(P<int, x, (x), 42>{});
+
+  // A concept-id is an id-expression, distinct from its value.
+  // CHECK-DAG: define {{.*}} @_Z3useI1SILb1EEEvT_(
+  use(S<true>{});
+  // CHECK-DAG: define {{.*}} @_Z3useI1SIX5IsIntIiEEEEvT_(
+  use(S<IsInt<int>>{});
 
   // A function template overloaded on the kind of its template parameter.
   // CHECK-DAG: define {{.*}} @_Z1fITuXL_Z1xEEEiv(
