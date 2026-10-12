@@ -12958,8 +12958,7 @@ public:
   /// Determine the declared type of the constant template parameter that \p Arg
   /// names, if any.
   static QualType
-  getTypeOfConstantTemplateParameter(const TemplateArgument &Arg,
-                                     UnsignedOrNone Depth = std::nullopt);
+  getTypeOfConstantTemplateParameter(const TemplateArgument &Arg);
 
   /// Mark which template parameters are used in a given expression.
   ///
