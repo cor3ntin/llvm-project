@@ -851,6 +851,9 @@ bool ODRDiagsEmitter::diagnoseMismatch(
         if (auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(D))
           return NTTP->hasDefaultArgument() &&
                  !NTTP->defaultArgumentWasInherited();
+        // Universal template parameters cannot have default arguments.
+        if (isa<UniversalTemplateParmDecl>(D))
+          return false;
         auto *TTP = cast<TemplateTemplateParmDecl>(D);
         return TTP->hasDefaultArgument() && !TTP->defaultArgumentWasInherited();
       };
@@ -1357,6 +1360,7 @@ bool ODRDiagsEmitter::diagnoseMismatch(
           TemplateTypeParameter,
           NonTypeTemplateParameter,
           TemplateTemplateParameter,
+          UniversalTemplateParameter,
         };
         auto GetParamType = [](NamedDecl *D) {
           switch (D->getKind()) {
@@ -1368,6 +1372,8 @@ bool ODRDiagsEmitter::diagnoseMismatch(
             return NonTypeTemplateParameter;
           case Decl::TemplateTemplateParm:
             return TemplateTemplateParameter;
+          case Decl::UniversalTemplateParm:
+            return UniversalTemplateParameter;
           }
         };
 
@@ -1543,6 +1549,17 @@ bool ODRDiagsEmitter::diagnoseMismatch(
               << (i + 1) << SecondNTTPD->isParameterPack();
           return true;
         }
+      }
+
+      if (isa<UniversalTemplateParmDecl>(FirstParam) &&
+          isa<UniversalTemplateParmDecl>(SecondParam) &&
+          FirstParam->isTemplateParameterPack() !=
+              SecondParam->isTemplateParameterPack()) {
+        DiagTemplateError(FunctionTemplatePackParameter)
+            << (i + 1) << FirstParam->isTemplateParameterPack();
+        DiagTemplateNote(FunctionTemplatePackParameter)
+            << (i + 1) << SecondParam->isTemplateParameterPack();
+        return true;
       }
     }
     break;

@@ -8268,9 +8268,12 @@ ASTRecordReader::readTemplateArgumentLocInfo(TemplateArgument::ArgKind Kind) {
     SourceLocation TemplateKWLoc = readSourceLocation();
     NestedNameSpecifierLoc QualifierLoc = readNestedNameSpecifierLoc();
     SourceLocation TemplateNameLoc = readSourceLocation();
-    SourceLocation EllipsisLoc = Kind == TemplateArgument::TemplateExpansion
-                                     ? readSourceLocation()
-                                     : SourceLocation();
+    SourceLocation EllipsisLoc =
+        Kind == TemplateArgument::TemplateExpansion ||
+                Kind == TemplateArgument::ConceptExpansion ||
+                Kind == TemplateArgument::UniversalExpansion
+            ? readSourceLocation()
+            : SourceLocation();
     return TemplateArgumentLocInfo(getASTContext(), TemplateKWLoc, QualifierLoc,
                                    TemplateNameLoc, EllipsisLoc);
   }

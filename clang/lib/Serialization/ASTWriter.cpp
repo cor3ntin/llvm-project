@@ -1123,6 +1123,7 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(DECL_TEMPLATE_TYPE_PARM);
   RECORD(DECL_NON_TYPE_TEMPLATE_PARM);
   RECORD(DECL_TEMPLATE_TEMPLATE_PARM);
+  RECORD(DECL_UNIVERSAL_TEMPLATE_PARM);
   RECORD(DECL_CONCEPT);
   RECORD(DECL_REQUIRES_EXPR_BODY);
   RECORD(DECL_TYPE_ALIAS_TEMPLATE);
@@ -7022,7 +7023,9 @@ void ASTRecordWriter::AddTemplateArgumentLocInfo(
     AddSourceLocation(Arg.getTemplateKWLoc());
     AddNestedNameSpecifierLoc(Arg.getTemplateQualifierLoc());
     AddSourceLocation(Arg.getTemplateNameLoc());
-    if (K == TemplateArgument::TemplateExpansion)
+    if (K == TemplateArgument::TemplateExpansion ||
+        K == TemplateArgument::ConceptExpansion ||
+        K == TemplateArgument::UniversalExpansion)
       AddSourceLocation(Arg.getTemplateEllipsisLoc());
     break;
   case TemplateArgument::Null:
@@ -7251,9 +7254,9 @@ void ASTWriter::associateDeclWithFile(const Decl *D, LocalDeclID ID) {
     return;
   // FIXME: ParmVarDecls that are part of a function type of a parameter of
   // a function/objc method, should not have TU as lexical context.
-  // TemplateTemplateParmDecls that are part of an alias template, should not
-  // have TU as lexical context.
-  if (isa<ParmVarDecl, TemplateTemplateParmDecl>(D))
+  // TemplateTemplateParmDecls and UniversalTemplateParmDecls that are part of
+  // an alias template, should not have TU as lexical context.
+  if (isa<ParmVarDecl, TemplateTemplateParmDecl, UniversalTemplateParmDecl>(D))
     return;
 
   SourceManager &SM = PP->getSourceManager();

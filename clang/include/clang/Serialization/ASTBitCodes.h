@@ -1564,7 +1564,10 @@ enum DeclCode {
   /// A TypeAliasPackDecl record.
   DECL_TYPEALIAS_PACK,
 
-  DECL_LAST = DECL_TYPEALIAS_PACK
+  /// A UniversalTemplateParmDecl record.
+  DECL_UNIVERSAL_TEMPLATE_PARM,
+
+  DECL_LAST = DECL_UNIVERSAL_TEMPLATE_PARM
 };
 
 /// Record codes for each kind of statement or expression.
