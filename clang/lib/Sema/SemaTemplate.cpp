@@ -12015,8 +12015,8 @@ bool Sema::RebuildTemplateParamsInCurrentInstantiation(
   for (unsigned I = 0, N = Params->size(); I != N; ++I) {
     Decl *Param = Params->getParam(I);
 
-    // There is nothing to rebuild in a type parameter.
-    if (isa<TemplateTypeParmDecl>(Param))
+    // There is nothing to rebuild in a type or universal parameter.
+    if (isa<TemplateTypeParmDecl, UniversalTemplateParmDecl>(Param))
       continue;
 
     // Rebuild the template parameter list of a template template parameter.

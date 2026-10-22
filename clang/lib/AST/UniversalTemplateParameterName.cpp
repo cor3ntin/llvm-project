@@ -29,7 +29,12 @@ bool UniversalTemplateParameterName::containsUnexpandedParameterPack() const {
 
 void UniversalTemplateParameterName::Profile(
     llvm::FoldingSetNodeID &ID, const UniversalTemplateParmDecl *Param) {
-  ID.AddPointer(Param);
+  // Like a template type parameter, a universal template parameter is
+  // identified by its position, so that the template parameters of two
+  // declarations of the same template are equivalent.
+  ID.AddInteger(Param->getDepth());
+  ID.AddInteger(Param->getIndex());
+  ID.AddBoolean(Param->isParameterPack());
 }
 
 void UniversalTemplateParameterName::print(

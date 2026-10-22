@@ -150,6 +150,11 @@ namespace {
           ID.AddBoolean(TTP->isParameterPack());
           return;
         }
+
+        if (const auto *UTP = dyn_cast<UniversalTemplateParmDecl>(D)) {
+          UniversalTemplateParameterName::Profile(ID, UTP);
+          return;
+        }
       }
 
       ID.AddPointer(D ? D->getCanonicalDecl() : nullptr);

@@ -555,9 +555,14 @@ bool TemplateArgument::structurallyEquals(const TemplateArgument &Other) const {
   }
 
   case Universal:
-  case UniversalExpansion:
-    return UniversalArg.Name == Other.UniversalArg.Name &&
-           UniversalArg.NumExpansions == Other.UniversalArg.NumExpansions;
+  case UniversalExpansion: {
+    if (UniversalArg.NumExpansions != Other.UniversalArg.NumExpansions)
+      return false;
+    llvm::FoldingSetNodeID A, B;
+    UniversalArg.Name->Profile(A);
+    Other.UniversalArg.Name->Profile(B);
+    return A == B;
+  }
 
   case Concept:
   case ConceptExpansion: {

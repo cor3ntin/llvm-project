@@ -463,6 +463,19 @@ transformTemplateParam(Sema &SemaRef, DeclContext *DC,
   return NewTTP;
 }
 
+UniversalTemplateParmDecl *
+transformTemplateParam(Sema &SemaRef, DeclContext *DC,
+                       UniversalTemplateParmDecl *UTP, unsigned NewDepth,
+                       unsigned NewIndex) {
+  auto *NewUTP = UniversalTemplateParmDecl::Create(
+      SemaRef.Context, DC, UTP->getLocation(), NewDepth, NewIndex,
+      UTP->isParameterPack(), UTP->getIdentifier());
+  NewUTP->setAccess(AS_public);
+  NewUTP->setImplicit(UTP->isImplicit());
+  SemaRef.CurrentInstantiationScope->InstantiatedLocal(UTP, NewUTP);
+  return NewUTP;
+}
+
 NamedDecl *transformTemplateParameter(Sema &SemaRef, DeclContext *DC,
                                       NamedDecl *TemplateParam,
                                       MultiLevelTemplateArgumentList &Args,
@@ -476,6 +489,8 @@ NamedDecl *transformTemplateParameter(Sema &SemaRef, DeclContext *DC,
   if (auto *TTP = dyn_cast<TemplateTemplateParmDecl>(TemplateParam))
     return transformTemplateParam(SemaRef, DC, TTP, NewDepth, NewIndex, Args,
                                   EvaluateConstraint);
+  if (auto *UTP = dyn_cast<UniversalTemplateParmDecl>(TemplateParam))
+    return transformTemplateParam(SemaRef, DC, UTP, NewDepth, NewIndex);
   llvm_unreachable("Unhandled template parameter types");
 }
 
@@ -909,8 +924,8 @@ SmallVector<unsigned> TemplateParamsReferencedInTemplateArgumentList(
       MarkDefaultArgs(TTPD);
     else if (auto *NTTPD = dyn_cast<NonTypeTemplateParmDecl>(Param))
       MarkDefaultArgs(NTTPD);
-    else
-      MarkDefaultArgs(cast<TemplateTemplateParmDecl>(Param));
+    else if (auto *TTPD = dyn_cast<TemplateTemplateParmDecl>(Param))
+      MarkDefaultArgs(TTPD);
   }
 
   SmallVector<unsigned> Results;

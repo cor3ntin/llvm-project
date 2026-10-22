@@ -2062,14 +2062,34 @@ bool TemplateInstantiator::instantiateMissingDeclsToScopeForConcepts(Decl *D) {
 
 bool TemplateInstantiator::TransformUniversalTemplateArgument(
     const TemplateArgumentLoc &Input, TemplateArgumentLoc &Output) {
-  UniversalTemplateParmDecl *UTP =
-      Input.getArgument().getAsUniversalTemplateParameterName()->getDecl();
+  UniversalTemplateParameterName *Name =
+      Input.getArgument().getAsUniversalTemplateParameterName();
+  UniversalTemplateParmDecl *UTP = Name->getDecl();
   unsigned Depth = UTP->getDepth(), Index = UTP->getPosition();
 
-  // The parameter belongs to an enclosing level we are not substituting, or
-  // no argument has been supplied for it yet.
-  if (Depth >= TemplateArgs.getNumLevels() ||
-      !TemplateArgs.hasTemplateArgument(Depth, Index)) {
+  // The parameter comes from an inner template (e.g., the template parameter
+  // list of a member template inside the template we are instantiating), so
+  // name its instantiation, whose depth is reduced.
+  if (Depth >= TemplateArgs.getNumLevels()) {
+    auto *NewUTP = cast_or_null<UniversalTemplateParmDecl>(
+        TransformDecl(Input.getLocation(), UTP));
+    if (!NewUTP)
+      return true;
+    if (NewUTP == UTP) {
+      Output = Input;
+      return false;
+    }
+    Output = TemplateArgumentLoc(
+        getSema().Context,
+        TemplateArgument(getSema().Context.getUniversalTemplateParameterName(
+            Name->getLocation(), Name->getNameInfo(), NewUTP)),
+        /*TemplateKWLoc=*/SourceLocation(), NestedNameSpecifierLoc(),
+        Input.getTemplateNameLoc());
+    return false;
+  }
+
+  // No argument has been supplied for the parameter yet.
+  if (!TemplateArgs.hasTemplateArgument(Depth, Index)) {
     Output = Input;
     return false;
   }
@@ -4989,7 +5009,7 @@ LocalInstantiationScope::findInstantiationOf(const Decl *D) {
   // If we're performing a partial substitution during template argument
   // deduction, we may not have values for template parameters yet.
   if (isa<NonTypeTemplateParmDecl>(D) || isa<TemplateTypeParmDecl>(D) ||
-      isa<TemplateTemplateParmDecl>(D))
+      isa<TemplateTemplateParmDecl>(D) || isa<UniversalTemplateParmDecl>(D))
     return nullptr;
 
   // Local types referenced prior to definition may require instantiation.

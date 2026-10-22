@@ -4203,6 +4203,10 @@ Decl *TemplateDeclInstantiator::VisitUniversalTemplateParmDecl(
   Param->setAccess(AS_public);
   if (D->isImplicit())
     Param->setImplicit();
+
+  // Introduce this template parameter's instantiation into the instantiation
+  // scope.
+  SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Param);
   return Param;
 }
 
@@ -7417,6 +7421,7 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
     return D;
   if (isa<ParmVarDecl>(D) || isa<NonTypeTemplateParmDecl>(D) ||
       isa<TemplateTypeParmDecl>(D) || isa<TemplateTemplateParmDecl>(D) ||
+      isa<UniversalTemplateParmDecl>(D) ||
       (ParentDependsOnArgs && (ParentDC->isFunctionOrMethod() ||
                                isa<OMPDeclareReductionDecl>(ParentDC) ||
                                isa<OMPDeclareMapperDecl>(ParentDC))) ||
@@ -7447,7 +7452,7 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
     // deduction, we may not have values for template parameters yet. They
     // just map to themselves.
     if (isa<NonTypeTemplateParmDecl>(D) || isa<TemplateTypeParmDecl>(D) ||
-        isa<TemplateTemplateParmDecl>(D))
+        isa<TemplateTemplateParmDecl>(D) || isa<UniversalTemplateParmDecl>(D))
       return D;
 
     if (D->isInvalidDecl())

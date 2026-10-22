@@ -660,13 +660,23 @@ static TemplateDeductionResult DeduceTemplateArguments(
 /// If \p P names a universal template parameter that we are currently
 /// deducing, return its declaration; otherwise return null.
 static const UniversalTemplateParmDecl *
-getDeducedUniversalParameter(TemplateDeductionInfo &Info,
+getDeducedUniversalParameter(TemplateParameterList *TemplateParams,
+                             TemplateDeductionInfo &Info,
                              const TemplateArgument &P) {
   if (P.getKind() != TemplateArgument::Universal)
     return nullptr;
   const UniversalTemplateParmDecl *UTP =
       P.getAsUniversalTemplateParameterName()->getDecl();
-  return UTP->getDepth() == Info.getDeducedDepth() ? UTP : nullptr;
+  if (UTP->getDepth() != Info.getDeducedDepth())
+    return nullptr;
+  // Universal template arguments are canonicalized by position, so the name
+  // can refer to a parameter of another template; use the parameter being
+  // deduced.
+  if (UTP->getIndex() < TemplateParams->size())
+    if (const auto *Param = dyn_cast<UniversalTemplateParmDecl>(
+            TemplateParams->getParam(UTP->getIndex())))
+      return Param;
+  return UTP;
 }
 
 /// Deduce a universal template parameter. Unlike every other kind of
@@ -2738,7 +2748,7 @@ DeduceTemplateArguments(Sema &S, TemplateParameterList *TemplateParams,
     // A universal template parameter is deduced to the argument, whatever
     // kind that argument has.
     if (const UniversalTemplateParmDecl *UTP =
-            getDeducedUniversalParameter(Info, P))
+            getDeducedUniversalParameter(TemplateParams, Info, P))
       return DeduceUniversalTemplateArgument(S, UTP, DeducedTemplateArgument(A),
                                              Info, Deduced,
                                              HasDeducedAnyParam);
@@ -6319,51 +6329,77 @@ static bool isAtLeastAsSpecializedAs(
   }
 
   // Figure out which template parameters were used.
-  llvm::SmallBitVector UsedParameters(TemplateParams->size());
-  switch (TPOC) {
-  case TPOC_Call:
-    for (unsigned I = 0, N = Args2.size(); I != N; ++I)
-      ::MarkUsedTemplateParameters(S.Context, Args2[I], /*OnlyDeduced=*/false,
-                                   TemplateParams->getDepth(), UsedParameters);
-    break;
+  auto MarkUsedParameters = [&](FunctionTemplateDecl *FT,
+                                ArrayRef<QualType> Args) {
+    TemplateParameterList *Params = FT->getTemplateParameters();
+    const FunctionDecl *FD = FT->getTemplatedDecl();
+    llvm::SmallBitVector UsedParameters(Params->size());
+    switch (TPOC) {
+    case TPOC_Call:
+      for (QualType Arg : Args)
+        ::MarkUsedTemplateParameters(S.Context, Arg, /*OnlyDeduced=*/false,
+                                     Params->getDepth(), UsedParameters);
+      break;
 
-  case TPOC_Conversion:
-    ::MarkUsedTemplateParameters(S.Context, Proto2->getReturnType(),
-                                 /*OnlyDeduced=*/false,
-                                 TemplateParams->getDepth(), UsedParameters);
-    break;
+    case TPOC_Conversion:
+      ::MarkUsedTemplateParameters(S.Context, FD->getReturnType(),
+                                   /*OnlyDeduced=*/false, Params->getDepth(),
+                                   UsedParameters);
+      break;
 
-  case TPOC_Other:
-    // We do not deduce template arguments from the exception specification
-    // when determining the primary template of a function template
-    // specialization or when taking the address of a function template.
-    // Therefore, we do not mark template parameters in the exception
-    // specification as used during partial ordering to prevent the following
-    // from being ambiguous:
-    //
-    //   template<typename T, typename U>
-    //   void f(U) noexcept(noexcept(T())); // #1
-    //
-    //   template<typename T>
-    //   void f(T*) noexcept; // #2
-    //
-    //   template<>
-    //   void f<int>(int*) noexcept; // explicit specialization of #2
-    //
-    // Although there is no corresponding wording in the standard, this seems
-    // to be the intended behavior given the definition of
-    // 'deduction substitution loci' in [temp.deduct].
-    ::MarkUsedTemplateParameters(
-        S.Context,
-        S.Context.getFunctionTypeWithExceptionSpec(FD2->getType(), EST_None),
-        /*OnlyDeduced=*/false, TemplateParams->getDepth(), UsedParameters);
-    break;
-  }
+    case TPOC_Other:
+      // We do not deduce template arguments from the exception specification
+      // when determining the primary template of a function template
+      // specialization or when taking the address of a function template.
+      // Therefore, we do not mark template parameters in the exception
+      // specification as used during partial ordering to prevent the
+      // following from being ambiguous:
+      //
+      //   template<typename T, typename U>
+      //   void f(U) noexcept(noexcept(T())); // #1
+      //
+      //   template<typename T>
+      //   void f(T*) noexcept; // #2
+      //
+      //   template<>
+      //   void f<int>(int*) noexcept; // explicit specialization of #2
+      //
+      // Although there is no corresponding wording in the standard, this seems
+      // to be the intended behavior given the definition of
+      // 'deduction substitution loci' in [temp.deduct].
+      ::MarkUsedTemplateParameters(
+          S.Context,
+          S.Context.getFunctionTypeWithExceptionSpec(FD->getType(), EST_None),
+          /*OnlyDeduced=*/false, Params->getDepth(), UsedParameters);
+      break;
+    }
+    return UsedParameters;
+  };
 
+  llvm::SmallBitVector UsedParameters2 = MarkUsedParameters(FT2, Args2);
   for (; ArgIdx != NumArgs; ++ArgIdx)
     // If this argument had no value deduced but was used in one of the types
     // used for partial ordering, then deduction fails.
-    if (Deduced[ArgIdx].isNull() && UsedParameters[ArgIdx])
+    if (Deduced[ArgIdx].isNull() && UsedParameters2[ArgIdx])
+      return false;
+
+  // P2989 [temp.deduct.partial]:
+  //   [F is at least as specialized as G if] for each pair of corresponding
+  //   template parameters that are not used in those types, the template
+  //   parameter from F is at least as specialized as the template parameter
+  //   from G.
+  //
+  //   If, for a given pair of corresponding template parameters of the two
+  //   templates, one is a universal template parameter, that template
+  //   parameter is not considered to be at least as specialized as the other.
+  TemplateParameterList *TemplateParams1 = FT1->getTemplateParameters();
+  llvm::SmallBitVector UsedParameters1 = MarkUsedParameters(FT1, Args1);
+  for (unsigned I = 0,
+                N = std::min(TemplateParams1->size(), TemplateParams->size());
+       I != N; ++I)
+    if (!UsedParameters1[I] && !UsedParameters2[I] &&
+        isa<UniversalTemplateParmDecl>(TemplateParams1->getParam(I)) &&
+        !isa<UniversalTemplateParmDecl>(TemplateParams->getParam(I)))
       return false;
 
   return true;
