@@ -465,6 +465,10 @@ Parser::TPResult Parser::isStartOfTemplateTypeParameter() {
 }
 
 NamedDecl *Parser::ParseTemplateParameter(unsigned Depth, unsigned Position) {
+  // 'universal template' cannot start any other kind of template parameter,
+  // even when 'universal' names a type or a concept.
+  if (isUniversalTemplateParameterIntroducer())
+    return ParseUniversalTemplateParameter(Depth, Position);
 
   switch (isStartOfTemplateTypeParameter()) {
   case TPResult::True:
@@ -511,9 +515,6 @@ NamedDecl *Parser::ParseTemplateParameter(unsigned Depth, unsigned Position) {
   case TPResult::Ambiguous:
     llvm_unreachable("template param classification can't be ambiguous");
   }
-
-  if (isUniversalTemplateParameterIntroducer())
-    return ParseUniversalTemplateParameter(Depth, Position);
 
   if (Tok.is(tok::kw_template))
     return ParseTemplateTemplateParameter(Depth, Position);

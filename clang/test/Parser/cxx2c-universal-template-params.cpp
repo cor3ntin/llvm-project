@@ -11,3 +11,17 @@ void f();
 
 template <universal template... Us> // cxx23-error {{universal template parameters are a C++2c extension}}
 struct Pack {};
+
+// 'universal template' introduces a universal template parameter even when
+// 'universal' names a concept or a type.
+namespace concept_name {
+template <class> concept universal = true;
+template <universal template U, universal T> // cxx23-error {{universal template parameters are a C++2c extension}}
+struct X {};
+}
+
+namespace type_name {
+struct universal {};
+template <universal template, universal V> // cxx23-error {{universal template parameters are a C++2c extension}}
+struct X {};
+}

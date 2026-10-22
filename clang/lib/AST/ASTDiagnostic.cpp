@@ -602,7 +602,10 @@ class TemplateDiff {
       Declaration,
       /// One argument being integer and the other being declaration
       FromIntegerAndToDeclaration,
-      FromDeclarationAndToInteger
+      FromDeclarationAndToInteger,
+      /// Arguments of a universal template parameter that are not both types
+      /// or both templates, which can be of different kinds
+      Universal
     };
 
   private:
@@ -620,6 +623,7 @@ class TemplateDiff {
       bool NeedAddressOf = false;
       bool IsNullPtr = false;
       bool IsDefault = false;
+      TemplateArgument TA;
     };
 
     /// DiffNode - The root node stores the original type.  Each child node
@@ -772,6 +776,14 @@ class TemplateDiff {
       SetDefault(FromDefault, ToDefault);
     }
 
+    void SetUniversalDiff(const TemplateArgument &FromTA,
+                          const TemplateArgument &ToTA) {
+      assert(FlatTree[CurrentNode].Kind == Invalid && "Node is not empty.");
+      FlatTree[CurrentNode].Kind = Universal;
+      FlatTree[CurrentNode].FromArgInfo.TA = FromTA;
+      FlatTree[CurrentNode].ToArgInfo.TA = ToTA;
+    }
+
     /// SetDefault - Sets FromDefault and ToDefault flags of the current node.
     void SetDefault(bool FromDefault, bool ToDefault) {
       assert((!FromDefault || !ToDefault) && "Both arguments cannot be default.");
@@ -857,6 +869,12 @@ class TemplateDiff {
       assert(FlatTree[ReadNode].Kind == TemplateTemplate && "Unexpected kind.");
       FromTD = FlatTree[ReadNode].FromArgInfo.TD;
       ToTD = FlatTree[ReadNode].ToArgInfo.TD;
+    }
+
+    void GetUniversalDiff(TemplateArgument &FromTA, TemplateArgument &ToTA) {
+      assert(FlatTree[ReadNode].Kind == Universal && "Unexpected kind.");
+      FromTA = FlatTree[ReadNode].FromArgInfo.TA;
+      ToTA = FlatTree[ReadNode].ToArgInfo.TA;
     }
 
     void GetIntegerDiff(llvm::APSInt &FromInt, llvm::APSInt &ToInt,
@@ -1396,6 +1414,49 @@ class TemplateDiff {
     Tree.SetSame(IsEqualExpr(Context, FromExpr, ToExpr));
   }
 
+  /// DiffUniversal - Fills a DiffNode with information about the arguments of
+  /// a universal template parameter, which can be of different kinds.
+  void DiffUniversal(const TSTiterator &FromIter, const TSTiterator &ToIter) {
+    // A universal template parameter has no default argument, so an argument
+    // is only missing when the other one is part of a longer pack.
+    auto GetArg = [](const TSTiterator &Iter) {
+      return Iter.isEnd() ? TemplateArgument() : *Iter;
+    };
+    auto GetCanonicalArg = [&](const TSTiterator &Iter) {
+      if (Iter.hasDesugaredTA())
+        return Context.getCanonicalTemplateArgument(Iter.getDesugaredTA());
+      if (Iter.isEnd())
+        return TemplateArgument();
+      return Context.getCanonicalTemplateArgument(*Iter);
+    };
+
+    TemplateArgument FromArg = GetArg(FromIter), ToArg = GetArg(ToIter);
+    TemplateArgument::ArgKind FromKind = FromArg.getKind(),
+                              ToKind = ToArg.getKind();
+    if (FromKind == ToKind && FromKind == TemplateArgument::Type) {
+      DiffTypes(FromIter, ToIter);
+      return;
+    }
+    if (FromKind == ToKind && FromKind == TemplateArgument::Template) {
+      DiffTemplateTemplates(FromIter, ToIter);
+      return;
+    }
+
+    TemplateArgument FromCanon = GetCanonicalArg(FromIter),
+                     ToCanon = GetCanonicalArg(ToIter);
+    bool Same;
+    if (FromCanon.isNull() || ToCanon.isNull())
+      Same = false;
+    else if (FromCanon.getKind() == TemplateArgument::Expression &&
+             ToCanon.getKind() == TemplateArgument::Expression)
+      Same = IsEqualExpr(Context, FromCanon.getAsExpr(), ToCanon.getAsExpr());
+    else
+      Same = FromCanon.structurallyEquals(ToCanon);
+
+    Tree.SetUniversalDiff(FromArg, ToArg);
+    Tree.SetSame(Same);
+  }
+
   /// DiffTemplate - recursively visits template arguments and stores the
   /// argument info into a tree.
   void DiffTemplate(const TemplateSpecializationType *FromTST,
@@ -1438,6 +1499,8 @@ class TemplateDiff {
             cast<NonTypeTemplateParmDecl>(ToParamND);
         DiffNonTypes(FromIter, ToIter, FromDefaultNonTypeDecl,
                      ToDefaultNonTypeDecl);
+      } else if (isa<UniversalTemplateParmDecl>(FromParamND)) {
+        DiffUniversal(FromIter, ToIter);
       } else {
         llvm_unreachable("Unexpected Decl type.");
       }
@@ -1646,6 +1709,12 @@ class TemplateDiff {
                                  ToNullPtr, ToExpr, Tree.ToDefault());
         return;
       }
+      case DiffTree::Universal: {
+        TemplateArgument FromTA, ToTA;
+        Tree.GetUniversalDiff(FromTA, ToTA);
+        PrintUniversal(FromTA, ToTA, Tree.NodeIsSame());
+        return;
+      }
       case DiffTree::Template: {
         // Node is root of template.  Recurse on children.
         TemplateDecl *FromTD, *ToTD;
@@ -1805,6 +1874,39 @@ class TemplateDiff {
       return;
     }
     OS << "(no argument)";
+  }
+
+  /// PrintUniversal - Handles printing of the arguments of a universal
+  /// template parameter, highlighting argument differences.
+  void PrintUniversal(const TemplateArgument &FromTA,
+                      const TemplateArgument &ToTA, bool Same) {
+    if (Same) {
+      PrintUniversal(FromTA);
+    } else if (!PrintTree) {
+      Bold();
+      PrintUniversal(FromTA);
+      Unbold();
+    } else {
+      OS << '[';
+      Bold();
+      PrintUniversal(FromTA);
+      Unbold();
+      OS << " != ";
+      Bold();
+      PrintUniversal(ToTA);
+      Unbold();
+      OS << ']';
+    }
+  }
+
+  /// PrintUniversal - Actual formatting and printing of the argument of a
+  /// universal template parameter, including its type if it is a value.
+  void PrintUniversal(const TemplateArgument &TA) {
+    if (TA.isNull()) {
+      OS << "(no argument)";
+      return;
+    }
+    TA.print(Policy, OS, /*IncludeType=*/true);
   }
 
   /// PrintTemplateTemplate - Handles printing of template template arguments,

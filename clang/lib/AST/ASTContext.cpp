@@ -7608,6 +7608,10 @@ bool ASTContext::isSameTemplateParameter(const NamedDecl *X,
                                 TY->getPlaceholderTypeConstraint());
   }
 
+  if (auto *UX = dyn_cast<UniversalTemplateParmDecl>(X))
+    return UX->isParameterPack() ==
+           cast<UniversalTemplateParmDecl>(Y)->isParameterPack();
+
   auto *TX = cast<TemplateTemplateParmDecl>(X);
   auto *TY = cast<TemplateTemplateParmDecl>(Y);
   return TX->isParameterPack() == TY->isParameterPack() &&
@@ -7657,6 +7661,10 @@ bool ASTContext::isSameDefaultTemplateArgument(const NamedDecl *X,
     DefaultArgumentY->Profile(YID, *this, /*Canonical=*/true);
     return XID == YID;
   }
+
+  // Universal template parameters cannot have default arguments.
+  if (isa<UniversalTemplateParmDecl>(X))
+    return false;
 
   auto *TTPX = cast<TemplateTemplateParmDecl>(X);
   auto *TTPY = cast<TemplateTemplateParmDecl>(Y);
@@ -8039,7 +8047,8 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
     // together with the arguments as written, so it is already canonical.
     case TemplateArgument::Concept:
     case TemplateArgument::ConceptExpansion:
-    // A universal template parameter name is identified by its declaration.
+    // A universal template parameter name is identified by the position of
+    // the parameter it names.
     case TemplateArgument::Universal:
     case TemplateArgument::UniversalExpansion:
       return Arg;

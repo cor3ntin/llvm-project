@@ -558,3 +558,48 @@ void test() {
 }
 
 } // namespace InconsistentDeduction
+
+namespace DeductionGuides {
+
+template <universal template U> struct S {};
+
+template <class T, universal template... Us> struct C { C(T) {} };
+C c(1);
+static_assert(__is_same(decltype(c), C<int>));
+
+template <class T, universal template... Us> struct D { D(T, S<Us>...) {} };
+D d(1, S<int>{}, S<2>{});
+static_assert(__is_same(decltype(d), D<int, int, 2>));
+
+template <class T, class U> struct Pair { Pair(T, U) {} };
+template <universal template V, class T> using Alias = Pair<S<V>, T>;
+Alias a(S<int>{}, 2);
+static_assert(__is_same(decltype(a), Pair<S<int>, int>));
+
+} // namespace DeductionGuides
+
+namespace RewrittenComparisons {
+
+// An operator== is not a rewrite target if a corresponding operator!= is
+// declared; whether they correspond depends on their template parameters.
+template <universal template U> struct S {};
+template <universal template U> constexpr bool operator==(S<U>, int) {
+  return true;
+}
+static_assert(0 == S<1>{});
+
+namespace WithNotEqual {
+template <universal template U> struct T {};
+template <universal template U> constexpr bool operator==(T<U>, int) { // #TEq
+  return true;
+}
+template <universal template U> constexpr bool operator!=(T<U>, int) {
+  return false;
+}
+static_assert(T<1>{} == 0);
+static_assert(0 == T<1>{});
+// expected-error@-1 {{invalid operands to binary expression ('int' and 'T<1>')}}
+//   expected-note@#TEq {{candidate template ignored: could not match 'T<U>' against 'int'}}
+} // namespace WithNotEqual
+
+} // namespace RewrittenComparisons
