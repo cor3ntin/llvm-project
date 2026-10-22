@@ -1552,7 +1552,10 @@ enum DeclCode {
   /// An ExplicitInstantiationDecl record.
   DECL_EXPLICIT_INSTANTIATION,
 
-  DECL_LAST = DECL_EXPLICIT_INSTANTIATION
+  /// A UniversalTemplateParmDecl record.
+  DECL_UNIVERSAL_TEMPLATE_PARM,
+
+  DECL_LAST = DECL_UNIVERSAL_TEMPLATE_PARM
 };
 
 /// Record codes for each kind of statement or expression.

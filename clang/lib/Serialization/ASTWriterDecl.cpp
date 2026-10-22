@@ -129,6 +129,7 @@ namespace clang {
     void VisitVarTemplateDecl(VarTemplateDecl *D);
     void VisitFunctionTemplateDecl(FunctionTemplateDecl *D);
     void VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D);
+    void VisitUniversalTemplateParmDecl(UniversalTemplateParmDecl *D);
     void VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
     void VisitUsingDecl(UsingDecl *D);
     void VisitUsingEnumDecl(UsingEnumDecl *D);
@@ -2200,6 +2201,16 @@ void ASTDeclWriter::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
       Record.AddTemplateArgumentLoc(D->getDefaultArgument());
     Code = serialization::DECL_TEMPLATE_TEMPLATE_PARM;
   }
+}
+
+void ASTDeclWriter::VisitUniversalTemplateParmDecl(
+    UniversalTemplateParmDecl *D) {
+  VisitNamedDecl(D);
+  // TemplateParmPosition.
+  Record.push_back(D->getDepth());
+  Record.push_back(D->getPosition());
+  Record.push_back(D->isParameterPack());
+  Code = serialization::DECL_UNIVERSAL_TEMPLATE_PARM;
 }
 
 void ASTDeclWriter::VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D) {

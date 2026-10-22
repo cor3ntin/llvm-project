@@ -559,6 +559,27 @@ void test() {
 
 } // namespace InconsistentDeduction
 
+namespace Shadowing {
+
+// The name of a universal template parameter cannot be redeclared within its
+// scope.
+template <universal template U> // #ShadowA
+struct A { int U; };
+// expected-error@-1 {{declaration of 'U' shadows template parameter}}
+//   expected-note@#ShadowA {{template parameter is declared here}}
+
+template <universal template U> // #ShadowB
+struct B { template <universal template U> struct C {}; };
+// expected-error@-1 {{declaration of 'U' shadows template parameter}}
+//   expected-note@#ShadowB {{template parameter is declared here}}
+
+template <universal template U> // #ShadowF
+void f() { int U; }
+// expected-error@-1 {{declaration of 'U' shadows template parameter}}
+//   expected-note@#ShadowF {{template parameter is declared here}}
+
+} // namespace Shadowing
+
 namespace DeductionGuides {
 
 template <universal template U> struct S {};

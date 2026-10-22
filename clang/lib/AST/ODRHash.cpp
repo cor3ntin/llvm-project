@@ -224,10 +224,15 @@ void ODRHash::AddTemplateArgument(TemplateArgument TA) {
       break;
     }
     case TemplateArgument::Universal:
-    case TemplateArgument::UniversalExpansion:
-      ID.AddPointer(
-          TA.getAsUniversalTemplateParameterOrPattern()->getDecl());
+    case TemplateArgument::UniversalExpansion: {
+      const UniversalTemplateParmDecl *UTP =
+          TA.getAsUniversalTemplateParameterOrPattern()->getDecl();
+      ID.AddInteger(UTP->getDepth());
+      ID.AddInteger(UTP->getIndex());
+      AddBoolean(UTP->isParameterPack());
+      AddDecl(UTP);
       break;
+    }
     case TemplateArgument::Pack:
       ID.AddInteger(TA.pack_size());
       for (auto SubTA : TA.pack_elements()) {
@@ -564,6 +569,12 @@ public:
     Hash.AddBoolean(D->isParameterPack());
 
     Inherited::VisitTemplateTemplateParmDecl(D);
+  }
+
+  void VisitUniversalTemplateParmDecl(const UniversalTemplateParmDecl *D) {
+    Hash.AddBoolean(D->isParameterPack());
+
+    Inherited::VisitUniversalTemplateParmDecl(D);
   }
 
   void VisitTemplateDecl(const TemplateDecl *D) {

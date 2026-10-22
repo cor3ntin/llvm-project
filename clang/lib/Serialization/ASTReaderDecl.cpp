@@ -390,6 +390,7 @@ public:
   void VisitVarTemplateDecl(VarTemplateDecl *D);
   void VisitFunctionTemplateDecl(FunctionTemplateDecl *D);
   void VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D);
+  void VisitUniversalTemplateParmDecl(UniversalTemplateParmDecl *D);
   void VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D);
   void VisitUsingDecl(UsingDecl *D);
   void VisitUsingEnumDecl(UsingEnumDecl *D);
@@ -2816,6 +2817,15 @@ void ASTDeclReader::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
   }
 }
 
+void ASTDeclReader::VisitUniversalTemplateParmDecl(
+    UniversalTemplateParmDecl *D) {
+  VisitNamedDecl(D);
+  // TemplateParmPosition.
+  D->setDepth(Record.readInt());
+  D->setPosition(Record.readInt());
+  D->ParameterPack = Record.readInt();
+}
+
 void ASTDeclReader::VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D) {
   RedeclarableResult Redecl = VisitRedeclarableTemplateDecl(D);
   mergeRedeclarableTemplate(D, Redecl);
@@ -3851,6 +3861,10 @@ static void inheritDefaultTemplateArguments(ASTContext &Context,
     NamedDecl *FromParam = FromTP->getParam(I);
     NamedDecl *ToParam = ToTP->getParam(I);
 
+    // Universal template parameters cannot have default arguments.
+    if (isa<UniversalTemplateParmDecl>(FromParam))
+      continue;
+
     if (auto *FTTP = dyn_cast<TemplateTypeParmDecl>(FromParam))
       inheritDefaultTemplateArgument(Context, FTTP, ToParam);
     else if (auto *FNTTP = dyn_cast<NonTypeTemplateParmDecl>(FromParam))
@@ -4188,6 +4202,9 @@ Decl *ASTReader::ReadDeclRecord(GlobalDeclID ID) {
   case DECL_EXPANDED_TEMPLATE_TEMPLATE_PARM_PACK:
     D = TemplateTemplateParmDecl::CreateDeserialized(Context, ID,
                                                      Record.readInt());
+    break;
+  case DECL_UNIVERSAL_TEMPLATE_PARM:
+    D = UniversalTemplateParmDecl::CreateDeserialized(Context, ID);
     break;
   case DECL_TYPE_ALIAS_TEMPLATE:
     D = TypeAliasTemplateDecl::CreateDeserialized(Context, ID);
