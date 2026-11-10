@@ -363,6 +363,9 @@ void test() {
 // A concept cannot have a universal template parameter.
 template <universal template U> concept Any = true;
 // expected-error@-1 {{a concept cannot have a universal template parameter}}
+template <class T> concept UsesAny = Any<T>;
+template <Any T> void usesAny();
+// expected-error@-1 {{concept named in type constraint is not a type concept}}
 
 } // namespace Constraints
 
