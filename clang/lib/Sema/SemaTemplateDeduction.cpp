@@ -3426,26 +3426,30 @@ findUniversalConstantTypeMismatch(ASTContext &Context,
   return std::nullopt;
 }
 
-/// Determine whether \p Arg is an id-expression bound to a universal template
-/// parameter, whose meaning is only determined by the template parameter it
-/// is eventually bound to ([temp.arg.universal]).
-static bool isDeferredUniversalArgument(const TemplateArgument &Arg) {
-  return Arg.getKind() == TemplateArgument::Expression &&
-         !Arg.getAsExpr()->isValueDependent();
-}
+/// A constant template parameter of a partial specialization deduced from the
+/// argument of a universal template parameter, whether a constant or a
+/// deferred argument, is deduced as if that argument had been written as its
+/// template argument. The template argument of the partial specialization for
+/// that universal template parameter which names this template parameter
+/// therefore stands for the argument of the specialization itself, \p As,
+/// rather than for the value it was converted to. If \p P is such a template
+/// argument, append the template arguments it stands for to \p Out.
+static bool appendDeducedUniversalArguments(
+    Sema &S, const TemplateParameterList *TPL, const TemplateArgumentLoc &P,
+    unsigned Depth, ArrayRef<DeducedTemplateArgument> Deduced,
+    ArrayRef<TemplateArgument> As, TemplateArgumentListInfo &Out) {
+  // Only the last template parameter of a class or variable template can be a
+  // pack, and it receives all of the remaining template arguments.
+  unsigned ParamIdx = Out.size();
+  if (ParamIdx >= TPL->size()) {
+    if (!TPL->getParam(TPL->size() - 1)->isTemplateParameterPack())
+      return false;
+    ParamIdx = TPL->size() - 1;
+  }
+  if (ParamIdx >= As.size() ||
+      !isa<UniversalTemplateParmDecl>(TPL->getParam(ParamIdx)))
+    return false;
 
-/// A constant template parameter of a partial specialization deduced from a
-/// deferred argument is deduced as if that argument had been written as its
-/// template argument. A template argument of the partial specialization that
-/// names this template parameter therefore stands for the deferred argument
-/// itself rather than for the value it was converted to. If \p P is such a
-/// template argument, append the template arguments it stands for to \p Out.
-static bool
-appendDeferredUniversalArguments(Sema &S, const TemplateArgumentLoc &P,
-                                 unsigned Depth,
-                                 ArrayRef<DeducedTemplateArgument> Deduced,
-                                 const MultiLevelTemplateArgumentList &MLTAL,
-                                 TemplateArgumentListInfo &Out) {
   if (P.getArgument().getKind() != TemplateArgument::Expression)
     return false;
   const Expr *E = P.getArgument().getAsExpr();
@@ -3460,32 +3464,36 @@ appendDeferredUniversalArguments(Sema &S, const TemplateArgumentLoc &P,
       NTTP->isParameterPack() != bool(Expansion))
     return false;
 
-  const DeducedTemplateArgument &Arg = Deduced[NTTP->getIndex()];
-  if (!Expansion) {
-    if (!isDeferredUniversalArgument(Arg))
+  unsigned NumArgs = 1;
+  if (Expansion) {
+    const DeducedTemplateArgument &Arg = Deduced[NTTP->getIndex()];
+    if (Arg.getKind() != TemplateArgument::Pack)
       return false;
-    Out.addArgument(TemplateArgumentLoc(Arg, Arg.getAsExpr()));
-    return true;
+    NumArgs = Arg.pack_size();
+  }
+  ArrayRef<TemplateArgument> Args;
+  if (As[ParamIdx].getKind() == TemplateArgument::Pack) {
+    ArrayRef<TemplateArgument> Elements = As[ParamIdx].getPackAsArray();
+    unsigned Offset = Out.size() - ParamIdx;
+    if (Offset + NumArgs > Elements.size())
+      return false;
+    Args = Elements.slice(Offset, NumArgs);
+  } else {
+    if (NumArgs != 1)
+      return false;
+    Args = As.slice(ParamIdx, 1);
   }
 
-  const TemplateArgument &Converted = MLTAL(Depth, NTTP->getIndex());
-  if (Arg.getKind() != TemplateArgument::Pack ||
-      Converted.getKind() != TemplateArgument::Pack ||
-      Arg.pack_size() != Converted.pack_size() ||
-      llvm::none_of(Arg.pack_elements(), isDeferredUniversalArgument))
-    return false;
-  for (auto [Element, ConvertedElement] :
-       llvm::zip_equal(Arg.pack_elements(), Converted.pack_elements())) {
-    if (isDeferredUniversalArgument(Element)) {
-      Out.addArgument(TemplateArgumentLoc(Element, Element.getAsExpr()));
+  for (const TemplateArgument &Arg : Args) {
+    if (Arg.getKind() == TemplateArgument::Expression) {
+      Out.addArgument(TemplateArgumentLoc(Arg, Arg.getAsExpr()));
       continue;
     }
-    // Keep the converted value itself as the argument: rebuilding it from an
-    // expression could turn it back into an id-expression.
-    TemplateArgumentLoc Trivial = S.getTrivialTemplateArgumentLoc(
-        ConvertedElement, QualType(), P.getLocation());
-    Out.addArgument(
-        TemplateArgumentLoc(ConvertedElement, Trivial.getSourceExpression()));
+    // Keep the value itself as the argument: rebuilding it from an expression
+    // could turn it back into an id-expression.
+    TemplateArgumentLoc Trivial =
+        S.getTrivialTemplateArgumentLoc(Arg, QualType(), P.getLocation());
+    Out.addArgument(TemplateArgumentLoc(Arg, Trivial.getLocInfo().getAsExpr()));
   }
   return true;
 }
@@ -3494,7 +3502,7 @@ static TemplateDeductionResult CheckDeducedTemplateArgumentList(
     Sema &S, TemplateDecl *Template, ArrayRef<TemplateArgumentLoc> Ps,
     ArrayRef<TemplateArgument> As, const MultiLevelTemplateArgumentList &MLTAL,
     TemplateDeductionInfo &Info,
-    ArrayRef<DeducedTemplateArgument> DeducedFromDeferred = {},
+    ArrayRef<DeducedTemplateArgument> DeducedForPartialSpec = {},
     unsigned DeducedDepth = 0) {
   TemplateParameterList *TPL = Template->getTemplateParameters();
   TemplateArgumentListInfo InstArgs(TPL->getLAngleLoc(), TPL->getRAngleLoc());
@@ -3508,14 +3516,14 @@ static TemplateDeductionResult CheckDeducedTemplateArgumentList(
     Info.FirstArg = P.getArgument();
     return TemplateDeductionResult::SubstitutionFailure;
   };
-  if (DeducedFromDeferred.empty()) {
+  if (DeducedForPartialSpec.empty()) {
     if (S.SubstTemplateArguments(Ps, MLTAL, InstArgs))
       return SubstitutionFailure(
           Ps[std::min<size_t>(InstArgs.size(), Ps.size() - 1)]);
   } else {
     for (const TemplateArgumentLoc &P : Ps) {
-      if (appendDeferredUniversalArguments(
-              S, P, DeducedDepth, DeducedFromDeferred, MLTAL, InstArgs))
+      if (appendDeducedUniversalArguments(S, TPL, P, DeducedDepth,
+                                          DeducedForPartialSpec, As, InstArgs))
         continue;
       if (S.SubstTemplateArguments(P, MLTAL, InstArgs))
         return SubstitutionFailure(P);

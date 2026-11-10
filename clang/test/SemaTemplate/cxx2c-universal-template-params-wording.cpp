@@ -563,4 +563,14 @@ void test_k() {
   //   expected-note@#k {{candidate template ignored: substitution failure: deduced non-type template argument does not have the same type as the corresponding template parameter ('const int' vs 'long')}}
 }
 
+// So is a constant template parameter deduced from a constant.
+template <universal template> struct KL { static constexpr long v = 0; };
+template <long L> struct KL<L> {
+  using type = decltype(L);
+  static constexpr long v = L;
+};
+static_assert(KL<42>::v == 42 && __is_same(KL<42>::type, long));
+static_assert(KL<c2>::v == 24 && KL<(c2)>::v == 24);
+static_assert(KL<1.0>::v == 0);
+
 } // namespace temp_deduct_type
