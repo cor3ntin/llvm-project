@@ -387,20 +387,100 @@ S<single> s3;
 
 namespace ConstantTypes {
 
-// The type of a value bound to a universal template parameter is part of
-// it, so a partial specialization for a constant of another type does not
-// match.
-template <universal template> struct K { static constexpr int v = 0; };
-template <long L> struct K<L> { static constexpr int v = 1; };
+// The type of a value bound to a universal template parameter is part of it.
+template <universal template U> struct S {};
+static_assert(!__is_same(S<42>, S<42L>));
 
-static_assert(K<42>::v == 0);
+// But a constant template parameter of a partial specialization is deduced
+// from that value as if the value had been written as its template argument,
+// so it matches a partial specialization for a constant of another type.
+template <universal template> struct K { static constexpr int v = 0; };
+template <long L> struct K<L> {
+  static constexpr int v = 1;
+  using type = decltype(L);
+};
+
+static_assert(K<42>::v == 1);
 static_assert(K<42L>::v == 1);
+static_assert(K<'a'>::v == 1);
+static_assert(K<true>::v == 1);
+static_assert(__is_same(K<42>::type, long));
+static_assert(K<1.0>::v == 0);
+static_assert(K<nullptr>::v == 0);
+static_assert(K<int>::v == 0);
+
+template <universal template> constexpr int vk = 0;
+template <long L> constexpr int vk<L> = 1;
+static_assert(vk<42> == 1);
+
+// The value is converted as a template argument would be, which excludes
+// narrowing conversions.
+template <universal template> struct N { static constexpr int v = 0; };
+template <unsigned char C> struct N<C> { static constexpr int v = 1; };
+static_assert(N<255>::v == 1);
+static_assert(N<256>::v == 0);
+static_assert(N<-1>::v == 0);
+
+struct Wrap {
+  constexpr Wrap(int i) : v(i) {}
+  int v;
+};
+template <universal template> struct W { static constexpr int v = 0; };
+template <Wrap X> struct W<X> { static constexpr int v = X.v; };
+static_assert(W<42>::v == 42);
+static_assert(W<Wrap(3)>::v == 3);
 
 template <universal template...> struct Ks { static constexpr int v = 0; };
 template <long... Ls> struct Ks<Ls...> { static constexpr int v = 1; };
 
 static_assert(Ks<42L, 43L>::v == 1);
-static_assert(Ks<42L, 43>::v == 0);
+static_assert(Ks<42L, 43>::v == 1);
+static_assert(Ks<42, int>::v == 0);
+
+// A value written in a partial specialization is not deduced, so it must be
+// the value of the specialization, of the same type.
+template <universal template...> struct Kp { static constexpr int v = 0; };
+template <long... Ls> struct Kp<1L, Ls...> { static constexpr int v = 1; };
+static_assert(Kp<1L, 2>::v == 1);
+static_assert(Kp<1, 2>::v == 0);
+
+// Neither is a value bound to the universal template parameter of a template
+// that is itself a template argument of the specialization.
+template <typename T> struct Nested { static constexpr int v = 0; };
+template <long L> struct Nested<S<L>> { static constexpr int v = 1; };
+static_assert(Nested<S<42L>>::v == 1);
+static_assert(Nested<S<42>>::v == 0);
+
+// A template parameter deduced from two arguments of different types is
+// deduced to different template arguments, even if they would be converted to
+// the same value.
+template <universal template, universal template> struct K2 {
+  static constexpr int v = 0;
+};
+template <long L> struct K2<L, L> { static constexpr int v = 1; };
+constexpr int ci = 1;
+constexpr long cl = 1;
+static_assert(K2<1, 1>::v == 1);
+static_assert(K2<1L, 1L>::v == 1);
+static_assert(K2<1, 2L>::v == 0);
+static_assert(K2<1, 1L>::v == 0);
+static_assert(K2<ci, cl>::v == 0);
+
+// Partial specializations for constants of different types can both match.
+template <universal template> struct A {};
+template <int I> struct A<I> {};  // #ConstantTypesAInt
+template <long L> struct A<L> {}; // #ConstantTypesALong
+A<1> a;
+// expected-error@-1 {{ambiguous partial specializations of 'A<1>'}}
+//   expected-note@#ConstantTypesAInt {{partial specialization matches [with I = 1]}}
+//   expected-note@#ConstantTypesALong {{partial specialization matches [with L = 1]}}
+
+// Deduction for a function template is unchanged.
+template <long L> constexpr int f(S<L>) { return 1; } // #ConstantTypesF
+static_assert(f(S<42L>{}) == 1);
+int fi = f(S<42>{});
+// expected-error@-1 {{no matching function for call to 'f'}}
+//   expected-note@#ConstantTypesF {{candidate template ignored: substitution failure: deduced non-type template argument does not have the same type as the corresponding template parameter ('int' vs 'long')}}
 
 } // namespace ConstantTypes
 
@@ -477,8 +557,7 @@ static_assert(Pair<int, c>::v == 0);
 namespace IdExpressions {
 
 // Every id-expression is deferred: it matches a partial specialization for a
-// constant of another type, as if it had been written as its argument, while
-// a constant must already have that type.
+// constant of another type, as if it had been written as its argument.
 template <universal template> struct D { static constexpr int v = 0; };
 template <long L> struct D<L> { static constexpr int v = 1; };
 
@@ -502,24 +581,22 @@ void f() {
     static_assert(D<i>::v == 1);
 }
 
-// Anything else is a constant.
-static_assert(D<(c)>::v == 0);
-static_assert(D<1>::v == 0);
-static_assert(D<true>::v == 0);
-
+// Anything else is a constant, so it is not the deferred id-expression.
 template <universal template U> struct S {};
+static_assert(!__is_same(S<c>, S<1>));
+static_assert(__is_same(S<+c>, S<1>));
+static_assert(!__is_same(S<c>, S<(c)>));
+static_assert(!__is_same(S<e1>, S<E(7)>));
+static_assert(__is_same(S<(e1)>, S<E(7)>));
 static_assert(!__is_same(S<IsInt<int>>, S<true>));
+static_assert(__is_same(S<(IsInt<int>)>, S<true>));
 static_assert(__is_same(S<IsInt<int>>, S<IsInt<int>>));
 
 // Once substituted, the name of a constant template parameter is the constant
 // it denotes, so that a specialization formed inside a template is the one
 // formed outside of it.
-template <int V> struct Fwd {
-  using type = S<V>;
-  static constexpr int v = D<V>::v;
-};
+template <int V> struct Fwd { using type = S<V>; };
 static_assert(__is_same(Fwd<1>::type, S<1>));
-static_assert(Fwd<1>::v == 0);
 
 template <int N> constexpr int g(S<N>) { return N; }
 static_assert(g(S<2>{}) == 2);

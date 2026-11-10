@@ -81,19 +81,11 @@ inline constexpr __get_element_v::__cpo<I> get_element<I>;
 
 constexpr tuple<int, double> t{1, {2.0, {}}};
 static_assert(get_element<double>(t) == 2.0);
+static_assert(get_element<1>(t) == 2.0);
 static_assert(get_element<1uz>(t) == 2.0);
 constexpr int one = 1;
 static_assert(get_element<one>(t) == 2.0);
-
-// The literal 1 is a constant of type int, which does not match the partial
-// specialization for std::size_t.
-static_assert(get_element<1> == 0);
-
-template <std::size_t I> struct cpo {};
-template <universal template> inline constexpr int get_element2 = 0;
-template <typename T> inline constexpr cpo<0> get_element2<T>;
-template <auto I> inline constexpr cpo<I> get_element2<I>;
-static_assert(__is_same(decltype(get_element2<1>), const cpo<1>));
+static_assert(get_element<-1> == 0);
 
 } // namespace template_cpos
 
