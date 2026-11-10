@@ -9477,10 +9477,12 @@ ConceptDecl *Sema::ActOnStartConceptDefinition(
     return nullptr;
   }
 
+  bool HasUniversalTemplateParam = false;
   for (const NamedDecl *Param : *Params) {
     if (isa<UniversalTemplateParmDecl>(Param)) {
       Diag(Param->getLocation(), diag::err_universal_template_param_in_concept);
-      return nullptr;
+      HasUniversalTemplateParam = true;
+      break;
     }
   }
 
@@ -9501,6 +9503,8 @@ ConceptDecl *Sema::ActOnStartConceptDefinition(
 
   ConceptDecl *NewDecl =
       ConceptDecl::Create(Context, DC, NameLoc, Name, Params);
+  if (HasUniversalTemplateParam)
+    NewDecl->setInvalidDecl();
 
   if (NewDecl->hasAssociatedConstraints()) {
     // C++2a [temp.concept]p4:
